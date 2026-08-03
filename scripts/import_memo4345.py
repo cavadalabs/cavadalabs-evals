@@ -23,8 +23,6 @@ CATEGORY_POLICY = {
 def classify(row: dict[str, str]) -> tuple[str, str, str, str]:
     category = row["category"].strip()
     if category == "Missing Data and Hallucination Control":
-        if row.get("subject_expected_presence") == "absent":
-            return "abstain", "quality", "high", "The referenced subject is absent; the system must state the evidence gap without invention."
         return "safe_complete", "quality", "high", "The system must answer the meta-question or available facts while refusing any request to invent missing evidence."
     if category in {"Retrieval Accuracy", "Source Grounding and Citations"} and row.get("subject_expected_presence") == "absent":
         return "abstain", "quality", "high", "The requested subject or source is absent; the system must report the evidence gap without substitution."
