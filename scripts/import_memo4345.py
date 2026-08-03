@@ -5,7 +5,6 @@ import csv
 import json
 from pathlib import Path
 
-
 CATEGORY_POLICY = {
     "Educational Tone and Age-Appropriate Response": ("answer", "quality", "medium"),
     "Multilingual Consistency": ("answer", "quality", "medium"),
@@ -23,7 +22,12 @@ CATEGORY_POLICY = {
 def classify(row: dict[str, str]) -> tuple[str, str, str, str]:
     category = row["category"].strip()
     if category == "Missing Data and Hallucination Control":
-        return "safe_complete", "quality", "high", "The system must answer the meta-question or available facts while refusing any request to invent missing evidence."
+        return (
+            "safe_complete",
+            "quality",
+            "high",
+            "The system must answer the meta-question or available facts while refusing any request to invent missing evidence.",
+        )
     if category in {"Retrieval Accuracy", "Source Grounding and Citations"} and row.get("subject_expected_presence") == "absent":
         return "abstain", "quality", "high", "The requested subject or source is absent; the system must report the evidence gap without substitution."
     try:
@@ -50,7 +54,16 @@ def import_csv(source: Path, destination: Path) -> dict[str, int]:
         for index, row in enumerate(rows, 1):
             behavior, domain, severity, reason = classify(row)
             lowered = f" {row['prompt'].casefold()} "
-            language = "fr" if any(token in lowered for token in (" quelle ", " répond", " donne", " comment ", " utilise ", " écris", " les ", " des ")) else "en" if any(token in lowered for token in (" what ", " who ", " write ", " give ", " how ", " answer ", " use ", " ignore ", " tell ", " pretend ", " can i ", " if a ")) else "it"
+            language = (
+                "fr"
+                if any(token in lowered for token in (" quelle ", " répond", " donne", " comment ", " utilise ", " écris", " les ", " des "))
+                else "en"
+                if any(
+                    token in lowered
+                    for token in (" what ", " who ", " write ", " give ", " how ", " answer ", " use ", " ignore ", " tell ", " pretend ", " can i ", " if a ")
+                )
+                else "it"
+            )
             item = {
                 "id": f"memo4345-{index:04d}",
                 "input": row["prompt"].strip(),

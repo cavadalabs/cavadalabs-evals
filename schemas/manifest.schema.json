@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/manifest/1.0.0",
+  "title": "CavadaLabs Evaluation Run Manifest",
+  "type": "object",
+  "required": ["protocol_version", "schema_version", "report_version", "run_id", "status", "started_at", "suite", "target", "judge", "parameters", "source", "environment"],
+  "properties": {
+    "protocol_version": {"type": "string"},
+    "schema_version": {"type": "string"},
+    "report_version": {"type": "string"},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["running", "passed", "failed", "invalid", "cancelled"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "suite": {"type": "object"},
+    "target": {"type": "object"},
+    "judge": {"type": "object"},
+    "parameters": {"type": "object"},
+    "source": {"type": "object"},
+    "environment": {"type": "object"},
+    "artifacts": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+  }
+}

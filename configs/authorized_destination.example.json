@@ -1,0 +1,10 @@
+{
+  "authorization_id": "replace-with-approved-record-id",
+  "approver": "replace-with-accountable-owner",
+  "purpose": "Evaluation under the named suite",
+  "destinations": [
+    {"host": "target.example.com", "region": "EU", "purpose": "system under test"},
+    {"host": "judge.example.com", "region": "EU", "purpose": "evaluation judge"}
+  ],
+  "expires_at": "2027-01-01T00:00:00+00:00"
+}

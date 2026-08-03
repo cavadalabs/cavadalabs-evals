@@ -1,0 +1,16 @@
+# Changelog
+
+All notable changes follow semantic versioning. Protocol, engine, schema,
+report, and suite versions are released independently.
+
+## 0.2.0 - 2026-08-03
+
+- Added the normative protocol, implementation checklist, schemas, suite lifecycle, governance validation, normalized duplicate detection, and secure multimodal assets.
+- Added deterministic structured, retrieval, transcript, tool, and text metrics.
+- Added streaming performance evidence, budgets, bounded concurrency, retry, rate limiting, crash resume, paired statistics, and blind A/B plus B/A evaluation.
+- Added signed/verifiable bundles, restricted/public HTML and PDF reports, SVG figures, JUnit, comparison, export, and control-evidence reports.
+- Added secure optional DeepEval integration with telemetry and cloud sync disabled before import.
+
+## 0.1.0 - 2026-08-03
+
+- Initial local-first CavadaLabs evaluation protocol and MEMO4345 candidate suite.

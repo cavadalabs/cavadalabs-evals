@@ -3,6 +3,7 @@ name = "memo4345-v1"
 version = "1.0.0"
 status = "candidate"
 description = "MEMO4345 historical-education RAG behavior, grounding and guardrail evaluation."
+profile = "rag-end-to-end"
 dataset = "dataset.jsonl"
 rubric = "rubric.md"
 data_classification = "synthetic"
@@ -15,6 +16,7 @@ official_min_judge_repetitions = 3
 
 [target]
 kind = "json"
+capabilities = ["text", "retrieval"]
 request_field = "message"
 request_defaults_json = '{"conversation_id":null,"language":null}'
 response_field = "answer"

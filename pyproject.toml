@@ -1,17 +1,17 @@
 [project]
 name = "cavadalabs-evals"
-version = "0.1.0"
+version = "0.2.0"
 description = "CavadaLabs protocol for reproducible, auditable AI evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary" }
+license = "MIT"
 dependencies = []
 
 [project.scripts]
 cavada-eval = "cavada_eval.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.3"]
+dev = ["pytest>=8.3", "ruff>=0.12,<1", "mypy>=1.15,<2"]
 deepeval = ["deepeval>=3,<4"]
 
 [build-system]
@@ -25,3 +25,16 @@ packages = ["src/cavada_eval"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q -p no:deepeval"
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "S"]
+ignore = ["E501", "S101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true

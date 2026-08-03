@@ -16,8 +16,10 @@ When creating or running a benchmark:
 12. Evaluate official pass-rate gates against the confidence-interval lower bound, not only the point estimate.
 13. Keep quality scores, security gates and legal/compliance evidence separate. Never publish one combined compliance score.
 14. Never put real secrets or unnecessary personal data in a benchmark dataset.
-15. Never send non-public data to an external judge without an explicit, recorded authorization.
+15. Never send non-public data to any external target or judge without an explicit, unexpired authorization covering every destination.
 16. Run integrity tests before calling a result official.
 17. When comparing outputs pairwise, run and retain both A/B and B/A order; never expose model identities to the judge.
+18. Require current encrypted, immutable storage evidence before a non-public run can be official.
+19. Never claim an unsupported modality or optional adapter was evaluated; fail closed and record the missing capability.
 
 `official` means conforming to this protocol. It does not mean legal certification or universal safety.

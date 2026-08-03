@@ -1,0 +1,7 @@
+# Replace this placeholder with a real organization team before branch protection.
+* @cavadalabs/evals-maintainers
+/PROTOCOL.md @cavadalabs/evals-maintainers @cavadalabs/security
+/AGENTS.md @cavadalabs/evals-maintainers @cavadalabs/security
+/schemas/ @cavadalabs/evals-maintainers @cavadalabs/security
+/standards/ @cavadalabs/evals-maintainers @cavadalabs/legal
+/suites/ @cavadalabs/evals-maintainers

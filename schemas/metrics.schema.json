@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/metrics/1.0.0",
+  "title": "CavadaLabs Run Metrics",
+  "type": "object",
+  "required": ["total", "observations", "pass", "fail", "invalid", "error", "skipped", "pass_rate", "officially_valid"],
+  "properties": {
+    "total": {"type": "integer", "minimum": 0},
+    "observations": {"type": "integer", "minimum": 0},
+    "pass": {"type": "integer", "minimum": 0},
+    "fail": {"type": "integer", "minimum": 0},
+    "invalid": {"type": "integer", "minimum": 0},
+    "error": {"type": "integer", "minimum": 0},
+    "skipped": {"type": "integer", "minimum": 0},
+    "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "officially_valid": {"type": "boolean"},
+    "gate_failures": {"type": "array", "items": {"type": "object"}},
+    "performance": {"type": "object"},
+    "cost": {"type": "object"}
+  }
+}

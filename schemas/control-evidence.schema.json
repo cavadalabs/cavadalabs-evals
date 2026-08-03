@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/control-evidence/1.0.0",
+  "title": "CavadaLabs Control Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["control_id", "jurisdiction", "source", "source_version", "source_application", "applicability", "owner", "status", "effective_at"],
+  "properties": {
+    "control_id": {"type": "string", "minLength": 1},
+    "jurisdiction": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "format": "uri"},
+    "source_version": {"type": "string", "minLength": 1},
+    "source_application": {"type": "string", "minLength": 1},
+    "applicability": {"type": "string", "minLength": 1},
+    "owner": {"type": "string", "minLength": 1},
+    "status": {"enum": ["automated_pass", "automated_fail", "manual_required", "not_applicable", "missing", "expired"]},
+    "artifact": {"type": "string"},
+    "effective_at": {"type": "string", "format": "date"},
+    "expires_at": {"type": "string", "format": "date"},
+    "residual_risk": {"type": "string"}
+  }
+}

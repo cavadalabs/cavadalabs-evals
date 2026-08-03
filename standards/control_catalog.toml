@@ -1,36 +1,101 @@
 version = "2026-08-03"
 note = "Engineering evidence catalog. It is not legal advice or a certification checklist."
+gdpr_source_version = "Regulation (EU) 2016/679, OJ L 119, 2016-05-04, including 2018 corrigendum"
+gdpr_application = "Applicable since 2018-05-25"
+ai_act_source_version = "Regulation (EU) 2024/1689, OJ 2024/1689, 2024-07-12"
+ai_act_application = "Generally applicable since 2026-08-02; Article 113 phase-specific exceptions still require legal applicability review"
 
 [[controls]]
 id = "GDPR-5"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
 title = "Principles and accountability"
 evidence = ["purpose and data classification", "dataset provenance", "retention policy", "run access controls"]
 automatable = false
 
 [[controls]]
+id = "GDPR-6-9"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Lawfulness and special-category conditions"
+evidence = ["purpose and legal basis register", "special-category condition", "necessity assessment"]
+automatable = false
+
+[[controls]]
+id = "GDPR-13-14"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Transparency information"
+evidence = ["privacy notice", "data source disclosure", "retention and transfer information"]
+automatable = "partial"
+
+[[controls]]
+id = "GDPR-15-22"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Data-subject rights and automated decisions"
+evidence = ["rights workflow tests", "access and deletion evidence", "automated-decision assessment"]
+automatable = "partial"
+
+[[controls]]
 id = "GDPR-25"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
 title = "Data protection by design and by default"
 evidence = ["privacy threat tests", "default configuration tests", "data minimisation review"]
 automatable = "partial"
 
 [[controls]]
+id = "GDPR-28-30"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Processors and records of processing"
+evidence = ["processor contract", "subprocessor register", "approved ROPA"]
+automatable = false
+
+[[controls]]
 id = "GDPR-32"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
 title = "Security of processing"
 evidence = ["access-control tests", "secret disclosure tests", "encryption evidence", "incident and restore tests"]
 automatable = "partial"
 
 [[controls]]
+id = "GDPR-33-34"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Personal-data breach handling"
+evidence = ["incident plan", "notification decision record", "incident drill"]
+automatable = "partial"
+
+[[controls]]
 id = "GDPR-35"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
 title = "Data protection impact assessment"
 evidence = ["approved DPIA", "risk register", "residual-risk decision"]
 automatable = false
 
 [[controls]]
+id = "GDPR-44-49"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "International transfers"
+evidence = ["transfer map", "transfer mechanism", "transfer impact assessment", "supplementary measures"]
+automatable = false
+
+[[controls]]
+id = "AI-ACT-4-5"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "AI literacy and prohibited practices"
+evidence = ["role-based training", "prohibited-practice classification", "release gate"]
+automatable = "partial"
+
+[[controls]]
 id = "AI-ACT-9"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
 title = "Risk management and prior-defined testing thresholds"
 evidence = ["versioned suite", "prior-defined gates", "confidence intervals", "failure analysis"]
@@ -38,13 +103,23 @@ automatable = "partial"
 
 [[controls]]
 id = "AI-ACT-10"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
 title = "Data and data governance"
 evidence = ["dataset origin", "label method", "representativeness assessment", "known gaps"]
 automatable = "partial"
 
 [[controls]]
+id = "AI-ACT-11"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Technical documentation"
+evidence = ["system description", "model and data versions", "evaluation strategy", "known limitations"]
+automatable = "partial"
+
+[[controls]]
 id = "AI-ACT-12"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
 title = "Record keeping"
 evidence = ["immutable run manifest", "raw responses", "judgments", "artifact hashes"]
@@ -52,10 +127,73 @@ automatable = true
 
 [[controls]]
 id = "AI-ACT-13-15"
+jurisdiction = "EU"
 source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
 title = "Transparency, oversight, accuracy, robustness and cybersecurity"
 evidence = ["instructions and limitations", "oversight drill", "quality gates", "security red-team report"]
 automatable = "partial"
+
+[[controls]]
+id = "AI-ACT-17"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Quality management system"
+evidence = ["QMS scope", "change control", "verification and validation records", "incident process"]
+automatable = false
+
+[[controls]]
+id = "AI-ACT-26-27"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Deployer duties and fundamental-rights impact assessment"
+evidence = ["deployment instructions", "oversight assignment", "FRIA where applicable"]
+automatable = false
+
+[[controls]]
+id = "AI-ACT-50"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Transparency obligations for certain AI systems"
+evidence = ["AI interaction disclosure", "synthetic-content marking", "machine-readable provenance evidence"]
+automatable = "partial"
+
+[[controls]]
+id = "AI-ACT-51-55"
+jurisdiction = "EU"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "General-purpose AI model duties where applicable"
+evidence = ["GPAI classification", "technical documentation", "copyright policy", "systemic-risk evaluation"]
+automatable = false
+
+[[framework_profiles]]
+id = "NIST-AI-RMF-GENAI"
+source = "https://www.nist.gov/itl/ai-risk-management-framework"
+status = "mapping-required"
+
+[[framework_profiles]]
+id = "OWASP-GENAI-2025"
+source = "https://genai.owasp.org/llm-top-10/"
+status = "mapping-required"
+
+[[framework_profiles]]
+id = "ISO-IEC-42001"
+source = "licensed-standard-reference-only"
+status = "license-required"
+
+[[framework_profiles]]
+id = "ISO-IEC-23894"
+source = "licensed-standard-reference-only"
+status = "license-required"
+
+[[framework_profiles]]
+id = "ISO-27001-27701"
+source = "licensed-standard-reference-only"
+status = "license-required"
+
+[[framework_profiles]]
+id = "NIS2-DORA-SECTOR"
+source = "applicability-dependent"
+status = "legal-assessment-required"
 
 [[external_benchmarks]]
 name = "NVIDIA garak"
@@ -86,4 +224,3 @@ name = "Microsoft Presidio"
 url = "https://github.com/microsoft/presidio"
 purpose = "PII detection/redaction regression tests; not a completeness guarantee"
 status = "candidate-adapter"
-

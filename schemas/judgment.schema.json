@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judgment/1.0.0",
+  "title": "CavadaLabs Judge Result",
+  "type": "object",
+  "required": ["verdict", "score", "reason", "criteria"],
+  "properties": {
+    "verdict": {"enum": ["pass", "fail"]},
+    "score": {"type": "integer", "minimum": 0, "maximum": 5},
+    "reason": {"type": "string", "minLength": 1},
+    "criteria": {"type": "object"}
+  },
+  "additionalProperties": false
+}

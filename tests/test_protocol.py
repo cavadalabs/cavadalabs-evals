@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
+from cavada_eval.artifacts import verify_bundle
+from cavada_eval.cli import _doctor
+from cavada_eval.compliance import generate_control_report
 from cavada_eval.protocol import ProtocolError, deterministic_checks, load_suite, new_run_dir, summarize, wilson_interval
 from cavada_eval.runner import _judge_result, _manifest_endpoint, run
 
@@ -19,6 +23,7 @@ def make_suite(tmp_path: Path, *, status: str = "approved", review: str = "appro
 name = "test"
 version = "1.0.0"
 status = "{status}"
+description = "Test suite"
 data_classification = "synthetic"
 dataset = "dataset.jsonl"
 rubric = "rubric.md"
@@ -46,6 +51,26 @@ min = 1.0
 def test_official_suite_is_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ProtocolError, match="suite.status=approved"):
         load_suite(make_suite(tmp_path, status="candidate"), official=True)
+
+
+def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "uv.lock").touch()
+    assert _doctor(tmp_path)["ready"] is False
+
+
+@pytest.mark.parametrize(("field", "message"), [("tags", "valid tags"), ("source", "source and review method")])
+def test_official_case_governance_requires_nonempty_provenance(tmp_path: Path, field: str, message: str) -> None:
+    root = tmp_path / "suite"
+    shutil.copytree("suites/template", root)
+    config = root / "suite.toml"
+    config.write_text(config.read_text().replace('status = "draft"', 'status = "approved"'))
+    case = json.loads((root / "dataset.jsonl").read_text())
+    case["review"]["status"] = "approved"
+    case[field] = [] if field == "tags" else {"origin": ""}
+    (root / "dataset.jsonl").write_text(json.dumps(case) + "\n")
+    with pytest.raises(ProtocolError, match=message):
+        load_suite(root, official=True)
 
 
 def test_duplicate_cases_are_rejected(tmp_path: Path) -> None:
@@ -104,9 +129,7 @@ def test_repetitions_do_not_inflate_case_count() -> None:
 
 
 def test_manifest_endpoint_never_records_query_values() -> None:
-    assert _manifest_endpoint("https://example.test/v1?api-version=1&token=secret") == (
-        "https://example.test/v1?api-version=[redacted]&token=[redacted]"
-    )
+    assert _manifest_endpoint("https://example.test/v1?api-version=1&token=secret") == ("https://example.test/v1?api-version=[redacted]&token=[redacted]")
     with pytest.raises(ProtocolError, match="credentials"):
         _manifest_endpoint("https://user:password@example.test/v1")
 
@@ -173,15 +196,36 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["status"] == "passed"
     assert manifest["target"]["expected_reported_model"] == "target-real"
-    assert set(manifest["artifacts"]) == {
+    assert {
+        "requests.jsonl",
         "raw_responses.jsonl",
         "judgments.jsonl",
         "case_results.jsonl",
         "metrics.json",
         "category_results.csv",
         "failures.jsonl",
+        "environment.json",
+        "protocol_snapshot.md",
+        "suite_snapshot.toml",
+        "dataset_card.md",
         "report.html",
-    }
+        "report.pdf",
+        "report_public.html",
+        "report_public.pdf",
+        "summary.json",
+        "junit.xml",
+        "figures/overall_scores.svg",
+        "figures/category_scores.svg",
+        "figures/latency.svg",
+    } <= set(manifest["artifacts"])
+    assert verify_bundle(run_dir)["valid"] is True
+    control_report = generate_control_report(
+        run_dir,
+        Path("standards/control_catalog.toml"),
+        tmp_path / "control-report",
+    )
+    ai_record = next(item for item in control_report["controls"] if item["control_id"] == "AI-ACT-12")
+    assert ai_record["source_application"].startswith("Generally applicable since 2026-08-02")
 
 
 def test_imported_memo_semantic_regressions() -> None:
