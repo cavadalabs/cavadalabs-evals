@@ -1,0 +1,89 @@
+version = "2026-08-03"
+note = "Engineering evidence catalog. It is not legal advice or a certification checklist."
+
+[[controls]]
+id = "GDPR-5"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Principles and accountability"
+evidence = ["purpose and data classification", "dataset provenance", "retention policy", "run access controls"]
+automatable = false
+
+[[controls]]
+id = "GDPR-25"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Data protection by design and by default"
+evidence = ["privacy threat tests", "default configuration tests", "data minimisation review"]
+automatable = "partial"
+
+[[controls]]
+id = "GDPR-32"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Security of processing"
+evidence = ["access-control tests", "secret disclosure tests", "encryption evidence", "incident and restore tests"]
+automatable = "partial"
+
+[[controls]]
+id = "GDPR-35"
+source = "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+title = "Data protection impact assessment"
+evidence = ["approved DPIA", "risk register", "residual-risk decision"]
+automatable = false
+
+[[controls]]
+id = "AI-ACT-9"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Risk management and prior-defined testing thresholds"
+evidence = ["versioned suite", "prior-defined gates", "confidence intervals", "failure analysis"]
+automatable = "partial"
+
+[[controls]]
+id = "AI-ACT-10"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Data and data governance"
+evidence = ["dataset origin", "label method", "representativeness assessment", "known gaps"]
+automatable = "partial"
+
+[[controls]]
+id = "AI-ACT-12"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Record keeping"
+evidence = ["immutable run manifest", "raw responses", "judgments", "artifact hashes"]
+automatable = true
+
+[[controls]]
+id = "AI-ACT-13-15"
+source = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"
+title = "Transparency, oversight, accuracy, robustness and cybersecurity"
+evidence = ["instructions and limitations", "oversight drill", "quality gates", "security red-team report"]
+automatable = "partial"
+
+[[external_benchmarks]]
+name = "NVIDIA garak"
+url = "https://github.com/NVIDIA/garak"
+purpose = "Broad LLM vulnerability probes and detectors"
+status = "candidate-adapter"
+
+[[external_benchmarks]]
+name = "Meta CyberSecEval 4"
+url = "https://github.com/meta-llama/PurpleLlama/tree/main/CybersecurityBenchmarks"
+purpose = "Cybersecurity capability and vulnerability evaluation"
+status = "candidate-license-review"
+
+[[external_benchmarks]]
+name = "AgentDojo"
+url = "https://github.com/ethz-spylab/agentdojo"
+purpose = "Agent prompt-injection attacks and defenses"
+status = "candidate-api-unstable"
+
+[[external_benchmarks]]
+name = "PrivacyLens"
+url = "https://github.com/SALT-NLP/PrivacyLens"
+purpose = "Privacy norm awareness and agent privacy leakage"
+status = "candidate-license-review"
+
+[[external_benchmarks]]
+name = "Microsoft Presidio"
+url = "https://github.com/microsoft/presidio"
+purpose = "PII detection/redaction regression tests; not a completeness guarantee"
+status = "candidate-adapter"
+
