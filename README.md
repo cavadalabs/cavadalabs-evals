@@ -94,8 +94,9 @@ verification.json             final integrity verification
 - custom suite Python is never executed directly.
 
 Read [PROTOCOL.md](PROTOCOL.md), [SECURITY.md](SECURITY.md),
-[IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md), and the `docs/`
-directory before operating an official benchmark.
+[IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md),
+[OFFICIAL_EVALUATION_PROGRAM.md](OFFICIAL_EVALUATION_PROGRAM.md), and the
+`docs/` directory before operating an official benchmark.
 
 ## Development verification
 
