@@ -1,5 +1,13 @@
 # Suite changelog
 
+## 0.3.0 - 2026-08-05
+
+- Replaced index-derived subcategory labels with an explicit reviewed mapping
+  for every generated template.
+- Corrected the false-premise capital question from `abstain` to `answer`.
+- Preserved the `0.2.1` cross-suite duplicate correction.
+- No calibration, approval, or assurance claim changed.
+
 ## 0.2.1 - 2026-08-05
 
 - Replaced one safety prompt that exactly duplicated a case in

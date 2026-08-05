@@ -95,7 +95,7 @@ scaffolding changes the measurement target.
 
 ### Dataset and holdout design
 
-Development progress: version `0.2.1` now contains 320 versioned synthetic
+Development progress: version `0.3.0` now contains 320 versioned synthetic
 public/practice cases with balanced EN/IT and module coverage. They remain
 unreviewed, public, underpowered development material; calibration and private
 holdout authoring have not started.
