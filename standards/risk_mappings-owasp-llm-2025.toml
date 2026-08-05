@@ -1,74 +1,75 @@
-version = "2026-08-05"
-framework = "OWASP Top 10 for LLM Applications 2026"
-source = "https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/"
-source_release_date = "2026-08-03"
-note = "Current partial engineering mapping. Taxonomy renumbering does not change case semantics and is not OWASP certification or exhaustive coverage."
+version = "2026-08-03"
+framework = "OWASP Top 10 for LLM Applications 2025"
+source = "https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/"
+status = "historical-superseded"
+superseded_by = "risk_mappings.toml"
+note = "Preserved historical engineering mapping. It is not OWASP certification or exhaustive coverage."
 
 [[risks]]
-id = "LLM01:2026"
+id = "LLM01:2025"
 name = "Prompt Injection"
 status = "partial"
 suite = "security-privacy-smoke-v1"
 cases = ["sec-001", "sec-002", "sec-006"]
 
 [[risks]]
-id = "LLM02:2026"
+id = "LLM02:2025"
 name = "Sensitive Information Disclosure"
 status = "partial"
 suite = "security-privacy-smoke-v1"
 cases = ["sec-003", "sec-004"]
 
 [[risks]]
-id = "LLM03:2026"
-name = "Excessive Agency"
-status = "partial"
-suite = "security-privacy-smoke-v1"
-cases = ["sec-006"]
-
-[[risks]]
-id = "LLM04:2026"
+id = "LLM03:2025"
 name = "Supply Chain"
 status = "repository-controls-only"
 evidence = ["uv.lock", "SBOM", "dependency audit", "pinned CI actions", "build provenance"]
 
 [[risks]]
-id = "LLM05:2026"
+id = "LLM04:2025"
 name = "Data and Model Poisoning"
 status = "partial"
 suite = "security-privacy-smoke-v1"
 cases = ["sec-002"]
 
 [[risks]]
-id = "LLM06:2026"
-name = "Unbounded Consumption"
+id = "LLM05:2025"
+name = "Improper Output Handling"
 status = "partial"
 suite = "security-privacy-smoke-v1"
-cases = ["sec-007"]
+cases = ["sec-015"]
 
 [[risks]]
-id = "LLM07:2026"
-name = "Misinformation"
+id = "LLM06:2025"
+name = "Excessive Agency"
 status = "partial"
 suite = "security-privacy-smoke-v1"
-cases = ["sec-011", "sec-012", "sec-013", "sec-014"]
+cases = ["sec-006"]
 
 [[risks]]
-id = "LLM08:2026"
-name = "Hidden Context Exposure"
+id = "LLM07:2025"
+name = "System Prompt Leakage"
 status = "partial"
 suite = "security-privacy-smoke-v1"
 cases = ["sec-001", "sec-003"]
 
 [[risks]]
-id = "LLM09:2026"
+id = "LLM08:2025"
 name = "Vector and Embedding Weaknesses"
 status = "partial"
 suite = "security-privacy-smoke-v1"
 cases = ["sec-016"]
 
 [[risks]]
-id = "LLM10:2026"
-name = "Improper Output Handling"
+id = "LLM09:2025"
+name = "Misinformation"
 status = "partial"
 suite = "security-privacy-smoke-v1"
-cases = ["sec-015"]
+cases = ["sec-011", "sec-012", "sec-013", "sec-014"]
+
+[[risks]]
+id = "LLM10:2025"
+name = "Unbounded Consumption"
+status = "partial"
+suite = "security-privacy-smoke-v1"
+cases = ["sec-007"]

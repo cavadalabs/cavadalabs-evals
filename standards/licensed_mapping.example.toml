@@ -1,0 +1,21 @@
+mapping_version = "1.0.0"
+status = "draft"
+source_id = "replace-with-program-source-id"
+standard_version = "replace-with-version-on-authorized-copy"
+licensed_copy_reference = "restricted-document-control-reference"
+scope = "replace-with-engagement-and-management-system-scope"
+role = "replace-with-developer-deployer-evaluator-laboratory-or-certification-role"
+owner = "UNASSIGNED"
+independent_reviewer = "UNASSIGNED"
+reviewed_at = "1970-01-01"
+expires_at = "1970-01-01"
+note = "Keep the licensed standard and any protected clause text outside this repository. Commit only clause identifiers, original analysis, evidence pointers, status, and limitations permitted by the license."
+
+[[controls]]
+clause_id = "ENTER-FROM-AUTHORIZED-COPY"
+applicability = "not-assessed"
+implementation_status = "missing"
+evidence = ["UNAVAILABLE"]
+owner = "UNASSIGNED"
+review_status = "pending"
+limitations = ["Template only; not evidence of implementation, conformity, certification, or accreditation."]

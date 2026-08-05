@@ -1,4 +1,4 @@
-# CavadaLabs Evaluation Program Policy 1.0.0
+# CavadaLabs Evaluation Program Policy 1.1.0
 
 This policy governs the program registry and suite families. `PROTOCOL.md`
 governs individual official runs. If they conflict, the stricter fail-closed
@@ -77,3 +77,61 @@ multiple operational roles only when the conflict-of-interest assessment allows
 it. The release approver cannot replace independent label, statistical,
 security, privacy/legal, or reproduction evidence. AI-generated review is never
 represented as independent human review.
+
+## Engagement classification and authorization
+
+Every engagement starts with a restricted record conforming to
+`schemas/engagement.schema.json`, based on `configs/engagement.example.json`.
+It identifies the system owner, measurement target, jurisdictions, requested
+and permitted claims, and whether CavadaLabs acts as developer, provider,
+deployer, evaluator, testing laboratory, scheme owner, or certification body.
+Roles are not interchangeable. An `approved` engagement requires accountable
+applicability evidence, conflict assessment, authorization, and a future expiry;
+the repository's example is deliberately non-approving.
+
+Commercial ownership cannot approve technical validity. Case authors cannot
+provide the sole label review; implementers cannot provide the sole security
+review; the original decision maker cannot decide an appeal; and an evaluator
+cannot call itself independent when financial, organizational, model-provider,
+dataset-author, or delivery relationships would reasonably impair impartiality.
+Conflicts are disclosed, mitigated, or the work is refused. AI assistance may
+support operations but cannot fill an accountable or independent role.
+
+## Complaints and appeals
+
+Complaints and appeals receive immutable IDs, timestamps, scope, evidence,
+owner, confidentiality classification, deadlines, actions, and outcome. Receipt
+is acknowledged; relevant evidence is preserved; no original artifact is
+overwritten. An appeal is decided by a competent person independent of the
+original decision and commercial owner. The disposition identifies affected
+reports, corrective action, notification duties, and whether a correction,
+withdrawal, suspension, or revocation record is required. Retaliation is
+prohibited. Contractual and legal escalation routes remain engagement-specific.
+
+## Disclosure and surveillance
+
+Before release, disclosure review separates public claims from restricted
+datasets, payloads, personal data, vulnerabilities, reviewer identities, model
+credentials, and client-confidential evidence. Public statements include the
+suite, version, SUT, conditions, date, expiry, limitations, and assurance level;
+they never imply endorsement, accreditation, certification, or legal compliance
+without the corresponding authority.
+
+An engagement records whether post-release surveillance is required. When it
+is, the plan defines responsible owner, monitored changes, contamination,
+evaluator drift, saturation, incidents, complaints, model or scaffold changes,
+review frequency, expiry, and triggers for requalification, rerun, correction,
+suspension, or revocation. One-time benchmark reports are snapshots and are not
+silently converted into continuing certification.
+
+## Laboratory and certification paths
+
+Internal protocol conformance is an evaluation result, not accreditation.
+ISO/IEC 17025 is evaluated only as a possible testing-laboratory competence
+path with an authorized copy and accreditation-body scoping. ISO/IEC 17065 is a
+separate certification-body and scheme path involving certification decisions,
+surveillance, complaints, appeals, marks, and external recognition. Laboratory
+testing does not authorize product certification, and a management-system
+certificate does not certify a model or benchmark result. Until the applicable
+path is licensed, implemented, independently assessed, and formally recognized,
+CavadaLabs uses only bounded evaluation and protocol-conformance wording.

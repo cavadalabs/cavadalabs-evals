@@ -1,4 +1,4 @@
-register_version = "1.0.0"
+register_version = "1.1.0"
 reviewed_at = "2026-08-05"
 review_due = "2026-11-03"
 
@@ -188,6 +188,108 @@ data_transfer = "none"
 approval = "legal-review-required"
 official_use = "reference-only"
 conditions = ["Do not commit or quote paid standard text", "Do not claim laboratory accreditation"]
+
+[[sources]]
+id = "iso-iec-17065"
+kind = "standard"
+name = "Requirements for bodies certifying products, processes and services"
+publisher = "ISO/IEC"
+version = "ISO/IEC 17065:2012"
+revision = "edition 1; confirmed 2024; revision in progress as of 2026-08-05"
+primary_url = "https://www.iso.org/standard/46568.html"
+license = "Copyrighted paid ISO standard"
+license_url = "https://www.iso.org/copyright.html"
+redistribution = "prohibited"
+commercial_use = "implementation requires an authorized copy; accreditation and scheme recognition are external"
+data_transfer = "none"
+approval = "legal-review-required"
+official_use = "reference-only"
+conditions = ["Do not commit or quote paid standard text", "Do not claim certification-body accreditation", "Re-review when the pending revision is published"]
+
+[[sources]]
+id = "iso-iec-27001"
+kind = "standard"
+name = "Information security management systems requirements"
+publisher = "ISO/IEC"
+version = "ISO/IEC 27001:2022"
+revision = "edition 3"
+primary_url = "https://www.iso.org/standard/27001"
+license = "Copyrighted paid ISO standard"
+license_url = "https://www.iso.org/copyright.html"
+redistribution = "prohibited"
+commercial_use = "implementation requires an authorized copy; certification is external"
+data_transfer = "none"
+approval = "legal-review-required"
+official_use = "reference-only"
+conditions = ["Do not commit or quote paid standard text", "Do not claim certification", "Keep organizational ISMS evidence separate from benchmark scores"]
+
+[[sources]]
+id = "iso-iec-27701"
+kind = "standard"
+name = "Privacy information management systems requirements and guidance"
+publisher = "ISO/IEC"
+version = "ISO/IEC 27701:2025"
+revision = "edition 2, published 2025-10"
+primary_url = "https://www.iso.org/standard/27701"
+license = "Copyrighted paid ISO standard"
+license_url = "https://www.iso.org/copyright.html"
+redistribution = "prohibited"
+commercial_use = "implementation requires an authorized copy; certification is external"
+data_transfer = "none"
+approval = "legal-review-required"
+official_use = "reference-only"
+conditions = ["Do not use the withdrawn 2019 edition for new mappings", "Do not commit or quote paid standard text", "Privacy-law compliance remains jurisdiction-specific"]
+
+[[sources]]
+id = "iso-iec-25059"
+kind = "standard"
+name = "SQuaRE quality model for AI systems"
+publisher = "ISO/IEC"
+version = "ISO/IEC 25059:2023"
+revision = "edition 1"
+primary_url = "https://www.iso.org/standard/80655.html"
+license = "Copyrighted paid ISO standard"
+license_url = "https://www.iso.org/copyright.html"
+redistribution = "prohibited"
+commercial_use = "implementation requires an authorized copy"
+data_transfer = "none"
+approval = "legal-review-required"
+official_use = "reference-only"
+conditions = ["Do not commit or quote paid standard text", "Use licensed quality characteristics only when selecting suite-specific constructs"]
+
+[[sources]]
+id = "iso-iec-ts-4213"
+kind = "standard"
+name = "Assessment of machine learning classification performance"
+publisher = "ISO/IEC"
+version = "ISO/IEC TS 4213:2022"
+revision = "edition 1; confirmed 2025; ISO/IEC DIS 4213 revision in enquiry as of 2026-08-05"
+primary_url = "https://www.iso.org/standard/79799.html"
+license = "Copyrighted paid ISO technical specification"
+license_url = "https://www.iso.org/copyright.html"
+redistribution = "prohibited"
+commercial_use = "implementation requires an authorized copy"
+data_transfer = "none"
+approval = "legal-review-required"
+official_use = "reference-only"
+conditions = ["Do not commit or quote paid text", "Use only for applicable classification measurements", "Re-review when the replacement ISO/IEC 4213 is published"]
+
+[[sources]]
+id = "owasp-llm-top-10-2026"
+kind = "threat-intelligence"
+name = "OWASP Top 10 for LLM Applications 2026"
+publisher = "OWASP Foundation"
+version = "2026"
+revision = "published 2026-08-03"
+primary_url = "https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/"
+license = "Creative Commons Attribution-ShareAlike 4.0"
+license_url = "https://creativecommons.org/licenses/by-sa/4.0/legalcode"
+redistribution = "allowed-with-notice"
+commercial_use = "allowed with attribution, ShareAlike for adaptations, and no endorsement implication"
+data_transfer = "none"
+approval = "reference-approved"
+official_use = "reference-only"
+conditions = ["Use the 2026 identifiers and preserve attribution", "Keep the 2025 mapping as historical evidence", "Do not claim exhaustive coverage or OWASP endorsement"]
 
 [[sources]]
 id = "owasp-llm-top-10-2025"

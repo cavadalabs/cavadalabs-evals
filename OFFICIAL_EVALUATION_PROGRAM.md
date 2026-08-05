@@ -259,15 +259,17 @@ judge endpoint is available.
 
 ## 5. Legal, standards, and organizational evidence
 
-- [ ] Maintain dated mappings to NIST AI RMF, NIST AI 600-1, NIST AI 800-2,
+- [x] Maintain dated mappings to NIST AI RMF, NIST AI 600-1, NIST AI 800-2,
   OWASP, MITRE ATLAS, GDPR, EU AI Act, and the GPAI Code of Practice.
-- [ ] Prepare licensed mapping workbooks for ISO/IEC 42001, ISO/IEC 23894,
+- [x] Prepare a license-safe mapping template and dated source stubs for ISO/IEC 42001, ISO/IEC 23894,
   ISO/IEC 42005, ISO/IEC 27001/27701, and applicable AI measurement standards.
-- [ ] Define whether CavadaLabs is acting as developer, deployer, evaluator,
+- [!] Populate clause-level ISO mappings only from organization-authorized
+  current copies and complete independent review before using them as evidence.
+- [x] Define whether CavadaLabs is acting as developer, deployer, evaluator,
   testing laboratory, or certification body for every engagement.
-- [ ] Define impartiality, conflict-of-interest, complaints, appeals, report
+- [x] Define impartiality, conflict-of-interest, complaints, appeals, report
   correction, revocation, surveillance, and disclosure procedures.
-- [ ] Evaluate an ISO/IEC 17025 laboratory path separately from any ISO/IEC
+- [x] Evaluate an ISO/IEC 17025 laboratory path separately from any ISO/IEC
   17065 certification scheme; do not describe internal protocol conformance as
   accreditation.
 - [!] Obtain counsel-approved applicability, DPIA/FRIA/ROPA/legal-basis,

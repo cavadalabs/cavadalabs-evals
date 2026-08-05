@@ -172,8 +172,13 @@ status = "mapping-required"
 
 [[framework_profiles]]
 id = "OWASP-GENAI-2025"
-source = "https://genai.owasp.org/llm-top-10/"
-status = "mapping-required"
+source = "https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/"
+status = "historical-superseded"
+
+[[framework_profiles]]
+id = "OWASP-GENAI-2026"
+source = "https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/"
+status = "partial-mapping-current"
 
 [[framework_profiles]]
 id = "ISO-IEC-42001"

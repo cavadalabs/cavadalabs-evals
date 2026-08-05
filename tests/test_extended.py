@@ -16,6 +16,7 @@ from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, err
 from cavada_eval.pairwise import _winner
 from cavada_eval.pilot import audit_pilot_campaign
 from cavada_eval.program import (
+    load_evidence_crosswalk,
     load_program_registry,
     validate_case_blueprint,
     validate_cross_suite_duplicates,
@@ -282,8 +283,10 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
     assert registry["summary"]["by_status"]["draft"] == 1
     assert registry["summary"]["by_status"]["planned"] == 15
     assert registry["summary"]["official_capable"] == 0
-    assert registry["summary"]["sources"]["count"] == 24
+    assert registry["summary"]["sources"]["count"] == 30
     assert registry["summary"]["sources"]["by_official_use"]["blocked"] == 1
+    assert registry["summary"]["crosswalk"]["count"] == 18
+    assert registry["summary"]["crosswalk"]["by_status"]["implemented-partial"] == 5
 
     duplicate = tmp_path / "registry.toml"
     duplicate.write_text(
@@ -296,6 +299,28 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
         assert "duplicate suite id" in str(exc)
     else:  # pragma: no cover - assertion branch
         raise AssertionError("duplicate program suite identity was accepted")
+
+
+def test_evidence_crosswalk_rejects_unregistered_sources(tmp_path: Path) -> None:
+    crosswalk = tmp_path / "crosswalk.toml"
+    crosswalk.write_text(
+        '''crosswalk_version = "1.0.0"
+reviewed_at = "2026-08-05"
+review_due = "2026-11-03"
+claim_policy = "No compliance claim."
+[[mappings]]
+id = "unknown-framework"
+source_id = "not-registered"
+source_version = "1"
+status = "reference-only"
+scope = "test"
+repository_evidence = ["test"]
+external_evidence = ["test"]
+limitations = ["test"]
+'''
+    )
+    with pytest.raises(ProtocolError, match="absent from the source register"):
+        load_evidence_crosswalk(crosswalk, {"known-source"})
 
 
 def test_cross_suite_duplicates_are_rejected(tmp_path: Path) -> None:

@@ -259,6 +259,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Add GDPR profiles for principles/accountability, legal basis, special categories, transparency, data-subject rights, automated decisions, privacy by design, processors, ROPA, security, breaches, DPIA, and international transfers.
 - [x] Add EU AI Act profiles for applicability/classification, prohibited practices, literacy, risk management, data governance, documentation, records, transparency, oversight, accuracy, robustness, cybersecurity, QMS, deployer duties, FRIA, and GPAI duties where applicable.
 - [x] Add NIST AI RMF/GenAI, OWASP GenAI, ISO/IEC 42001, ISO/IEC 23894, ISO 27001/27701, NIS2, DORA, and sector-profile mapping stubs without copying unlicensed standards text.
+- [x] Add a dated, machine-validated evidence crosswalk, preserve superseded OWASP mappings, and provide license-safe ISO and engagement-governance templates.
 - [x] Generate a control-evidence report that never emits a combined compliance score.
 - [x] Distinguish automated pass/fail, manual required, not applicable, missing, and expired evidence.
 - [x] Version legal sources and record the effective date used by a run.

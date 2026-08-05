@@ -23,6 +23,7 @@ SOURCE_APPROVALS = {"reference-approved", "adapter-candidate", "legal-review-req
 SOURCE_USES = {"reference-only", "optional-adapter", "discovery-only", "blocked"}
 REDISTRIBUTION = {"reference-only", "allowed-with-notice", "prohibited", "review-required"}
 DATA_TRANSFERS = {"none", "local-only", "third-party-service", "review-required"}
+CROSSWALK_STATUSES = {"implemented-partial", "reference-only", "planned", "license-required", "legal-review-required"}
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*-v[1-9][0-9]*$")
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 STATUS_ASSURANCE = {
@@ -475,6 +476,10 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
         raise ProtocolError("invalid program registry:\n" + "\n".join(errors))
     suites = registry["suites"]
     source_register = load_source_register(repo_root / registry["source_register"])
+    crosswalk = load_evidence_crosswalk(
+        repo_root / registry["evidence_crosswalk"],
+        {str(source["id"]) for source in source_register["sources"]},
+    )
     return {
         **registry,
         "summary": {
@@ -485,6 +490,7 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
             "adapter_required": sum(item["execution_support"] == "adapter-required" for item in suites),
             "official_capable": sum(bool(item["official_capable"]) for item in suites),
             "sources": source_register["summary"],
+            "crosswalk": crosswalk["summary"],
         },
     }
 
@@ -576,6 +582,67 @@ def validate_source_register(register: dict[str, Any]) -> list[str]:
     return errors
 
 
+def load_evidence_crosswalk(path: Path, source_ids: set[str]) -> dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            crosswalk = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ProtocolError(f"cannot load evidence crosswalk: {exc}") from exc
+    errors: list[str] = []
+    required = {"crosswalk_version", "reviewed_at", "review_due", "claim_policy", "mappings"}
+    if set(crosswalk) != required:
+        errors.append(f"evidence crosswalk fields must be exactly {sorted(required)}")
+    if not isinstance(crosswalk.get("crosswalk_version"), str) or not VERSION_PATTERN.fullmatch(str(crosswalk.get("crosswalk_version"))):
+        errors.append("evidence crosswalk version must be semantic X.Y.Z")
+    try:
+        reviewed_at = date.fromisoformat(str(crosswalk.get("reviewed_at")))
+        review_due = date.fromisoformat(str(crosswalk.get("review_due")))
+        if review_due <= reviewed_at:
+            errors.append("evidence crosswalk review_due must be after reviewed_at")
+    except ValueError:
+        errors.append("evidence crosswalk dates must be YYYY-MM-DD")
+    if not isinstance(crosswalk.get("claim_policy"), str) or not crosswalk["claim_policy"].strip():
+        errors.append("evidence crosswalk claim_policy is required")
+    mappings = crosswalk.get("mappings")
+    fields = {"id", "source_id", "source_version", "status", "scope", "repository_evidence", "external_evidence", "limitations"}
+    seen: set[str] = set()
+    if not isinstance(mappings, list) or not mappings:
+        errors.append("evidence crosswalk must contain mappings")
+        mappings = []
+    for index, mapping in enumerate(mappings, 1):
+        prefix = f"mapping[{index}]"
+        if not isinstance(mapping, dict) or set(mapping) != fields:
+            errors.append(f"{prefix} fields must be exactly {sorted(fields)}")
+            continue
+        mapping_id = mapping.get("id")
+        if not isinstance(mapping_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", mapping_id):
+            errors.append(f"{prefix}.id must be kebab-case")
+        elif mapping_id in seen:
+            errors.append(f"duplicate evidence mapping id: {mapping_id}")
+        else:
+            seen.add(mapping_id)
+        if mapping.get("source_id") not in source_ids:
+            errors.append(f"{prefix}.source_id is absent from the source register")
+        if mapping.get("status") not in CROSSWALK_STATUSES:
+            errors.append(f"{prefix}.status is invalid")
+        for field in ("source_version", "scope"):
+            if not isinstance(mapping.get(field), str) or not mapping[field].strip():
+                errors.append(f"{prefix}.{field} must be non-empty")
+        for field in ("repository_evidence", "external_evidence", "limitations"):
+            values = mapping.get(field)
+            if not isinstance(values, list) or not values or not all(isinstance(value, str) and value.strip() for value in values):
+                errors.append(f"{prefix}.{field} must be a non-empty string array")
+    if errors:
+        raise ProtocolError("invalid evidence crosswalk:\n" + "\n".join(errors))
+    return {
+        **crosswalk,
+        "summary": {
+            "count": len(mappings),
+            "by_status": {status: sum(mapping["status"] == status for mapping in mappings) for status in sorted(CROSSWALK_STATUSES)},
+        },
+    }
+
+
 def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> list[str]:
     errors: list[str] = []
     required = {
@@ -586,6 +653,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         "result_expiry_days",
         "assurance_levels",
         "source_register",
+        "evidence_crosswalk",
         "suites",
     }
     unknown = set(registry) - required
@@ -608,6 +676,8 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         errors.append(f"assurance_levels must be ordered as {list(ASSURANCE_LEVELS)}")
     if registry.get("source_register") != "program/source-register.toml":
         errors.append("source_register must be program/source-register.toml")
+    if registry.get("evidence_crosswalk") != "standards/evidence_crosswalk.toml":
+        errors.append("evidence_crosswalk must be standards/evidence_crosswalk.toml")
     suites = registry.get("suites")
     if not isinstance(suites, list) or not suites:
         errors.append("suites must contain at least one entry")
