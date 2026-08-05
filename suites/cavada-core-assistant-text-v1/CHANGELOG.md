@@ -1,5 +1,18 @@
 # Suite changelog
 
+## 0.8.0 - 2026-08-05
+
+- Declared exactly one primary case per scenario group and 76 non-independent
+  variants with explicit primary references.
+- Changed gates, confidence intervals, bootstrap samples, and slices to use 328
+  scenario groups rather than 404 evaluation rows.
+- Kept case-level results and paired shift diagnostics without allowing them to
+  inflate statistical sample size.
+- Corrected the 1,840-scenario blueprint allocation to 164 public, 164
+  practice, 320 calibration, and 1,192 holdout primary scenarios.
+- Versioned the measurement specification and statistical plan to `0.3.0`.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.7.0 - 2026-08-05
 
 - Added 44 EN/IT domain-and-register shift probes across all ten modules and

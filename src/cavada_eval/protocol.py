@@ -426,11 +426,41 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"{prefix}.judge_gold_verdict must be pass or fail")
         if "performance_phase" in case and case["performance_phase"] not in {"cold", "warmup", "steady", "soak"}:
             errors.append(f"{prefix}.performance_phase is invalid")
+        if case.get("scenario_reference_id") is not None and case.get("scenario_role") != "variant":
+            errors.append(f"{prefix}.scenario_reference_id is only valid for scenario variants")
         if "split" in case and case["split"] not in SPLITS:
             errors.append(f"{prefix}.split must be one of {sorted(SPLITS)}")
         for field in ("language", "locale"):
             if field in case and (not isinstance(case[field], str) or not case[field].strip()):
                 errors.append(f"{prefix}.{field} must be non-empty text")
+
+    scenario_groups: dict[str, list[dict[str, Any]]] = {}
+    for case in suite.cases:
+        if case.get("scenario_role") is not None:
+            scenario_groups.setdefault(str(case.get("scenario_group_id", "")), []).append(case)
+    for group_id, members in scenario_groups.items():
+        if not group_id:
+            errors.append("scenario_role requires scenario_group_id")
+            continue
+        all_members = [case for case in suite.cases if str(case.get("scenario_group_id", "")) == group_id]
+        if len(all_members) != len(members):
+            errors.append(f"scenario group {group_id}: every case must declare scenario_role")
+            continue
+        primaries = [case for case in members if case.get("scenario_role") == "primary"]
+        if len(primaries) != 1:
+            errors.append(f"scenario group {group_id}: exactly one primary case is required")
+            continue
+        primary_id = str(primaries[0].get("id", ""))
+        for case in members:
+            case_id = str(case.get("id", ""))
+            role = case.get("scenario_role")
+            reference_id = case.get("scenario_reference_id")
+            if role not in {"primary", "variant"}:
+                errors.append(f"case {case_id}: scenario_role is invalid")
+            elif role == "primary" and reference_id is not None:
+                errors.append(f"case {case_id}: a primary case cannot have scenario_reference_id")
+            elif role == "variant" and reference_id != primary_id:
+                errors.append(f"case {case_id}: variant must reference its scenario primary {primary_id}")
 
     for case in suite.cases:
         case_id = str(case.get("id", ""))
@@ -550,16 +580,25 @@ def audit_suite(suite: Suite) -> dict[str, Any]:
         ):
             destination[str(value)] = destination.get(str(value), 0) + 1
     semantic_candidates = semantic_duplicate_candidates(suite)
+    scenario_roles = {str(case.get("scenario_role")) for case in suite.cases if case.get("scenario_role") is not None}
+    primary_cases = [case for case in suite.cases if case.get("scenario_role") == "primary"] if scenario_roles else []
+    scenario_categories: dict[str, int] = {}
+    for case in primary_cases:
+        scenario_categories[str(case["category"])] = scenario_categories.get(str(case["category"]), 0) + 1
     return {
         "protocol_version": PROTOCOL_VERSION,
         "schema_version": SCHEMA_VERSION,
         "suite": f"{suite.name}@{suite.version}",
         "status": suite.status,
         "cases": len(suite.cases),
+        "analysis_unit": "scenario" if primary_cases else "case",
+        "independent_scenarios": len(primary_cases) if primary_cases else len(suite.cases),
+        "scenario_variants": len(suite.cases) - len(primary_cases) if primary_cases else 0,
         "dataset_sha256": sha256_file(suite.dataset_path),
         "rubric_sha256": sha256_file(suite.rubric_path),
         "suite_config_sha256": sha256_file(suite.root / "suite.toml"),
         "categories": dict(sorted(categories.items())),
+        "scenario_categories": dict(sorted(scenario_categories.items())) if primary_cases else dict(sorted(categories.items())),
         "expected_behaviors": dict(sorted(behaviors.items())),
         "reviews": dict(sorted(reviews.items())),
         "risk_domains": dict(sorted(risks.items())),
@@ -576,14 +615,17 @@ def audit_suite(suite: Suite) -> dict[str, Any]:
 def dataset_quality_findings(suite: Suite) -> list[str]:
     findings: list[str] = []
     counts: dict[str, int] = {}
-    for case in suite.cases:
+    primary_cases = [case for case in suite.cases if case.get("scenario_role") == "primary"]
+    analysis_cases = primary_cases if primary_cases else list(suite.cases)
+    unit = "independent scenarios" if primary_cases else "cases"
+    for case in analysis_cases:
         counts[str(case.get("category", "missing"))] = counts.get(str(case.get("category", "missing")), 0) + 1
-    total = len(suite.cases)
+    total = len(analysis_cases)
     minimum = int((suite.config.get("governance") or {}).get("minimum_category_cases", 1))
     maximum_share = float((suite.config.get("governance") or {}).get("maximum_category_share", 1.0))
     for category, count in sorted(counts.items()):
         if count < minimum:
-            findings.append(f"category {category!r} has {count} cases; minimum is {minimum}")
+            findings.append(f"category {category!r} has {count} {unit}; minimum is {minimum}")
         if total and count / total > maximum_share:
             findings.append(f"category {category!r} represents {count / total:.1%}; maximum is {maximum_share:.1%}")
     unresolved = sum((case.get("review") or {}).get("status") != "approved" for case in suite.cases)

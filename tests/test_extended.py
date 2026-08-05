@@ -8,6 +8,7 @@ from pathlib import Path
 
 from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from cavada_eval.artifacts import verify_bundle, write_bundle
+from cavada_eval.comparison import _analysis_rows
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
 from cavada_eval.pairwise import _winner
@@ -18,7 +19,7 @@ from cavada_eval.program import (
     validate_judge_qualification_blueprint,
 )
 from cavada_eval.protocol import ProtocolError, Suite, load_suite, semantic_duplicate_candidates, sha256_file, validate_suite, wilson_gate_power
-from cavada_eval.runner import _distribution_shift_summary, _judge_calibration_summary, _post_json, call_target, run
+from cavada_eval.runner import _distribution_shift_summary, _judge_calibration_summary, _post_json, _scenario_analysis_rows, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
 
@@ -114,6 +115,27 @@ def test_distribution_shift_case_requires_a_matched_reference() -> None:
     shifted["distribution_shift_reference_id"] = "missing"
     errors = validate_suite(Suite(suite.root, suite.config, tuple(cases), suite.rubric, suite.dataset_path, suite.rubric_path))
     assert any("distribution-shift reference does not exist" in error for error in errors)
+
+
+def test_scenario_analysis_does_not_count_variants_as_independent() -> None:
+    cases = (
+        {"id": "primary", "scenario_group_id": "group", "scenario_role": "primary", "category": "quality", "risk_domain": "quality", "severity": "low"},
+        {"id": "variant", "scenario_group_id": "group", "scenario_role": "variant", "category": "quality", "risk_domain": "quality", "severity": "low"},
+    )
+    rows = [
+        {"case_id": "primary", "scenario_id": "group", "status": "pass"},
+        {"case_id": "variant", "scenario_id": "group", "status": "fail"},
+    ]
+    aggregated = _scenario_analysis_rows(rows, cases)
+    assert aggregated is not None and len(aggregated) == 1
+    assert aggregated[0]["case_id"] == "group" and aggregated[0]["status"] == "fail"
+
+
+def test_comparison_reads_the_declared_analysis_unit(tmp_path: Path) -> None:
+    (tmp_path / "case_results.jsonl").write_text('{"case_id":"one","status":"pass"}\n')
+    (tmp_path / "scenario_results.jsonl").write_text('{"case_id":"group","status":"fail"}\n')
+    rows, unit = _analysis_rows(tmp_path, {"metrics": {"analysis_unit": "scenario"}})
+    assert unit == "scenario" and rows == [{"case_id": "group", "status": "fail"}]
 
 
 def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path) -> None:

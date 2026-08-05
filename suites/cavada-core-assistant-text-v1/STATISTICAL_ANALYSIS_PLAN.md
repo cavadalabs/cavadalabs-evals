@@ -1,4 +1,4 @@
-# Statistical analysis plan 0.2.0
+# Statistical analysis plan 0.3.0
 
 Status: preregistration draft; thresholds may change only before target pilots
 and must receive independent statistical review before approval.
@@ -8,21 +8,24 @@ and must receive independent statistical review before approval.
 The independent unit is a scenario. Paraphrases, perturbations, repetitions,
 turns, and outputs derived from the same scenario are grouped and never counted
 as independent cases. The primary estimand for each module is the expected
-scenario-level pass probability over its declared case population under the
+scenario-level pass probability over its declared scenario population under the
 fixed SUT configuration.
 
-Repeated outputs are aggregated within scenario using the predeclared policy;
-they quantify sampling stability but do not increase the case sample size.
+Repeated outputs and required variants are aggregated within scenario using the
+predeclared policy; they quantify sampling stability and robustness but do not
+increase the scenario sample size.
 Invalid, error, skipped, and missing scenarios remain outside pass/fail
 denominators and invalidate an official run when mandatory.
 
 ## Planned sample
 
-The authoring target is 1,840 independent scenarios, allocated in
+The authoring target is 1,840 independent primary scenarios, allocated in
 `case_blueprint.toml`. English and Italian each receive 920 scenarios. Planned
-splits are 160 public examples, 160 practice cases, 320 calibration cases, and
-1,200 private holdout cases. A restricted adversarial partition is tagged within
-the private holdout and is never exposed as practice data.
+splits are 164 public, 164 practice, 320 calibration, and 1,192 private holdout
+scenarios. Required variants are additional evaluation rows and never increase
+these counts. The active development artifact has 404 rows representing 328
+primary scenarios and 76 variants. A restricted adversarial partition is tagged
+within the private holdout and is never exposed as practice data.
 
 The target is not evidence until cases pass solvability, independence,
 provenance, native review, ambiguity, duplicate, contamination, and calibration
@@ -33,8 +36,9 @@ checks. Strata that miss their reviewed target are reported as underpowered.
 Binary pass rates use two-sided 95% Wilson intervals over distinct scenarios.
 Official gates apply to the lower bound, not the point estimate. Sample sizes
 are selected for at least 80% exact binomial power to clear the gate at the
-predeclared design rate: 100 cases for gate 0.80 at true rate 0.90, 74 cases for
-gate 0.85 at true rate 0.95, and 142 cases for gate 0.95 at true rate 0.99.
+predeclared design rate: 100 scenarios for gate 0.80 at true rate 0.90, 74
+scenarios for gate 0.85 at true rate 0.95, and 142 scenarios for gate 0.95 at
+true rate 0.99.
 `cavada-eval program` recomputes this condition from `case_blueprint.toml` and
 fails closed if an allocation is underpowered.
 

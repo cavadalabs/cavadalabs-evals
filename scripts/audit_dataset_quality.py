@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,11 @@ def quality_report(suite_path: Path, *, dataset: Path | None = None, suite_versi
         "token_containment_candidates": len(duplicates),
         "status": "pass-development-qa" if not errors else "fail-development-qa",
     }
+    scenario_roles = Counter(str(case.get("scenario_role")) for case in suite.cases if case.get("scenario_role") is not None)
+    if scenario_roles:
+        summary["independent_scenarios"] = scenario_roles.get("primary", 0)
+        summary["scenario_variants"] = scenario_roles.get("variant", 0)
+        summary["scenario_groups"] = len({str(case.get("scenario_group_id")) for case in suite.cases})
     if tuple(int(part) for part in suite.version.split(".")) >= (0, 6, 0):
         summary["refusal_neighbor_gaps"] = len(neighbor_gaps)
     return {
@@ -150,7 +156,7 @@ def quality_report(suite_path: Path, *, dataset: Path | None = None, suite_versi
         "suite": suite.name,
         "suite_version": suite.version,
         "dataset_sha256": sha256_file(suite.dataset_path),
-        "review_scope": ["solvability", "leakage", "shortcuts", "grader-gaming", "evaluation-awareness"],
+        "review_scope": ["solvability", "scenario-independence", "leakage", "shortcuts", "grader-gaming", "evaluation-awareness"],
         "review_method": "deterministic per-case checks plus Codex-assisted author review of generated template families",
         "independence": "not-independent",
         "approval_effect": "development QA only; does not approve cases or satisfy independent review gates",

@@ -46,6 +46,49 @@ from .reporting import generate_reports
 from .statistics import bootstrap_mean_interval, distribution, paired_binary_comparison, stratified_bootstrap_mean_interval
 
 
+def _scenario_analysis_rows(
+    rows: list[dict[str, Any]], cases: tuple[dict[str, Any], ...]
+) -> list[dict[str, Any]] | None:
+    if not cases or not all(case.get("scenario_role") in {"primary", "variant"} for case in cases):
+        return None
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(str(row.get("scenario_id", "")), []).append(row)
+    primaries = {str(case["scenario_group_id"]): case for case in cases if case["scenario_role"] == "primary"}
+    aggregated: list[dict[str, Any]] = []
+    for group_id, primary in sorted(primaries.items()):
+        selected = groups.get(group_id, [])
+        statuses = {str(row.get("status")) for row in selected}
+        if "error" in statuses:
+            status = "error"
+        elif "invalid" in statuses or not selected:
+            status = "invalid"
+        elif "skipped" in statuses:
+            status = "skipped"
+        elif "fail" in statuses:
+            status = "fail"
+        elif statuses == {"pass"}:
+            status = "pass"
+        else:
+            status = "invalid"
+        aggregated.append(
+            {
+                "case_id": group_id,
+                "scenario_id": group_id,
+                "category": primary["category"],
+                "risk_domain": primary["risk_domain"],
+                "severity": primary["severity"],
+                "language": primary.get("language", "missing"),
+                "locale": primary.get("locale", "missing"),
+                "split": primary.get("split", "missing"),
+                "operating_condition": primary.get("operating_condition", "missing"),
+                "status": status,
+                "reason": "all scenario cases passed" if status == "pass" else f"scenario evidence contains {sorted(statuses)}",
+            }
+        )
+    return aggregated
+
+
 def _distribution_shift_summary(
     rows: list[dict[str, Any]],
     cases: tuple[dict[str, Any], ...],
@@ -1030,7 +1073,7 @@ def run(
             "split": case.get("split", "missing"),
             "operating_condition": case.get("operating_condition", "missing"),
             "distribution_shift_reference_id": case.get("distribution_shift_reference_id"),
-            "scenario_id": case.get("scenario_id"),
+            "scenario_id": case.get("scenario_group_id") or case.get("scenario_id"),
             "performance_phase": case.get("performance_phase", "steady"),
             "repetition": repetition,
         }
@@ -1233,9 +1276,18 @@ def run(
     confidence = float(statistics_config.get("confidence", 0.95))
     bootstrap_samples = int(statistics_config.get("bootstrap_samples", 10_000))
     bootstrap_seed = int(statistics_config.get("seed", 0))
-    metrics, categories = summarize(result_rows, confidence=confidence)
+    case_metrics, case_categories = summarize(result_rows, confidence=confidence)
+    scenario_rows = _scenario_analysis_rows(result_rows, suite.cases)
+    analysis_rows = scenario_rows if scenario_rows is not None else result_rows
+    metrics, categories = summarize(analysis_rows, confidence=confidence)
+    metrics["analysis_unit"] = "scenario" if scenario_rows is not None else "case"
+    metrics["evaluation_cases"] = case_metrics["total"]
+    metrics["target_observations"] = case_metrics["observations"]
+    if scenario_rows is not None:
+        metrics["case_level"] = case_metrics
+        metrics["case_categories"] = case_categories
     statuses_by_case: dict[str, list[str]] = {}
-    for row in result_rows:
+    for row in analysis_rows:
         statuses_by_case.setdefault(str(row["case_id"]), []).append(str(row["status"]))
     case_binary = []
     for statuses in statuses_by_case.values():
@@ -1250,7 +1302,7 @@ def run(
     )
     category_binary: dict[str, list[float]] = {}
     for case_id, statuses in statuses_by_case.items():
-        case_rows = [row for row in result_rows if str(row["case_id"]) == case_id]
+        case_rows = [row for row in analysis_rows if str(row["case_id"]) == case_id]
         if set(statuses) == {"pass"}:
             category_binary.setdefault(str(case_rows[0]["category"]), []).append(1.0)
         elif set(statuses) <= {"pass", "fail"}:
@@ -1270,8 +1322,8 @@ def run(
     slices: dict[str, dict[str, Any]] = {}
     for dimension in ("risk_domain", "severity", "language", "locale", "split", "operating_condition"):
         values: dict[str, Any] = {}
-        for value in sorted({str(row.get(dimension, "missing")) for row in result_rows}):
-            subset = [row for row in result_rows if str(row.get(dimension, "missing")) == value]
+        for value in sorted({str(row.get(dimension, "missing")) for row in analysis_rows}):
+            subset = [row for row in analysis_rows if str(row.get(dimension, "missing")) == value]
             values[value] = summarize(subset, confidence=confidence)[0]
         slices[dimension] = values
     metrics["slices"] = slices
@@ -1280,8 +1332,11 @@ def run(
         - min((float(item["pass_rate"]) for item in values.values()), default=0.0)
         for dimension, values in slices.items()
     }
+    case_statuses: dict[str, list[str]] = {}
+    for row in result_rows:
+        case_statuses.setdefault(str(row["case_id"]), []).append(str(row["status"]))
     repetition_pass_rates = []
-    for statuses in statuses_by_case.values():
+    for statuses in case_statuses.values():
         valid = [status for status in statuses if status in {"pass", "fail"}]
         if valid:
             repetition_pass_rates.append(sum(status == "pass" for status in valid) / len(valid))
@@ -1294,22 +1349,6 @@ def run(
     calibration_rows = _read_jsonl(run_dir / "judgments.jsonl")
     calibration = _judge_calibration_summary(calibration_rows, suite)
     metrics["judge_calibration"] = calibration
-    scenarios: dict[str, set[str]] = {}
-    for row in result_rows:
-        if row.get("scenario_id"):
-            scenarios.setdefault(str(row["scenario_id"]), set()).add(str(row["status"]))
-    if scenarios:
-        scenario_statuses = {
-            scenario: "pass" if statuses == {"pass"} else "fail" if statuses <= {"pass", "fail"} else "invalid" for scenario, statuses in scenarios.items()
-        }
-        valid_scenarios = [status for status in scenario_statuses.values() if status in {"pass", "fail"}]
-        metrics["hierarchical_scenarios"] = {
-            "total": len(scenario_statuses),
-            "pass": sum(status == "pass" for status in scenario_statuses.values()),
-            "fail": sum(status == "fail" for status in scenario_statuses.values()),
-            "invalid": sum(status == "invalid" for status in scenario_statuses.values()),
-            "pass_rate": sum(status == "pass" for status in valid_scenarios) / len(valid_scenarios) if valid_scenarios else 0.0,
-        }
     metrics["performance"] = {
         "target_latency_ms": distribution(row["target_latency_ms"] for row in result_rows if isinstance(row.get("target_latency_ms"), (int, float))),
         "evaluation_duration_ms": distribution(row["duration_ms"] for row in result_rows if isinstance(row.get("duration_ms"), (int, float))),
@@ -1374,6 +1413,10 @@ def run(
     metrics["gate_failures"] = gate_failures
     metrics["aborted"] = bool(abort_reason)
     atomic_json(run_dir / "metrics.json", metrics)
+    if scenario_rows is not None:
+        atomic_text(run_dir / "scenario_results.jsonl", "")
+        for row in scenario_rows:
+            append_jsonl(run_dir / "scenario_results.jsonl", row)
     write_category_csv(run_dir / "category_results.csv", categories)
     failures_path = run_dir / "failures.jsonl"
     atomic_text(failures_path, "")
@@ -1392,6 +1435,7 @@ def run(
         "judgments.jsonl",
         "engine_results.jsonl",
         "case_results.jsonl",
+        "scenario_results.jsonl",
         "metrics.json",
         "category_results.csv",
         "failures.jsonl",

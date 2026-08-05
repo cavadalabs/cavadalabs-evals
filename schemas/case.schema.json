@@ -23,6 +23,8 @@
     "operating_condition": {"enum": ["best-case", "normal", "boundary", "adversarial", "perturbed", "multi-turn", "distribution-shift"]},
     "distribution_shift_dimension": {"type": "string", "minLength": 1},
     "distribution_shift_reference_id": {"type": "string", "minLength": 1},
+    "scenario_role": {"enum": ["primary", "variant"]},
+    "scenario_reference_id": {"type": "string", "minLength": 1},
     "performance_phase": {"enum": ["cold", "warmup", "steady", "soak"]},
     "messages": {
       "type": "array",

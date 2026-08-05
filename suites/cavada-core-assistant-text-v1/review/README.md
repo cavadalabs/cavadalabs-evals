@@ -31,8 +31,10 @@ restricted storage, not this repository.
 `author-qa-0.5.0.json` preserves the failed audit that found two factuality
 shortcuts. `author-qa-0.5.1.json` preserves the corrected 320-case ledger.
 `author-qa-0.6.0.json` preserves the 360-case refusal-neighbor release.
-`author-qa-0.7.0.json` is the active 404-case ledger and also verifies complete
-benign refusal-neighbor coverage for the distribution-shift additions. Reproduce them with
+`author-qa-0.7.0.json` preserves the 404-case distribution-shift release.
+`author-qa-0.8.0.json` is the active ledger; it verifies 328 independent
+scenarios, 76 variants, and complete benign refusal-neighbor coverage.
+Reproduce them with
 `scripts/audit_dataset_quality.py`. They record author and machine checks only;
 their `not-independent` declaration prevents them from being mistaken for
 approval evidence.

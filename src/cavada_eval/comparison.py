@@ -41,6 +41,14 @@ def _outcomes(rows: list[dict[str, Any]], category: str | None = None) -> dict[s
     return result
 
 
+def _analysis_rows(run_dir: Path, manifest: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    unit = str((manifest.get("metrics") or {}).get("analysis_unit", "case"))
+    if unit not in {"case", "scenario"}:
+        raise ProtocolError(f"unsupported comparison analysis unit: {unit}")
+    name = "scenario_results.jsonl" if unit == "scenario" else "case_results.jsonl"
+    return _jsonl(run_dir / name), unit
+
+
 def compare_runs(
     baseline_dir: Path,
     candidate_dir: Path,
@@ -65,8 +73,10 @@ def compare_runs(
         if baseline_manifest.get("suite", {}).get(field) != candidate_manifest.get("suite", {}).get(field):
             raise ProtocolError(f"incompatible suite {field}")
 
-    baseline_rows = _jsonl(baseline_dir / "case_results.jsonl")
-    candidate_rows = _jsonl(candidate_dir / "case_results.jsonl")
+    baseline_rows, baseline_unit = _analysis_rows(baseline_dir, baseline_manifest)
+    candidate_rows, candidate_unit = _analysis_rows(candidate_dir, candidate_manifest)
+    if baseline_unit != candidate_unit:
+        raise ProtocolError("incompatible comparison analysis units")
     overall = paired_binary_comparison(
         _outcomes(baseline_rows),
         _outcomes(candidate_rows),
@@ -101,6 +111,7 @@ def compare_runs(
         "baseline": {"run_id": baseline_manifest.get("run_id"), "target": baseline_manifest.get("target")},
         "candidate": {"run_id": candidate_manifest.get("run_id"), "target": candidate_manifest.get("target")},
         "parameters": {"confidence": confidence, "bootstrap_samples": samples, "seed": seed, "multiple_comparison": "Holm"},
+        "analysis_unit": baseline_unit,
         "overall": overall,
         "categories": category_results,
         "quality_latency_cost": [
@@ -117,7 +128,7 @@ def compare_runs(
                 "estimated_cost": candidate_manifest.get("metrics", {}).get("cost", {}).get("estimated_total"),
             },
         ],
-        "limitations": ["paired valid cases only", "no causal claim", "compatible frozen suite required"],
+        "limitations": [f"paired valid {baseline_unit}s only", "no causal claim", "compatible frozen suite required"],
     }
     output_dir.mkdir(parents=True, exist_ok=False)
     atomic_json(output_dir / "comparison.json", result)
@@ -131,7 +142,7 @@ def compare_runs(
     )
     atomic_text(
         output_dir / "comparison.html",
-        f'<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'"><title>CavadaLabs paired comparison</title><style>body{{font:15px system-ui;max-width:1100px;margin:40px auto}}table{{border-collapse:collapse}}th,td{{border:1px solid #bbb;padding:8px}}</style><h1>Paired run comparison</h1><p>Cases: {overall["cases"]}; delta: {overall["absolute_delta"]:.4f}; 95% bootstrap CI: {overall["delta_ci"]["lower"]:.4f} to {overall["delta_ci"]["upper"]:.4f}; McNemar p: {overall["mcnemar"]["p_value"]:.4g}.</p><table><tr><th>Category</th><th>Cases</th><th>Baseline</th><th>Candidate</th><th>Delta</th><th>Holm p</th></tr>{rows}</table><h2>Quality, latency and cost</h2><table><tr><th>Run</th><th>Pass rate</th><th>Latency p50 ms</th><th>Estimated cost</th></tr>{tradeoff_rows}</table><p>Only paired valid cases are included. This is not a causal or universal claim.</p></html>\n',
+        f'<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'"><title>CavadaLabs paired comparison</title><style>body{{font:15px system-ui;max-width:1100px;margin:40px auto}}table{{border-collapse:collapse}}th,td{{border:1px solid #bbb;padding:8px}}</style><h1>Paired run comparison</h1><p>Analysis unit: {baseline_unit}. Units: {overall["cases"]}; delta: {overall["absolute_delta"]:.4f}; 95% bootstrap CI: {overall["delta_ci"]["lower"]:.4f} to {overall["delta_ci"]["upper"]:.4f}; McNemar p: {overall["mcnemar"]["p_value"]:.4g}.</p><table><tr><th>Category</th><th>Units</th><th>Baseline</th><th>Candidate</th><th>Delta</th><th>Holm p</th></tr>{rows}</table><h2>Quality, latency and cost</h2><table><tr><th>Run</th><th>Pass rate</th><th>Latency p50 ms</th><th>Estimated cost</th></tr>{tradeoff_rows}</table><p>Only paired valid analysis units are included. This is not a causal or universal claim.</p></html>\n',
     )
     write_bundle(output_dir)
     verification = verify_bundle(output_dir, write_result=True)

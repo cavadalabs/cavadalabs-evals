@@ -106,6 +106,7 @@ def _html_document(
     target = manifest.get("target", {})
     sut = html.escape(str(target.get("label", "redacted") if not public else target.get("label", "system-under-test")))
     status = html.escape(str(manifest.get("status", "unknown")).upper())
+    analysis_unit = html.escape(str(metrics.get("analysis_unit", "case")))
     performance = metrics.get("performance", {}).get("target_latency_ms", {})
     interval = metrics.get("pass_rate_ci", {})
     confidence = float(interval.get("confidence", 0.95))
@@ -142,7 +143,7 @@ def _html_document(
 <title>CavadaLabs Evaluation Report</title><style>body{{font:15px system-ui;max-width:1180px;margin:40px auto;padding:0 20px;color:#172033;line-height:1.45}}table{{border-collapse:collapse;width:100%;display:block;overflow:auto}}th,td{{border:1px solid #ccd3df;padding:8px;text-align:left}}th{{background:#eef3f8}}.pass{{color:#08752c}}.fail{{color:#a11616}}code{{background:#eef1f6;padding:2px 5px}}img{{max-width:100%;height:auto}}.notice{{border-left:5px solid #b26a00;padding:10px;background:#fff6df}}@media print{{body{{margin:10mm}}}}</style></head><body>
 <h1>CavadaLabs Evaluation Report</h1><p>Report {REPORT_VERSION} · Protocol {html.escape(str(manifest.get("protocol_version")))} · Suite {html.escape(str(manifest.get("suite", {}).get("name")))}@{html.escape(str(manifest.get("suite", {}).get("version")))}</p>
 <h2 class="{"pass" if manifest.get("status") == "passed" else "fail"}">{status}</h2>
-<p>System under test: <code>{sut}</code>. Distinct cases: {metrics.get("total", 0)}. Observations: {metrics.get("observations", 0)}.</p>
+<p>System under test: <code>{sut}</code>. Independent {analysis_unit}s: {metrics.get("total", 0)}. Evaluation cases: {metrics.get("evaluation_cases", metrics.get("total", 0))}. Target observations: {metrics.get("target_observations", metrics.get("observations", 0))}.</p>
 <p>Pass rate: {metrics.get("pass_rate", 0):.3%}; {confidence:.1%} Wilson interval: {interval.get("lower", 0):.3%}–{interval.get("upper", 0):.3%}. Invalid: {metrics.get("invalid", 0)}; errors: {metrics.get("error", 0)}; skipped: {metrics.get("skipped", 0)}.</p>
 <p>Target latency p50/p95/p99: {performance.get("p50", 0):.1f}/{performance.get("p95", 0):.1f}/{performance.get("p99", 0):.1f} ms.</p>
 <div class="notice"><strong>Scope:</strong> This report is protocol evidence, not legal certification, universal correctness, or a universal safety guarantee.</div>
@@ -250,7 +251,8 @@ def generate_reports(
             f"Protocol: {manifest.get('protocol_version')}",
             f"Suite: {manifest.get('suite', {}).get('name')}@{manifest.get('suite', {}).get('version')}",
             f"Run: {manifest.get('run_id')}",
-            f"Cases: {metrics.get('total', 0)}; observations: {metrics.get('observations', 0)}",
+            f"Analysis unit: {metrics.get('analysis_unit', 'case')}",
+            f"Independent units: {metrics.get('total', 0)}; evaluation cases: {metrics.get('evaluation_cases', metrics.get('total', 0))}; target observations: {metrics.get('target_observations', metrics.get('observations', 0))}",
             f"Pass rate: {metrics.get('pass_rate', 0):.4f}",
             f"Confidence interval: {metrics.get('pass_rate_ci', {}).get('lower', 0):.4f} - {metrics.get('pass_rate_ci', {}).get('upper', 0):.4f}",
             "",
