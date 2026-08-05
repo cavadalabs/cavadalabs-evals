@@ -45,7 +45,7 @@ never means universal correctness, universal safety, or legal certification.
 
 - [x] Reject missing suite fields, duplicate case IDs, duplicate inputs, path traversal, and invalid enums.
 - [x] Pin dataset and rubric SHA-256 for official runs.
-- [x] Publish machine-readable schemas for suite configuration, cases, assets, judgments, metrics, manifests, and control evidence.
+- [x] Publish machine-readable schemas for suite configuration, cases, assets, judgments, metrics, manifests, pilot campaigns, and control evidence.
 - [x] Reject unknown security-sensitive fields in official mode.
 - [x] Validate numeric limits, URI schemes, MIME types, hashes, timestamps, and identifiers.
 - [x] Implement suite lifecycle: `draft`, `candidate`, `calibrated`, `approved`, `deprecated`, `retired`.
@@ -302,6 +302,7 @@ never means universal correctness, universal safety, or legal certification.
 
 - [x] Provide English `validate`, `audit`, and `run` commands with meaningful exit codes.
 - [x] Add `init`, `doctor`, `list`, `estimate`, `resume`, `compare`, `report`, `verify`, `promote`, `export`, and `redteam` commands.
+- [x] Add a fail-closed `pilot-audit` command for the preregistered multi-family campaign, controls, review evidence, and exact run compatibility.
 - [x] Add configuration files for models, judges, protocols, and authorized destinations without storing secrets.
 - [x] Add clear preflight output and a no-network dry run.
 - [x] Add shell-safe reproduction commands that reference environment-variable names only.

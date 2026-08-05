@@ -94,6 +94,20 @@ uv run cavada-eval run suites/cavada-core-assistant-text-v1 \
 Use environment-variable names for credentials. Never place secret values in
 the command, configuration, campaign record, or report.
 
+Copy `pilot-campaign.example.json` into the restricted campaign workspace,
+replace every evidence hash and run path, and audit the complete campaign:
+
+```console
+uv run cavada-eval pilot-audit \
+  /restricted/campaign/campaign.json \
+  /restricted/campaign/pilot-audit.json
+```
+
+The example's zero evidence hashes are deliberate fail-closed placeholders.
+The auditor rejects missing or invalid bundles, incomplete reviews, weak
+controls, partial runs, and inconsistent suite, judge, execution, source, or
+artifact versions. The output is immutable and must be retained with the pilot.
+
 ## Required analysis
 
 Verify every bundle before reading scores. Analyze scenario-level gates and

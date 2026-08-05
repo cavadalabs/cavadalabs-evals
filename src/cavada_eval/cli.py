@@ -15,6 +15,7 @@ from .comparison import compare_runs
 from .compliance import generate_control_report
 from .external import import_external_results
 from .pairwise import pairwise_runs
+from .pilot import audit_pilot_campaign
 from .profiles import profile_summary
 from .program import load_program_registry
 from .protocol import ProtocolError, audit_suite, load_suite, promote_suite
@@ -125,6 +126,10 @@ def parser() -> argparse.ArgumentParser:
     judge_qualify.add_argument("blueprint")
     judge_qualify.add_argument("corpus_manifest")
     judge_qualify.add_argument("output")
+
+    pilot_audit = commands.add_parser("pilot-audit", help="Verify a complete multi-family target pilot campaign")
+    pilot_audit.add_argument("campaign")
+    pilot_audit.add_argument("output")
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -479,6 +484,10 @@ def main(argv: list[str] | None = None) -> int:
             result = qualify_judge_run(
                 Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output)
             )
+            print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
+            return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
+        if args.command == "pilot-audit":
+            result = audit_pilot_campaign(Path(args.campaign), Path(args.output))
             print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
             return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
         if args.command == "audit":

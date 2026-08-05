@@ -12,6 +12,7 @@ from cavada_eval.comparison import _analysis_rows
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
 from cavada_eval.pairwise import _winner
+from cavada_eval.pilot import audit_pilot_campaign
 from cavada_eval.program import (
     load_program_registry,
     validate_case_blueprint,
@@ -136,6 +137,111 @@ def test_comparison_reads_the_declared_analysis_unit(tmp_path: Path) -> None:
     (tmp_path / "scenario_results.jsonl").write_text('{"case_id":"group","status":"fail"}\n')
     rows, unit = _analysis_rows(tmp_path, {"metrics": {"analysis_unit": "scenario"}})
     assert unit == "scenario" and rows == [{"case_id": "group", "status": "fail"}]
+
+
+def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
+    suite = {
+        "name": "core",
+        "version": "1.0.0",
+        "dataset_sha256": "a" * 64,
+        "rubric_sha256": "b" * 64,
+        "suite_config_sha256": "c" * 64,
+    }
+    judge = {
+        "requested_model": "judge",
+        "expected_reported_model": "judge",
+        "revision": "judge-revision",
+        "endpoint": "http://127.0.0.1:8010/v1",
+        "prompt_sha256": "d" * 64,
+        "response_schema": "judgment.schema.json@1.0.0",
+        "temperature": 0,
+        "models": [{"id": "primary", "model": "judge", "expected_model": "judge", "revision": "judge-revision"}],
+        "consensus": "majority",
+    }
+    specs = [
+        ("target", "family-a", 0.8),
+        ("target", "family-b", 0.7),
+        ("target", "family-c", 0.6),
+        ("positive-control", "positive", 1.0),
+        ("negative-control", "negative", 0.0),
+    ]
+    campaign_runs = []
+    for index, (role, alias, pass_rate) in enumerate(specs):
+        run_dir = tmp_path / f"run-{index}"
+        run_dir.mkdir()
+        manifest = {
+            "protocol_version": "1.0.0",
+            "schema_version": "1.0.0",
+            "report_version": "1.0.0",
+            "metric_version": "1.0.0",
+            "adapter_contract_version": "1.0.0",
+            "run_id": f"run-{index}",
+            "status": "passed" if role != "negative-control" else "failed",
+            "finished_at": "2026-08-05T12:00:00+00:00",
+            "abort_reason": "",
+            "suite": suite,
+            "target": {"expected_reported_model": f"model-{index}", "revision": f"revision-{index}"},
+            "judge": judge,
+            "parameters": {
+                "mode": "candidate",
+                "max_cases": 0,
+                "repetitions": 3,
+                "judge_repetitions": 3,
+                "timeout_seconds": 90,
+                "concurrency": 1,
+                "requests_per_second": 1,
+                "case_order_sha256": "e" * 64,
+            },
+            "metrics": {
+                "analysis_unit": "scenario",
+                "evaluation_cases": 404,
+                "total": 328,
+                "invalid": 0,
+                "error": 0,
+                "skipped": 0,
+                "pass_rate": pass_rate,
+            },
+            "source": {"commit": "f" * 40, "dirty": False},
+        }
+        (run_dir / "manifest.json").write_text(json.dumps(manifest))
+        write_bundle(run_dir)
+        campaign_runs.append({"role": role, "family_alias": alias, "path": run_dir.name})
+    evidence = {
+        "qualification.json": {"passed": True, "judge_configuration": judge},
+        "approval.json": {"status": "passed"},
+        "transcript.json": {"status": "passed", "identity_blinded": True, "independent_reviewers": 2, "separate_adjudicator": True},
+    }
+    evidence_records = {}
+    for name, value in evidence.items():
+        path = tmp_path / name
+        path.write_text(json.dumps(value))
+        evidence_records[name] = {"path": name, "sha256": sha256_file(path)}
+    campaign = {
+        "campaign_version": "1.0.0",
+        "suite": suite,
+        "requirements": {
+            "minimum_model_families": 3,
+            "minimum_target_repetitions": 3,
+            "minimum_judge_repetitions": 3,
+            "evaluation_cases": 404,
+            "independent_scenarios": 328,
+            "positive_control_min_pass_rate": 1.0,
+            "negative_control_max_pass_rate": 0.25,
+        },
+        "judge_qualification": evidence_records["qualification.json"],
+        "judge_independent_approval": evidence_records["approval.json"],
+        "transcript_review": evidence_records["transcript.json"],
+        "runs": campaign_runs,
+    }
+    campaign_path = tmp_path / "campaign.json"
+    campaign_path.write_text(json.dumps(campaign))
+    result = audit_pilot_campaign(campaign_path, tmp_path / "pilot-audit.json")
+    assert result["passed"] is True and result["role_counts"] == {"target": 3, "positive-control": 1, "negative-control": 1}
+    campaign["runs"] = campaign_runs[:-1]
+    incomplete_path = tmp_path / "campaign-incomplete.json"
+    incomplete_path.write_text(json.dumps(campaign))
+    incomplete = audit_pilot_campaign(incomplete_path, tmp_path / "pilot-audit-incomplete.json")
+    assert incomplete["passed"] is False and "pilot campaign requires positive and negative control runs" in incomplete["errors"]
 
 
 def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path) -> None:

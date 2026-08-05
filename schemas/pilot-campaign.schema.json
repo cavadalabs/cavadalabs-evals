@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/pilot-campaign/1.0.0",
+  "title": "CavadaLabs Target Pilot Campaign",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["campaign_version", "suite", "requirements", "judge_qualification", "judge_independent_approval", "transcript_review", "runs"],
+  "properties": {
+    "campaign_version": {"const": "1.0.0"},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "dataset_sha256", "rubric_sha256", "suite_config_sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dataset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "rubric_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "suite_config_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_model_families", "minimum_target_repetitions", "minimum_judge_repetitions", "evaluation_cases", "independent_scenarios", "positive_control_min_pass_rate", "negative_control_max_pass_rate"],
+      "properties": {
+        "minimum_model_families": {"type": "integer", "minimum": 3},
+        "minimum_target_repetitions": {"type": "integer", "minimum": 3},
+        "minimum_judge_repetitions": {"type": "integer", "minimum": 3},
+        "evaluation_cases": {"type": "integer", "minimum": 1},
+        "independent_scenarios": {"type": "integer", "minimum": 1},
+        "positive_control_min_pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "negative_control_max_pass_rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "judge_qualification": {"$ref": "#/$defs/evidence"},
+    "judge_independent_approval": {"$ref": "#/$defs/evidence"},
+    "transcript_review": {"$ref": "#/$defs/evidence"},
+    "runs": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "family_alias", "path"],
+        "properties": {
+          "role": {"enum": ["target", "positive-control", "negative-control"]},
+          "family_alias": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

@@ -43,7 +43,7 @@ Useful commands:
 ```text
 init doctor list profiles program validate audit estimate run resume redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
-judge-qualify compare pairwise report verify promote export controls
+judge-qualify pilot-audit compare pairwise report verify promote export controls
 import-external retention-record
 ```
 
