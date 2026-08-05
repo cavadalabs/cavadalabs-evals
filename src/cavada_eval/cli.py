@@ -8,7 +8,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from .annotations import annotation_agreement, export_annotation_package, ingest_annotations
+from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from .artifacts import verify_bundle
 from .comparison import compare_runs
 from .compliance import generate_control_report
@@ -109,6 +109,15 @@ def parser() -> argparse.ArgumentParser:
     annotations_agreement.add_argument("left")
     annotations_agreement.add_argument("right")
     annotations_agreement.add_argument("output")
+
+    annotations_adjudicate = commands.add_parser("annotations-adjudicate", help="Validate and preserve completed adjudications")
+    annotations_adjudicate.add_argument("agreement")
+    annotations_adjudicate.add_argument("left")
+    annotations_adjudicate.add_argument("right")
+    annotations_adjudicate.add_argument("output")
+    annotations_adjudicate.add_argument("--adjudicator-id", required=True)
+    annotations_adjudicate.add_argument("--qualification-evidence", required=True)
+    annotations_adjudicate.add_argument("--conflicts", required=True)
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -444,6 +453,18 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PASS
         if args.command == "annotations-agreement":
             result = annotation_agreement(Path(args.left), Path(args.right), Path(args.output))
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return EXIT_PASS
+        if args.command == "annotations-adjudicate":
+            result = ingest_adjudications(
+                Path(args.agreement),
+                Path(args.left),
+                Path(args.right),
+                Path(args.output),
+                adjudicator_id=args.adjudicator_id,
+                qualification_evidence=args.qualification_evidence,
+                conflicts=args.conflicts,
+            )
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "audit":

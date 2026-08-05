@@ -204,11 +204,69 @@ def ingest_annotations(
         "package_manifest_sha256": sha256_file(manifest_path),
         "completed_annotations_sha256": sha256_file(annotations_path),
         "restricted_linkage_sha256": sha256_file(linkage),
+        "labels_sha256": sha256_file(output / "labels.jsonl"),
         "labels": len(evidence),
         "ingested_at": datetime.now(timezone.utc).isoformat(),
     }
     atomic_json(output / "evidence_manifest.json", manifest)
     return manifest
+
+
+def _annotation_evidence(path: Path) -> tuple[dict[tuple[str, int], dict[str, Any]], str]:
+    labels_path = path.resolve() / "labels.jsonl"
+    manifest_path = path.resolve() / "evidence_manifest.json"
+    if not labels_path.is_file() or not manifest_path.is_file():
+        raise ProtocolError("annotation evidence requires labels.jsonl and evidence_manifest.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"invalid annotation evidence manifest: {exc}") from exc
+    reviewer_id = manifest.get("reviewer_id") if isinstance(manifest, dict) else None
+    if not isinstance(reviewer_id, str) or not reviewer_id or manifest.get("labels_sha256") != sha256_file(labels_path):
+        raise ProtocolError("annotation evidence identity or labels hash is invalid")
+    rows = _jsonl(labels_path)
+    evidence: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in rows:
+        if (
+            not isinstance(row.get("case_id"), str)
+            or not isinstance(row.get("repetition"), int)
+            or row.get("label") not in ANNOTATION_LABELS
+            or row.get("reviewer_id") != reviewer_id
+        ):
+            raise ProtocolError("annotation evidence contains an invalid record")
+        key = str(row["case_id"]), int(row["repetition"])
+        if key in evidence:
+            raise ProtocolError("annotation evidence contains duplicate observations")
+        evidence[key] = row
+    if not evidence:
+        raise ProtocolError("annotation evidence is empty")
+    return evidence, reviewer_id
+
+
+def _paired_evidence(
+    left: Path, right: Path
+) -> tuple[dict[tuple[str, int], dict[str, Any]], dict[tuple[str, int], dict[str, Any]], tuple[str, str]]:
+    left_map, left_reviewer = _annotation_evidence(left)
+    right_map, right_reviewer = _annotation_evidence(right)
+    if set(left_map) != set(right_map):
+        raise ProtocolError("annotation evidence must contain identical unique observations")
+    if left_reviewer == right_reviewer:
+        raise ProtocolError("agreement requires two distinct reviewers")
+    return left_map, right_map, (left_reviewer, right_reviewer)
+
+
+def _blind_review(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: row.get(field)
+        for field in (
+            "label",
+            "criterion_findings",
+            "rationale",
+            "failure_severity",
+            "confidence",
+            "escalation_flags",
+        )
+    }
 
 
 def _kappa(pairs: list[tuple[str, str]]) -> float:
@@ -227,44 +285,37 @@ def annotation_agreement(left: Path, right: Path, output: Path, *, bootstrap_sam
         raise ProtocolError(f"annotation agreement output already exists: {output}")
     if bootstrap_samples < 100:
         raise ProtocolError("annotation agreement requires at least 100 bootstrap samples")
-    left_rows = _jsonl(left.resolve() / "labels.jsonl")
-    right_rows = _jsonl(right.resolve() / "labels.jsonl")
-    if not left_rows or not right_rows:
-        raise ProtocolError("annotation evidence is empty")
-    for row in left_rows + right_rows:
-        if (
-            not isinstance(row.get("case_id"), str)
-            or not isinstance(row.get("repetition"), int)
-            or row.get("label") not in ANNOTATION_LABELS
-            or not isinstance(row.get("reviewer_id"), str)
-            or not row["reviewer_id"]
-        ):
-            raise ProtocolError("annotation evidence contains an invalid record")
-    def key(row: dict[str, Any]) -> tuple[str, int]:
-        return str(row["case_id"]), int(row["repetition"])
-
-    left_map = {key(row): row for row in left_rows}
-    right_map = {key(row): row for row in right_rows}
-    if len(left_map) != len(left_rows) or len(right_map) != len(right_rows) or set(left_map) != set(right_map):
-        raise ProtocolError("annotation evidence must contain identical unique observations")
-    left_reviewers = {str(row["reviewer_id"]) for row in left_rows}
-    right_reviewers = {str(row["reviewer_id"]) for row in right_rows}
-    reviewer_ids = left_reviewers | right_reviewers
-    if len(left_reviewers) != 1 or len(right_reviewers) != 1 or len(reviewer_ids) != 2:
-        raise ProtocolError("agreement requires two distinct reviewers")
+    left_map, right_map, reviewers = _paired_evidence(left, right)
     keys = sorted(left_map)
     pairs = [(str(left_map[item]["label"]), str(right_map[item]["label"])) for item in keys]
     raw_agreement = sum(left_label == right_label for left_label, right_label in pairs) / len(pairs)
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.
     estimates = sorted(_kappa(rng.choices(pairs, k=len(pairs))) for _ in range(bootstrap_samples))
     cut = quantiles(estimates, n=40, method="inclusive")
-    disagreements = [
-        {"case_id": item[0], "repetition": item[1], "left": left_map[item]["label"], "right": right_map[item]["label"]}
-        for item in keys
-        if left_map[item]["label"] != right_map[item]["label"]
-    ]
+    order_rng = random.Random(seed)  # noqa: S311 -- identity blinding, not cryptography.
+    disagreements: list[dict[str, Any]] = []
+    for item in keys:
+        if left_map[item]["label"] == right_map[item]["label"]:
+            continue
+        reviews = [_blind_review(left_map[item]), _blind_review(right_map[item])]
+        order_rng.shuffle(reviews)
+        disagreements.append(
+            {
+                "case_id": item[0],
+                "repetition": item[1],
+                "reviews": reviews,
+                "decision": {
+                    "label": None,
+                    "criterion_findings": {},
+                    "rationale": None,
+                    "failure_severity": None,
+                    "confidence": None,
+                    "escalation_flags": [],
+                },
+            }
+        )
     result = {
-        "reviewers": sorted(reviewer_ids),
+        "reviewers": sorted(reviewers),
         "observations": len(pairs),
         "raw_agreement": raw_agreement,
         "cohen_kappa": _kappa(pairs),
@@ -277,3 +328,96 @@ def annotation_agreement(left: Path, right: Path, output: Path, *, bootstrap_sam
     for row in disagreements:
         append_jsonl(output / "disagreements.jsonl", row)
     return result
+
+
+def ingest_adjudications(
+    agreement: Path,
+    left: Path,
+    right: Path,
+    output: Path,
+    *,
+    adjudicator_id: str,
+    qualification_evidence: str,
+    conflicts: str,
+) -> dict[str, Any]:
+    agreement = agreement.resolve()
+    output = output.resolve()
+    if output.exists():
+        raise ProtocolError(f"adjudication evidence output already exists: {output}")
+    if not adjudicator_id.strip() or not qualification_evidence.strip() or not conflicts.strip():
+        raise ProtocolError("adjudicator ID, qualification evidence, and conflicts declaration are required")
+    agreement_path = agreement / "agreement.json"
+    decisions_path = agreement / "disagreements.jsonl"
+    if not agreement_path.is_file() or not decisions_path.is_file():
+        raise ProtocolError("agreement evidence requires agreement.json and disagreements.jsonl")
+    left_map, right_map, reviewers = _paired_evidence(left, right)
+    if adjudicator_id in reviewers:
+        raise ProtocolError("adjudicator must be distinct from both reviewers")
+    expected = {key for key in left_map if left_map[key]["label"] != right_map[key]["label"]}
+    decisions: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in _jsonl(decisions_path):
+        key = row.get("case_id"), row.get("repetition")
+        if not isinstance(key[0], str) or not isinstance(key[1], int) or key in decisions:
+            raise ProtocolError("adjudication package contains an invalid or duplicate observation")
+        if key not in expected:
+            raise ProtocolError("adjudication package includes an observation without reviewer disagreement")
+        source_reviews = {_json_key(_blind_review(left_map[key])), _json_key(_blind_review(right_map[key]))}
+        package_reviews = row.get("reviews")
+        if not isinstance(package_reviews, list) or len(package_reviews) != 2 or {_json_key(value) for value in package_reviews} != source_reviews:
+            raise ProtocolError("adjudication package reviewer evidence was changed")
+        decision = row.get("decision")
+        if not isinstance(decision, dict):
+            raise ProtocolError("adjudication decision is missing")
+        label = decision.get("label")
+        rationale = decision.get("rationale")
+        findings = decision.get("criterion_findings")
+        confidence = decision.get("confidence")
+        flags = decision.get("escalation_flags")
+        failure_severity = decision.get("failure_severity")
+        if label not in ANNOTATION_LABELS or not isinstance(rationale, str) or not rationale.strip():
+            raise ProtocolError("adjudication decision is incomplete")
+        if not isinstance(findings, dict) or not findings or not all(
+            isinstance(name, str) and name and isinstance(value, bool) for name, value in findings.items()
+        ):
+            raise ProtocolError("adjudication criterion findings must map names to booleans")
+        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= float(confidence) <= 1:
+            raise ProtocolError("adjudication confidence must be from 0 to 1")
+        if not isinstance(flags, list) or not all(isinstance(flag, str) and flag for flag in flags):
+            raise ProtocolError("adjudication escalation flags are invalid")
+        if label == "fail" and failure_severity not in {"low", "medium", "high", "critical"}:
+            raise ProtocolError("failed adjudication requires failure severity")
+        if label != "fail" and failure_severity is not None:
+            raise ProtocolError("only failed adjudications may set failure severity")
+        decisions[key] = {
+            "case_id": key[0],
+            "repetition": key[1],
+            "source_reviews": [left_map[key], right_map[key]],
+            "adjudicator_id": adjudicator_id,
+            **decision,
+            "confidence": float(confidence),
+        }
+    if set(decisions) != expected:
+        raise ProtocolError("every reviewer disagreement requires exactly one adjudication")
+    output.mkdir(parents=True)
+    atomic_text(output / "adjudications.jsonl", "")
+    for key in sorted(decisions):
+        append_jsonl(output / "adjudications.jsonl", decisions[key])
+    manifest = {
+        "adjudicator_id": adjudicator_id,
+        "qualification_evidence": qualification_evidence,
+        "conflicts": conflicts,
+        "reviewers": sorted(reviewers),
+        "agreement_sha256": sha256_file(agreement_path),
+        "completed_disagreements_sha256": sha256_file(decisions_path),
+        "left_evidence_manifest_sha256": sha256_file(left.resolve() / "evidence_manifest.json"),
+        "right_evidence_manifest_sha256": sha256_file(right.resolve() / "evidence_manifest.json"),
+        "adjudications_sha256": sha256_file(output / "adjudications.jsonl"),
+        "adjudications": len(decisions),
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_json(output / "evidence_manifest.json", manifest)
+    return manifest
+
+
+def _json_key(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

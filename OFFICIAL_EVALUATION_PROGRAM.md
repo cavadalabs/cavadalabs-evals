@@ -124,7 +124,7 @@ holdout authoring have not started.
   borderline, safe-completion, refusal, and adjudication examples.
 - [x] Produce reviewer training and qualification fixtures.
 - [x] Produce blind annotation packages that do not identify model providers.
-- [ ] Preserve raw labels, rationales, disagreements, adjudications, reviewer
+- [x] Preserve raw labels, rationales, disagreements, adjudications, reviewer
   qualification evidence, and conflicts of interest.
 - [x] Compute raw agreement and an appropriate chance-corrected agreement
   statistic with uncertainty.

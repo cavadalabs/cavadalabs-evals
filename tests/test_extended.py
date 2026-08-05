@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_annotations
+from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
@@ -262,9 +262,44 @@ def test_annotation_package_is_blind_and_never_overwrites(tmp_path: Path) -> Non
     left = tmp_path / "review-left"
     right = tmp_path / "review-right"
     ingest_annotations(output, linkage, left, reviewer_id="reviewer-a", qualification_evidence="qualification-a", conflicts="none declared")
+    annotation.update(
+        {
+            "label": "fail",
+            "criterion_findings": {"correct": False},
+            "rationale": "The response fails the criterion.",
+            "failure_severity": "medium",
+            "confidence": 0.8,
+        }
+    )
+    (output / "annotations.jsonl").write_text(json.dumps(annotation) + "\n", encoding="utf-8")
     ingest_annotations(output, linkage, right, reviewer_id="reviewer-b", qualification_evidence="qualification-b", conflicts="none declared")
-    agreement = annotation_agreement(left, right, tmp_path / "agreement", bootstrap_samples=100)
-    assert agreement["raw_agreement"] == 1 and agreement["cohen_kappa"] == 1
+    agreement_dir = tmp_path / "agreement"
+    agreement = annotation_agreement(left, right, agreement_dir, bootstrap_samples=100)
+    assert agreement["raw_agreement"] == 0 and agreement["disagreements"] == 1
+    disagreement = json.loads((agreement_dir / "disagreements.jsonl").read_text(encoding="utf-8"))
+    assert "reviewer_id" not in json.dumps(disagreement)
+    disagreement["decision"] = {
+        "label": "pass",
+        "criterion_findings": {"correct": True},
+        "rationale": "The response satisfies the governing criterion.",
+        "failure_severity": None,
+        "confidence": 0.95,
+        "escalation_flags": [],
+    }
+    (agreement_dir / "disagreements.jsonl").write_text(json.dumps(disagreement) + "\n", encoding="utf-8")
+    adjudication_dir = tmp_path / "adjudication"
+    adjudication = ingest_adjudications(
+        agreement_dir,
+        left,
+        right,
+        adjudication_dir,
+        adjudicator_id="adjudicator-c",
+        qualification_evidence="qualification-c",
+        conflicts="none declared",
+    )
+    preserved = json.loads((adjudication_dir / "adjudications.jsonl").read_text(encoding="utf-8"))
+    assert adjudication["adjudications"] == 1
+    assert {review["label"] for review in preserved["source_reviews"]} == {"pass", "fail"}
     try:
         export_annotation_package(suite, run_dir, output, linkage)
     except ProtocolError as exc:
