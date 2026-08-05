@@ -50,6 +50,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Validate numeric limits, URI schemes, MIME types, hashes, timestamps, and identifiers.
 - [x] Implement suite lifecycle: `draft`, `candidate`, `calibrated`, `approved`, `deprecated`, `retired`.
 - [x] Add suite promotion validation and a `promote` command.
+- [x] Require hash-pinned calibration and independent-approval files with exact suite, holdout, pilot, labeling, statistics, contamination, gate, source, and expiry evidence.
 - [x] Refuse incompatible protocol/schema/suite comparisons by default without mutating released artifacts.
 - [!] Approve and publish any future cross-version compatibility mapping as a new governed protocol artifact.
 - [x] Add a complete, English suite template.

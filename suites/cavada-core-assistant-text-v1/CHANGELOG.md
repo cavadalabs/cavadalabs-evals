@@ -1,5 +1,14 @@
 # Suite changelog
 
+## 0.8.1 - 2026-08-05
+
+- Added fail-closed paths and SHA-256 fields for the calibration report and its
+  independent approval without changing the `0.8.0` dataset, rubric, cases,
+  gates, or measurement semantics.
+- Updated the preregistered pilot campaign to the new suite-configuration hash;
+  no pilot had been executed under `0.8.0`.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.8.0 - 2026-08-05
 
 - Declared exactly one primary case per scenario group and 76 non-independent

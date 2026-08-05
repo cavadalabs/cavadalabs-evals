@@ -1,6 +1,6 @@
 # Cavada Core Assistant Text v1
 
-Version: `0.8.0`; status: `draft`; assurance: `development`.
+Version: `0.8.1`; status: `draft`; assurance: `development`.
 
 This is the first planned high-assurance CavadaLabs suite. It evaluates a fixed
 general-purpose conversational assistant configuration in English and Italian.

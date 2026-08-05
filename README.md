@@ -54,6 +54,8 @@ target or judge. Non-public official bundles also require a current storage
 attestation covering encryption, immutability, access logging, retention, and
 tested backup/restore. Every official run also requires hash-linked,
 independently approved evidence for the exact qualified judge configuration.
+Approved suites additionally carry hash-pinned calibration and independent
+approval evidence; a status string alone cannot satisfy the release gate.
 
 ## Artifacts
 

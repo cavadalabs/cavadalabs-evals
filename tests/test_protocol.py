@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -13,10 +14,12 @@ from cavada_eval.cli import _doctor
 from cavada_eval.compliance import generate_control_report
 from cavada_eval.protocol import (
     ProtocolError,
+    _calibration_evidence_errors,
     deterministic_checks,
     load_suite,
     new_run_dir,
     semantic_duplicate_candidates,
+    sha256_file,
     summarize,
     wilson_interval,
 )
@@ -78,6 +81,68 @@ def test_official_semantic_contamination_evidence_hash_is_verified(tmp_path: Pat
         )
     with pytest.raises(ProtocolError, match="evidence hash mismatch"):
         load_suite(root, official=True)
+
+
+def test_suite_calibration_and_independent_approval_are_hash_linked(tmp_path: Path) -> None:
+    suite = load_suite(make_suite(tmp_path, status="candidate"))
+    semantic_hash = "9" * 64
+    suite.config["dataset_integrity"] = {"semantic_review_evidence_sha256": semantic_hash}
+    report = {
+        "calibration_version": "1.0.0",
+        "status": "passed",
+        "protocol_version": "1.0.0",
+        "suite": {
+            "name": suite.name,
+            "version": suite.version,
+            "dataset_sha256": sha256_file(suite.dataset_path),
+            "rubric_sha256": sha256_file(suite.rubric_path),
+        },
+        "source_commit": "1" * 40,
+        "analysis_plan_sha256": "2" * 64,
+        "human_label_evidence_sha256": "3" * 64,
+        "holdout_manifest_sha256": "4" * 64,
+        "pilot_audit_sha256": "5" * 64,
+        "statistical_review_sha256": "6" * 64,
+        "semantic_contamination_evidence_sha256": semantic_hash,
+        "gates_passed": True,
+        "results": {"all_preregistered_gates": "passed"},
+        "completed_at": "2026-08-04T00:00:00Z",
+        "limitations": ["Valid only for the declared measurement target."],
+    }
+    report_path = suite.root / "calibration.json"
+    report_path.write_text(json.dumps(report))
+    approval = {
+        "approval_version": "1.0.0",
+        "approval_id": "approval-1",
+        "scope": "suite-calibration",
+        "status": "passed",
+        "independent": True,
+        "calibration_sha256": sha256_file(report_path),
+        "approver_id": "reviewer",
+        "approver_qualification_evidence": "restricted-reference",
+        "conflicts": "none declared",
+        "decision_rationale": "The calibration evidence supports the declared scope.",
+        "approved_at": "2026-08-04T00:00:00Z",
+        "expires_at": "2027-08-04T00:00:00Z",
+    }
+    approval_path = suite.root / "calibration-approval.json"
+    approval_path.write_text(json.dumps(approval))
+    calibration = {
+        "status": "passed",
+        "evidence": report_path.name,
+        "evidence_sha256": sha256_file(report_path),
+        "independent_review": "passed",
+        "independent_review_evidence": approval_path.name,
+        "independent_review_evidence_sha256": sha256_file(approval_path),
+    }
+    now = datetime(2026, 8, 5, tzinfo=timezone.utc)
+    assert not _calibration_evidence_errors(suite, calibration, now=now)
+    approval["calibration_sha256"] = "0" * 64
+    approval_path.write_text(json.dumps(approval))
+    calibration["independent_review_evidence_sha256"] = sha256_file(approval_path)
+    assert "official calibration independent approval is incomplete, unlinked, or did not pass" in _calibration_evidence_errors(
+        suite, calibration, now=now
+    )
 
 
 def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:

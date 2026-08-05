@@ -60,6 +60,14 @@ seed = 0
 kind = "openai"
 capabilities = ["text"]
 
+[calibration]
+status = "pending"
+evidence = ""
+evidence_sha256 = ""
+independent_review = "pending"
+independent_review_evidence = ""
+independent_review_evidence_sha256 = ""
+
 [[gates]]
 metric = "pass_rate_ci.lower"
 min = 0.80

@@ -267,6 +267,117 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
     return errors
 
 
+def _calibration_evidence_errors(
+    suite: Suite,
+    calibration: Any,
+    *,
+    require_approval: bool = True,
+    now: datetime | None = None,
+) -> list[str]:
+    if not isinstance(calibration, dict):
+        return ["official suite calibration configuration is missing"]
+    required_paths = {"evidence": "calibration report"}
+    if require_approval:
+        required_paths["independent_review_evidence"] = "calibration independent approval"
+    loaded: dict[str, dict[str, Any]] = {}
+    for field, label in required_paths.items():
+        relative = calibration.get(field)
+        expected_hash = calibration.get(f"{field}_sha256")
+        if not isinstance(relative, str) or not relative or not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+            return [f"official {label} path and SHA-256 are required"]
+        try:
+            path = _inside(suite.root, relative)
+        except ProtocolError as exc:
+            return [str(exc)]
+        if not path.is_file() or path.is_symlink():
+            return [f"official {label} must be a regular suite-local file"]
+        if sha256_file(path) != expected_hash:
+            return [f"official {label} hash mismatch"]
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return [f"official {label} must be valid JSON"]
+        if not isinstance(value, dict):
+            return [f"official {label} must be a JSON object"]
+        loaded[field] = value
+
+    errors: list[str] = []
+    report = loaded["evidence"]
+    evidence_hashes = (
+        "analysis_plan_sha256",
+        "human_label_evidence_sha256",
+        "holdout_manifest_sha256",
+        "pilot_audit_sha256",
+        "statistical_review_sha256",
+        "semantic_contamination_evidence_sha256",
+    )
+    report_suite = report.get("suite")
+    expected_suite = {
+        "name": suite.name,
+        "version": suite.version,
+        "dataset_sha256": sha256_file(suite.dataset_path),
+        "rubric_sha256": sha256_file(suite.rubric_path),
+    }
+    if (
+        report.get("calibration_version") != "1.0.0"
+        or report.get("status") != "passed"
+        or report.get("protocol_version") != PROTOCOL_VERSION
+        or report_suite != expected_suite
+        or report.get("gates_passed") is not True
+        or not isinstance(report.get("results"), dict)
+        or not report["results"]
+        or not isinstance(report.get("limitations"), list)
+        or not report["limitations"]
+        or not all(isinstance(value, str) and value.strip() for value in report["limitations"])
+        or not isinstance(report.get("source_commit"), str)
+        or not re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", report["source_commit"])
+        or not all(isinstance(report.get(field), str) and re.fullmatch(r"[a-f0-9]{64}", report[field]) for field in evidence_hashes)
+    ):
+        errors.append("official calibration report is incomplete or did not pass")
+    integrity = suite.config.get("dataset_integrity") or {}
+    if report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256"):
+        errors.append("official calibration report does not match semantic contamination evidence")
+    try:
+        completed_at = datetime.fromisoformat(str(report.get("completed_at", "")).replace("Z", "+00:00"))
+        if completed_at.tzinfo is None:
+            raise ValueError
+    except ValueError:
+        errors.append("official calibration completed_at must include a timezone")
+
+    if not require_approval:
+        return errors
+    approval = loaded["independent_review_evidence"]
+    approval_fields = (
+        "approval_id",
+        "approver_id",
+        "approver_qualification_evidence",
+        "conflicts",
+        "decision_rationale",
+        "approved_at",
+        "expires_at",
+    )
+    if (
+        approval.get("approval_version") != "1.0.0"
+        or approval.get("scope") != "suite-calibration"
+        or approval.get("status") != "passed"
+        or approval.get("independent") is not True
+        or approval.get("calibration_sha256") != calibration.get("evidence_sha256")
+        or not all(isinstance(approval.get(field), str) and approval[field].strip() for field in approval_fields)
+    ):
+        errors.append("official calibration independent approval is incomplete, unlinked, or did not pass")
+        return errors
+    try:
+        approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("official calibration approval timestamps are invalid")
+        return errors
+    current = now or datetime.now(timezone.utc)
+    if approved_at.tzinfo is None or expires_at.tzinfo is None or approved_at > current or expires_at <= current or expires_at <= approved_at:
+        errors.append("official calibration independent approval is not currently effective")
+    return errors
+
+
 def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
     errors: list[str] = []
     config = suite.config
@@ -581,6 +692,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append("official runs require passed calibration evidence")
         if calibration.get("independent_review") != "passed":
             errors.append("official runs require passed independent calibration review")
+        errors.extend(_calibration_evidence_errors(suite, calibration))
         allowed_hosts = (suite.config.get("network") or {}).get("allowed_hosts")
         if not isinstance(allowed_hosts, list) or not allowed_hosts or not all(isinstance(host, str) and host for host in allowed_hosts):
             errors.append("official runs require network.allowed_hosts")
@@ -818,6 +930,9 @@ def promotion_readiness(suite: Suite, target_status: str) -> list[str]:
         calibration = suite.config.get("calibration") or {}
         if calibration.get("status") != "passed" or not calibration.get("evidence"):
             errors.append("calibration.status=passed and calibration.evidence are required")
+        if target_status == "approved" and calibration.get("independent_review") != "passed":
+            errors.append("calibration.independent_review=passed is required")
+        errors.extend(_calibration_evidence_errors(suite, calibration, require_approval=target_status == "approved"))
     if target_status == "approved":
         calibration = suite.config.get("calibration") or {}
         if calibration.get("independent_review") != "passed":

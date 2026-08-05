@@ -2,10 +2,10 @@
   "campaign_version": "1.0.0",
   "suite": {
     "name": "cavada-core-assistant-text-v1",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "dataset_sha256": "f292e44def21de0ae81d317326578f2cf90d74dda2bd61477509ff67aef88dd3",
     "rubric_sha256": "a0a131edf5aadc3f5d59a1d24bde47140ed7e96e20cfb3a33612ab6d4bb943e5",
-    "suite_config_sha256": "065d3f344e03cfda1519a3a548c2f1e6cda38ca5ff200d2e8fad14b53ca246be"
+    "suite_config_sha256": "4315016d81c80221e6167fe10a1894630a14f28d182020446ae66c4ee52e4840"
   },
   "requirements": {
     "minimum_model_families": 3,

@@ -95,7 +95,7 @@ scaffolding changes the measurement target.
 
 ### Dataset and holdout design
 
-Development progress: version `0.8.0` now contains 404 versioned synthetic
+Development dataset version `0.8.0` now contains 404 versioned synthetic
 public/practice rows representing 328 independent primary scenarios with
 balanced EN/IT and module coverage. The 76 required variants cannot increase
 statistical sample size. They remain
@@ -173,6 +173,13 @@ Official execution also refuses to start unless the exact qualification report
 has a current, independent, hash-linked approval. Any judge model, revision,
 endpoint, prompt, rubric, schema, sampling, ensemble, or consensus change
 requires new qualification evidence.
+
+Suite promotion and official validation also verify a suite-local calibration
+report plus a separate current independent approval. The report must pin the
+exact suite, dataset, rubric, source commit, analysis plan, human-label,
+holdout, pilot, statistical-review, and semantic-contamination evidence and
+record passing gates and limitations. The fail-closed examples remain
+templates, not completed calibration evidence.
 
 - [ ] Create a separate calibration corpus of human-gold responses across
   constructs, severities, languages, styles, lengths, and model families.

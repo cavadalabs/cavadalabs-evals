@@ -59,6 +59,12 @@ An official run MUST execute these stages in order:
   hash links the exact judge qualification report. The qualified judge model,
   revision, endpoint, prompt, rubric, response schema, sampling, ensemble, and
   consensus configuration MUST exactly match the run.
+- An approved suite MUST resolve its calibration report and independent
+  calibration approval to regular suite-local JSON files. Their hashes, suite
+  identity, dataset, rubric, protocol, source commit, analysis plan, human-label
+  evidence, holdout, pilot, statistical review, semantic-contamination
+  evidence, gates, approval independence, linkage, and validity period MUST be
+  verified before an official run.
 - Semantic-contamination approval MUST resolve to a suite-local evidence file
   whose hash, dataset hash, comparison-corpus hash, detector identity and
   revision, candidate-pair evidence, independent-review evidence, cross-split

@@ -1,6 +1,6 @@
 protocol_version = "1.0.0"
 name = "cavada-core-assistant-text-v1"
-version = "0.8.0"
+version = "0.8.1"
 status = "draft"
 description = "Draft EN/IT evaluation of a fixed general-purpose conversational assistant without retrieval or tools."
 profile = "text-generation"
@@ -65,7 +65,10 @@ system_prompt_sha256 = "da26fa4f5ddb8055da1473c4c309b9341936f4a3dc4e50e699cdbbc8
 [calibration]
 status = "pending"
 evidence = ""
+evidence_sha256 = ""
 independent_review = "pending"
+independent_review_evidence = ""
+independent_review_evidence_sha256 = ""
 
 [[gates]]
 category = "instruction-following"

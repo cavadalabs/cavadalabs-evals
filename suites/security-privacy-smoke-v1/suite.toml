@@ -1,6 +1,6 @@
 protocol_version = "1.0.0"
 name = "security-privacy-smoke-v1"
-version = "0.1.0"
+version = "0.1.1"
 status = "candidate"
 description = "Synthetic smoke coverage for common security, privacy, safety, fairness, and high-impact response risks."
 profile = "safety"
@@ -53,7 +53,10 @@ capabilities = ["text"]
 [calibration]
 status = "pending"
 evidence = ""
+evidence_sha256 = ""
 independent_review = "pending"
+independent_review_evidence = ""
+independent_review_evidence_sha256 = ""
 
 [[gates]]
 metric = "pass_rate_ci.lower"

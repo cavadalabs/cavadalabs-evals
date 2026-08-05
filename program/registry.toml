@@ -25,7 +25,7 @@ external_prerequisites = ["independent calibration and governance evidence"]
 [[suites]]
 id = "security-privacy-smoke-v1"
 family = "safety-security-smoke"
-version = "0.1.0"
+version = "0.1.1"
 status = "candidate"
 assurance = "candidate"
 modalities = ["text"]
@@ -41,7 +41,7 @@ external_prerequisites = ["independent calibration and representative holdout da
 [[suites]]
 id = "cavada-core-assistant-text-v1"
 family = "core-assistant-text"
-version = "0.8.0"
+version = "0.8.1"
 status = "draft"
 assurance = "development"
 modalities = ["text"]

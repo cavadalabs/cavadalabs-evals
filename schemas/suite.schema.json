@@ -56,19 +56,33 @@
     "statistics": {"type": "object"},
     "report": {"type": "object"},
     "splits": {"type": "object"},
-    "calibration": {"type": "object"},
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence", "evidence_sha256", "independent_review", "independent_review_evidence", "independent_review_evidence_sha256"],
+      "properties": {
+        "status": {"enum": ["pending", "passed", "failed", "expired"]},
+        "evidence": {"type": "string"},
+        "evidence_sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+        "independent_review": {"enum": ["pending", "passed", "failed", "expired"]},
+        "independent_review_evidence": {"type": "string"},
+        "independent_review_evidence_sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"}
+      }
+    },
     "pricing": {"type": "object"},
     "network": {"type": "object"},
     "dataset_integrity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["semantic_review_status", "semantic_review_evidence_sha256", "semantic_detector", "semantic_detector_revision", "cross_split_reviewed"],
+      "required": ["semantic_review_status", "semantic_review_evidence", "semantic_review_evidence_sha256", "semantic_detector", "semantic_detector_revision", "cross_split_reviewed", "cross_suite_reviewed"],
       "properties": {
         "semantic_review_status": {"enum": ["pending", "passed", "failed", "expired"]},
+        "semantic_review_evidence": {"type": "string"},
         "semantic_review_evidence_sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
         "semantic_detector": {"type": "string"},
         "semantic_detector_revision": {"type": "string"},
-        "cross_split_reviewed": {"type": "boolean"}
+        "cross_split_reviewed": {"type": "boolean"},
+        "cross_suite_reviewed": {"type": "boolean"}
       }
     }
   }

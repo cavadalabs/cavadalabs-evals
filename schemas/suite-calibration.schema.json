@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/suite-calibration/1.0.0",
+  "title": "CavadaLabs Suite Calibration Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "calibration_version",
+    "status",
+    "protocol_version",
+    "suite",
+    "source_commit",
+    "analysis_plan_sha256",
+    "human_label_evidence_sha256",
+    "holdout_manifest_sha256",
+    "pilot_audit_sha256",
+    "statistical_review_sha256",
+    "semantic_contamination_evidence_sha256",
+    "gates_passed",
+    "results",
+    "completed_at",
+    "limitations"
+  ],
+  "properties": {
+    "calibration_version": {"const": "1.0.0"},
+    "status": {"enum": ["passed", "failed", "withdrawn"]},
+    "protocol_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "dataset_sha256", "rubric_sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dataset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "rubric_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "source_commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+    "analysis_plan_sha256": {"$ref": "#/$defs/hash"},
+    "human_label_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "holdout_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "pilot_audit_sha256": {"$ref": "#/$defs/hash"},
+    "statistical_review_sha256": {"$ref": "#/$defs/hash"},
+    "semantic_contamination_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "gates_passed": {"type": "boolean"},
+    "results": {"type": "object", "minProperties": 1},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}
