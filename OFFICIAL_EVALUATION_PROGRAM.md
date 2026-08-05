@@ -95,7 +95,7 @@ scaffolding changes the measurement target.
 
 ### Dataset and holdout design
 
-- [ ] Create a case blueprint by construct, category, severity, language,
+- [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.
 - [ ] Create separate public practice, calibration, private holdout, and
   restricted adversarial-holdout splits.
@@ -115,9 +115,9 @@ scaffolding changes the measurement target.
 
 ### Rubric and independent labels
 
-- [ ] Produce a versioned label handbook with pass, fail, invalid, severity,
+- [x] Produce a versioned label handbook with pass, fail, invalid, severity,
   borderline, safe-completion, refusal, and adjudication examples.
-- [ ] Produce reviewer training and qualification fixtures.
+- [x] Produce reviewer training and qualification fixtures.
 - [ ] Produce blind annotation packages that do not identify model providers.
 - [ ] Preserve raw labels, rationales, disagreements, adjudications, reviewer
   qualification evidence, and conflicts of interest.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from datetime import date
@@ -42,6 +43,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     languages = blueprint.get("languages")
     each = blueprint.get("language_target_each")
     splits = blueprint.get("splits")
+    allocations = blueprint.get("allocations")
     modules = blueprint.get("modules")
     if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         errors.append("target_unique_scenarios must be a positive integer")
@@ -57,6 +59,30 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         errors.append("split counts must be non-negative integers")
     elif isinstance(total, int) and sum(splits.values()) != total:
         errors.append("split counts do not equal target_unique_scenarios")
+    required_dimensions = {"locale", "difficulty", "severity", "operating_condition", "expected_behavior"}
+    if not isinstance(allocations, dict) or set(allocations) != required_dimensions:
+        errors.append(f"allocations must define exactly {sorted(required_dimensions)}")
+    else:
+        for dimension, values in allocations.items():
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(
+                    isinstance(value, dict)
+                    and set(value) == {"id", "target"}
+                    and isinstance(value["id"], str)
+                    and value["id"]
+                    and isinstance(value["target"], int)
+                    and not isinstance(value["target"], bool)
+                    and value["target"] > 0
+                    for value in values
+                )
+            ):
+                errors.append(f"allocation {dimension} must contain id/target entries")
+            elif len({value["id"] for value in values}) != len(values):
+                errors.append(f"allocation {dimension} contains duplicate ids")
+            elif isinstance(total, int) and sum(value["target"] for value in values) != total:
+                errors.append(f"allocation {dimension} does not equal target_unique_scenarios")
     if not isinstance(modules, list) or not modules:
         errors.append("modules must contain at least one entry")
         return errors
@@ -80,6 +106,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         gate = module.get("draft_gate")
         design_rate = module.get("design_pass_rate")
         minimum_power = module.get("minimum_power")
+        subcategories = module.get("subcategories")
         if not isinstance(module_id, str) or not module_id:
             errors.append(f"{prefix}.id must be non-empty")
         elif module_id in seen:
@@ -126,12 +153,95 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
             and wilson_gate_power(holdout, float(gate), float(design_rate)) < float(minimum_power)
         ):
             errors.append(f"{prefix}.minimum_holdout does not achieve minimum_power")
+        if (
+            not isinstance(subcategories, list)
+            or not subcategories
+            or not all(
+                isinstance(value, dict)
+                and set(value) == {"id", "target"}
+                and isinstance(value["id"], str)
+                and value["id"]
+                and isinstance(value["target"], int)
+                and not isinstance(value["target"], bool)
+                and value["target"] > 0
+                for value in subcategories
+            )
+        ):
+            errors.append(f"{prefix}.subcategories must contain id/target entries")
+        elif len({value["id"] for value in subcategories}) != len(subcategories):
+            errors.append(f"{prefix}.subcategories contains duplicate ids")
+        elif isinstance(target, int) and sum(value["target"] for value in subcategories) != target:
+            errors.append(f"{prefix}.subcategories do not equal target")
     if isinstance(total, int) and module_total != total:
         errors.append("module targets do not equal target_unique_scenarios")
     if isinstance(splits, dict) and isinstance(splits.get("holdout"), int) and holdout_total > splits["holdout"]:
         errors.append("minimum module holdouts exceed the holdout split")
     if seen != set(gate_map):
         errors.append("blueprint modules and suite gate categories must match")
+    return errors
+
+
+def validate_reviewer_fixtures(path: Path, suite: Suite) -> list[str]:
+    errors: list[str] = []
+    fields = {"id", "module", "language", "prompt", "response", "gold_label", "severity", "rationale", "status"}
+    labels = {"pass", "fail", "invalid", "borderline"}
+    modules = {gate.get("category") for gate in suite.config.get("gates", []) if isinstance(gate, dict)}
+    languages = {str(case.get("language")) for case in suite.cases if case.get("language")}
+    seen_ids: set[str] = set()
+    seen_modules: set[str] = set()
+    seen_languages: set[str] = set()
+    seen_labels: set[str] = set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [f"cannot read reviewer fixtures: {exc}"]
+    for line_number, raw in enumerate(lines, 1):
+        if not raw.strip():
+            continue
+        prefix = f"fixture[{line_number}]"
+        try:
+            fixture = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            errors.append(f"{prefix} is invalid JSON: {exc.msg}")
+            continue
+        if not isinstance(fixture, dict) or set(fixture) != fields:
+            errors.append(f"{prefix} fields must be exactly {sorted(fields)}")
+            continue
+        fixture_id = fixture.get("id")
+        if not isinstance(fixture_id, str) or not fixture_id:
+            errors.append(f"{prefix}.id must be non-empty")
+        elif fixture_id in seen_ids:
+            errors.append(f"duplicate reviewer fixture id: {fixture_id}")
+        else:
+            seen_ids.add(fixture_id)
+        module = fixture.get("module")
+        language = fixture.get("language")
+        label = fixture.get("gold_label")
+        if module not in modules:
+            errors.append(f"{prefix}.module is not a suite gate category")
+        else:
+            seen_modules.add(str(module))
+        if language not in languages:
+            errors.append(f"{prefix}.language is not represented by authoring fixtures")
+        else:
+            seen_languages.add(str(language))
+        if label not in labels:
+            errors.append(f"{prefix}.gold_label is invalid")
+        else:
+            seen_labels.add(str(label))
+        if fixture.get("severity") not in {"low", "medium", "high", "critical"}:
+            errors.append(f"{prefix}.severity is invalid")
+        if fixture.get("status") != "draft-author-gold":
+            errors.append(f"{prefix}.status must remain draft-author-gold until independent approval")
+        for field in ("prompt", "response", "rationale"):
+            if not isinstance(fixture.get(field), str) or not fixture[field].strip():
+                errors.append(f"{prefix}.{field} must be non-empty")
+    if seen_modules != modules:
+        errors.append("reviewer fixtures must cover every suite gate category")
+    if seen_languages != languages:
+        errors.append("reviewer fixtures must cover every suite language")
+    if seen_labels != labels:
+        errors.append("reviewer fixtures must cover pass, fail, invalid, and borderline")
     return errors
 
 
@@ -385,4 +495,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         blueprint_path = absolute / "case_blueprint.toml"
         if blueprint_path.is_file():
             errors.extend(f"{prefix}.case_blueprint: {error}" for error in validate_case_blueprint(blueprint_path, suite))
+        reviewer_path = absolute / "review" / "reviewer_qualification.jsonl"
+        if reviewer_path.is_file():
+            errors.extend(f"{prefix}.reviewer_qualification: {error}" for error in validate_reviewer_fixtures(reviewer_path, suite))
     return errors
