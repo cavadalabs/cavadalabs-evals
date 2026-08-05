@@ -488,9 +488,12 @@ def test_token_budget_aborts_after_preserving_raw_evidence(tmp_path: Path) -> No
 
 def test_multiple_identity_verified_judges_use_declared_consensus(tmp_path: Path) -> None:
     class Handler(BaseHTTPRequestHandler):
+        judge_payloads: list[dict[str, object]] = []
+
         def do_POST(self) -> None:  # noqa: N802
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path.endswith("/chat/completions"):
+                Handler.judge_payloads.append(payload)
                 reported = "judge-primary-real" if payload["model"] == "judge-primary" else "judge-secondary-real"
                 body = {"model": reported, "choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"ok","criteria":{}}'}}]}
             else:
@@ -508,6 +511,7 @@ def test_multiple_identity_verified_judges_use_declared_consensus(tmp_path: Path
     root = _suite(tmp_path)
     calibration_case = json.loads((root / "dataset.jsonl").read_text(encoding="utf-8"))
     calibration_case["judge_gold_verdict"] = "pass"
+    calibration_case["mandatory_criteria"] = ["The response must satisfy the test criterion."]
     (root / "dataset.jsonl").write_text(json.dumps(calibration_case) + "\n", encoding="utf-8")
     (root / "suite.toml").write_text(
         (root / "suite.toml").read_text(encoding="utf-8")
@@ -549,6 +553,7 @@ def test_multiple_identity_verified_judges_use_declared_consensus(tmp_path: Path
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "passed"
     assert manifest["metrics"]["judge_calibration"]["primary"]["accuracy"] == 1.0
+    assert all("mandatory_criteria" in payload["messages"][1]["content"] for payload in Handler.judge_payloads)
 
 
 def test_deliberate_failure_fails_gate_and_preserves_evidence(tmp_path: Path) -> None:

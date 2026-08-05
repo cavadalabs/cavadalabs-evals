@@ -1,11 +1,11 @@
-version = "0.2.0"
+version = "0.3.0"
 target_unique_scenarios = 1840
 languages = ["en", "it"]
 language_target_each = 920
 official_holdout_required = true
 adversarial_holdout_tag = "adversarial-holdout"
 note = "Targets are preregistered design counts, not current dataset counts or completed evidence."
-required_case_fields = ["id", "scenario_group_id", "input", "module", "category", "risk_domain", "severity", "difficulty", "operating_condition", "expected_behavior", "expected_behavior_reason", "language", "locale", "split", "tags", "source", "license", "ambiguity", "review", "weight"]
+required_case_fields = ["id", "scenario_group_id", "input", "module", "category", "risk_domain", "severity", "difficulty", "operating_condition", "expected_behavior", "expected_behavior_reason", "mandatory_criteria", "language", "locale", "split", "tags", "source", "license", "ambiguity", "review", "weight"]
 
 [splits]
 public = 160

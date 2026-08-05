@@ -465,6 +465,7 @@ def call_judge(
         "conversation": case.get("messages"),
         "expected_behavior": case["expected_behavior"],
         "expected_behavior_reason": case["expected_behavior_reason"],
+        "mandatory_criteria": case.get("mandatory_criteria", []),
         "reference_answer": case.get("expected_output"),
         "category": case["category"],
         "risk_domain": case["risk_domain"],

@@ -1,6 +1,6 @@
-# Development dataset card 0.3.0
+# Development dataset card 0.4.0
 
-Status: superseded draft development material; not approved benchmark evidence.
+Status: draft development material; not approved benchmark evidence.
 
 ## Contents
 
@@ -13,11 +13,10 @@ Status: superseded draft development material; not approved benchmark evidence.
 - Single-turn deterministic and subjective tasks, controlled robustness and
   fairness pairs, and multi-turn conversations.
 
-Every row records its scenario group, module, category, explicitly assigned
-subcategory, risk, severity, difficulty, operating condition, language, locale,
-split, expected behavior and reason, tags, source, license, authorship,
-personal-data class, ambiguity, review status, rationale, and weight.
-Structured-output cases carry exact expected values and closed JSON schemas.
+Every row records provenance, governance metadata, a case-specific rationale,
+and at least one mandatory scoring criterion. The runner supplies those
+criteria to the identity-blinded judge. Exact tasks also carry machine-checkable
+expected strings, numbers, JSON values, schemas, or PII-output prohibitions.
 
 ## Provenance, rights, and corrections
 
@@ -26,32 +25,31 @@ The cases are deterministic CavadaLabs synthetic authoring produced from
 copied. Four cases use reserved `example.test` email placeholders; they do not
 describe natural people. Independent authorship and rights review is pending.
 
-Version `0.3.0` supersedes `0.2.1`. It keeps the prior cross-suite duplicate
-correction, replaces inaccurate index-derived subcategory labels with an
-explicit template mapping, and correctly treats the false-premise capital
-question as an answer/correction task rather than an abstention task. All prior
-dataset files remain unchanged. No result from any version is official.
+Version `0.4.0` supersedes `0.3.0`. It retains the earlier cross-suite,
+subcategory, and false-premise corrections; adds explicit mandatory criteria;
+adds deterministic references where outputs are unambiguous; and makes the
+privacy summarization fixture solvable. All prior dataset files remain
+unchanged. No result from any version is official.
 
 ## Integrity
 
-The historical file is `dataset-0.3.0.jsonl`; version `0.4.0` supersedes it
-after adding case-specific mandatory criteria. Verify the historical artifact
-with:
+The active file is `dataset-0.4.0.jsonl`. The generator refuses to overwrite
+existing versions. Verify the checked-in artifact with:
 
 ```console
 uv run python scripts/build_core_development_dataset.py \
-  suites/cavada-core-assistant-text-v1/dataset-0.3.0.jsonl \
-  --suite-version 0.3.0 --check
+  suites/cavada-core-assistant-text-v1/dataset-0.4.0.jsonl \
+  --suite-version 0.4.0 --check
 uv run cavada-eval validate suites/cavada-core-assistant-text-v1
 uv run cavada-eval program
 ```
 
 Dataset SHA-256 at creation:
-`b1a60f14f3a25bdffdcc960aabfdccafe4ed32b0ef74ad0fbb7d6f991521b1d0`.
+`4f3d4e74931509adc09834200fa99ed00d63303012b8d9805acf367009cd25e6`.
 
 ## Known limitations
 
-- All rows require independent human review; they are author labels only.
+- All rows require independent human review; criteria are author-gold only.
 - Public and practice cases are repository-visible and assumed contaminated.
 - Practice cases remain template-related to public examples and cannot be
   treated as independent evidence until semantic-duplicate review is complete.

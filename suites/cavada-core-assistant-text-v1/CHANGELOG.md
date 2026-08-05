@@ -1,5 +1,15 @@
 # Suite changelog
 
+## 0.4.0 - 2026-08-05
+
+- Added non-empty mandatory criteria to every case and included them in judge
+  requests.
+- Added deterministic references for additional exact translation, sorting,
+  factual, numeric, and privacy-minimization cases.
+- Corrected the synthetic complaint prompt to include content that can actually
+  be summarized without reproducing its contact detail.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.3.0 - 2026-08-05
 
 - Replaced index-derived subcategory labels with an explicit reviewed mapping

@@ -387,6 +387,12 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"{prefix}.category is required")
         if not isinstance(case.get("expected_behavior_reason"), str) or not case["expected_behavior_reason"].strip():
             errors.append(f"{prefix}.expected_behavior_reason is required")
+        if "mandatory_criteria" in case and (
+            not isinstance(case["mandatory_criteria"], list)
+            or not case["mandatory_criteria"]
+            or not all(isinstance(value, str) and value.strip() for value in case["mandatory_criteria"])
+        ):
+            errors.append(f"{prefix}.mandatory_criteria must be a non-empty string array")
         review = case.get("review")
         if not isinstance(review, dict) or review.get("status") not in REVIEW_STATUSES:
             errors.append(f"{prefix}.review.status is invalid")
