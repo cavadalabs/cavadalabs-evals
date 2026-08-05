@@ -95,6 +95,7 @@ def parser() -> argparse.ArgumentParser:
     annotations.add_argument("suite")
     annotations.add_argument("run_dir")
     annotations.add_argument("output")
+    annotations.add_argument("linkage_output")
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -412,7 +413,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))
             return EXIT_PASS
         if args.command == "annotations":
-            result = export_annotation_package(load_suite(args.suite), Path(args.run_dir), Path(args.output))
+            result = export_annotation_package(
+                load_suite(args.suite), Path(args.run_dir), Path(args.output), Path(args.linkage_output)
+            )
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "audit":

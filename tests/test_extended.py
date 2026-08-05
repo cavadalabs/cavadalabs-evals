@@ -243,13 +243,15 @@ def test_annotation_package_is_blind_and_never_overwrites(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     output = tmp_path / "annotations"
-    manifest = export_annotation_package(suite, run_dir, output)
+    linkage = tmp_path / "restricted" / "linkage.jsonl"
+    manifest = export_annotation_package(suite, run_dir, output, linkage)
     annotation = json.loads((output / "annotations.jsonl").read_text(encoding="utf-8"))
     public_text = json.dumps(annotation) + (output / "package_manifest.json").read_text(encoding="utf-8")
     assert manifest["identity_blinded"] is True and "Anonymous answer" in public_text
     assert "secret-model" not in public_text and "split" not in annotation
+    assert not (output / "linkage.restricted.jsonl").exists() and '"case_id": "one"' in linkage.read_text(encoding="utf-8")
     try:
-        export_annotation_package(suite, run_dir, output)
+        export_annotation_package(suite, run_dir, output, linkage)
     except ProtocolError as exc:
         assert "already exists" in str(exc)
     else:  # pragma: no cover - assertion branch

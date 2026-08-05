@@ -28,11 +28,14 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def export_annotation_package(suite: Suite, run_dir: Path, output: Path) -> dict[str, Any]:
+def export_annotation_package(suite: Suite, run_dir: Path, output: Path, linkage_output: Path) -> dict[str, Any]:
     run_dir = run_dir.resolve()
     output = output.resolve()
-    if output.exists():
-        raise ProtocolError(f"annotation package output already exists: {output}")
+    linkage_output = linkage_output.resolve()
+    if output.exists() or linkage_output.exists():
+        raise ProtocolError("annotation package or restricted linkage output already exists")
+    if linkage_output == output or output in linkage_output.parents:
+        raise ProtocolError("restricted linkage must be outside the reviewer package")
     raw_path = run_dir / "raw_responses.jsonl"
     manifest_path = run_dir / "manifest.json"
     if not raw_path.is_file() or not manifest_path.is_file():
@@ -81,12 +84,13 @@ def export_annotation_package(suite: Suite, run_dir: Path, output: Path) -> dict
         raise ProtocolError("run contains no raw responses")
     secrets.SystemRandom().shuffle(package_rows)
     output.mkdir(parents=True)
+    linkage_output.parent.mkdir(parents=True, exist_ok=True)
     atomic_text(output / "annotations.jsonl", "")
-    atomic_text(output / "linkage.restricted.jsonl", "")
+    atomic_text(linkage_output, "")
     for row in package_rows:
         append_jsonl(output / "annotations.jsonl", row)
     for row in linkage_rows:
-        append_jsonl(output / "linkage.restricted.jsonl", row)
+        append_jsonl(linkage_output, row)
     atomic_text(output / "RUBRIC.md", suite.rubric)
     handbook = suite.root / "LABEL_HANDBOOK.md"
     if handbook.is_file():
