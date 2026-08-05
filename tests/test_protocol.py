@@ -61,6 +61,12 @@ def test_official_suite_is_fail_closed(tmp_path: Path) -> None:
         load_suite(make_suite(tmp_path, status="candidate"), official=True)
 
 
+def test_official_suite_requires_pinned_semantic_contamination_evidence(tmp_path: Path) -> None:
+    with pytest.raises(ProtocolError) as caught:
+        load_suite(make_suite(tmp_path, status="approved"), official=True)
+    assert "passed semantic contamination review" in str(caught.value)
+
+
 def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "uv.lock").touch()

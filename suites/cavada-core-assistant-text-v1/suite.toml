@@ -42,6 +42,13 @@ max_audio_seconds = 3600
 [network]
 allowed_hosts = ["127.0.0.1", "localhost", "::1"]
 
+[dataset_integrity]
+semantic_review_status = "pending"
+semantic_review_evidence_sha256 = ""
+semantic_detector = ""
+semantic_detector_revision = ""
+cross_split_reviewed = false
+
 [statistics]
 confidence = 0.95
 bootstrap_samples = 10000

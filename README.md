@@ -86,7 +86,8 @@ verification.json             final integrity verification
 
 - released datasets and rubrics are immutable;
 - official suites require pinned hashes, governance, calibration, independent
-  review, network allowlists, clean Git state, and verified model revisions;
+  review, pinned semantic-contamination evidence, network allowlists, clean Git
+  state, and verified model revisions;
 - local media is checked for path escape, symlinks, type mismatch, size, image
   pixels, WAV duration, active file formats, and active PDF content;
 - reports are static, escaped, self-contained, and contain no active JavaScript;

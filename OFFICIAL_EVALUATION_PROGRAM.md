@@ -112,6 +112,9 @@ checks, verifies complete refusal-neighbor coverage, and passes with zero
 automated errors. The retained `0.5.0` ledger records the two factuality
 shortcut failures that caused the corrective release. These are reproducible
 development evidence only and do not replace independent review.
+Official validation now also requires a hash-pinned semantic detector identity,
+revision, evidence report, and completed cross-split review. The evidence schema
+exists; the approved embedding analysis has not yet been performed.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.

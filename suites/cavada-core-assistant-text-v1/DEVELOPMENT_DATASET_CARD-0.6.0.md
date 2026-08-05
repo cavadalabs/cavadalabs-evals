@@ -59,7 +59,10 @@ declares that it is not independent approval.
 - Every category remains below the preregistered 80-case official minimum.
 - Coverage is designed development coverage, not deployment-representative.
 - Independent native-language and ambiguity review, embedding-based semantic
-  analysis, and external statistical review remain pending.
+  analysis, and external statistical review remain pending. The suite's
+  `dataset_integrity` gate is intentionally `pending`, so official validation
+  fails until detector identity, revision, cross-split review, and report hash
+  are approved and pinned.
 - Results must be labeled development results and cannot support certification,
   legal compliance, universal correctness, safety, security, fairness, or
   production-fitness claims.

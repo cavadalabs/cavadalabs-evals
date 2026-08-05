@@ -62,6 +62,7 @@ OFFICIAL_SUITE_FIELDS = {
     "pricing",
     "network",
     "profile",
+    "dataset_integrity",
 }
 SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -461,6 +462,19 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append("official runs require at least one gate")
         if not pinned_dataset or not pinned_rubric:
             errors.append("official runs require pinned dataset_sha256 and rubric_sha256")
+        integrity = suite.config.get("dataset_integrity")
+        if not isinstance(integrity, dict) or integrity.get("semantic_review_status") != "passed":
+            errors.append("official runs require passed semantic contamination review")
+        elif (
+            not isinstance(integrity.get("semantic_review_evidence_sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", integrity["semantic_review_evidence_sha256"])
+            or not isinstance(integrity.get("semantic_detector"), str)
+            or not integrity["semantic_detector"].strip()
+            or not isinstance(integrity.get("semantic_detector_revision"), str)
+            or not integrity["semantic_detector_revision"].strip()
+            or integrity.get("cross_split_reviewed") is not True
+        ):
+            errors.append("official semantic contamination evidence is incomplete or unpinned")
         missing_provenance = [
             case.get("id")
             for case in suite.cases

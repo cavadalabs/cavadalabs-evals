@@ -43,6 +43,7 @@
         "representativeness": {"type": "string", "minLength": 1},
         "transfer_restrictions": {"type": "string", "minLength": 1},
         "near_duplicate_threshold": {"type": "number", "minimum": 0.8, "exclusiveMaximum": 1},
+        "semantic_duplicate_threshold": {"type": "number", "minimum": 0.8, "maximum": 1},
         "minimum_category_cases": {"type": "integer", "minimum": 1},
         "maximum_category_share": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
       }
@@ -57,6 +58,18 @@
     "splits": {"type": "object"},
     "calibration": {"type": "object"},
     "pricing": {"type": "object"},
-    "network": {"type": "object"}
+    "network": {"type": "object"},
+    "dataset_integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic_review_status", "semantic_review_evidence_sha256", "semantic_detector", "semantic_detector_revision", "cross_split_reviewed"],
+      "properties": {
+        "semantic_review_status": {"enum": ["pending", "passed", "failed", "expired"]},
+        "semantic_review_evidence_sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+        "semantic_detector": {"type": "string"},
+        "semantic_detector_revision": {"type": "string"},
+        "cross_split_reviewed": {"type": "boolean"}
+      }
+    }
   }
 }
