@@ -54,6 +54,10 @@ An official run MUST execute these stages in order:
   is skipped.
 - A deterministic hard failure MUST NOT be overridden by an LLM judge.
 - A model or judge identity mismatch MUST abort an official run.
+- Semantic-contamination approval MUST resolve to a suite-local evidence file
+  whose hash, dataset hash, comparison-corpus hash, detector identity and
+  revision, candidate-pair evidence, independent-review evidence, cross-split
+  scope, and cross-suite scope are verified before execution.
 
 ## Versions and compatibility
 

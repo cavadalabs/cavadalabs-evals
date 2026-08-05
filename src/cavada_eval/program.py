@@ -249,6 +249,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         "module": Counter(),
         **{dimension: Counter() for dimension in allowed_allocations},
     }
+    scenario_aware = any(case.get("scenario_role") is not None for case in suite.cases)
     group_contracts: dict[str, tuple[str, str, str]] = {}
     for index, case in enumerate(suite.cases, 1):
         prefix = f"case[{index}]"
@@ -269,10 +270,11 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         for dimension, allowed in allowed_allocations.items():
             if case.get(dimension) not in allowed:
                 errors.append(f"{prefix}.{dimension} is outside the blueprint")
-            else:
+            elif not scenario_aware or case.get("scenario_role") == "primary":
                 current_counts[dimension][str(case[dimension])] += 1
-        for dimension, value in (("language", language), ("split", split), ("module", module)):
-            current_counts[dimension][str(value)] += 1
+        if not scenario_aware or case.get("scenario_role") == "primary":
+            for dimension, value in (("language", language), ("split", split), ("module", module)):
+                current_counts[dimension][str(value)] += 1
         group = case.get("scenario_group_id")
         contract = str(split), str(module), str(language)
         if not isinstance(group, str) or not group:

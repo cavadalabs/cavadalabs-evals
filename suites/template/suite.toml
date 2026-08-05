@@ -44,10 +44,12 @@ allowed_hosts = ["127.0.0.1", "localhost", "::1"]
 
 [dataset_integrity]
 semantic_review_status = "pending"
+semantic_review_evidence = ""
 semantic_review_evidence_sha256 = ""
 semantic_detector = ""
 semantic_detector_revision = ""
 cross_split_reviewed = false
+cross_suite_reviewed = false
 
 [statistics]
 confidence = 0.95

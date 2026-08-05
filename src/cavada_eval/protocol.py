@@ -192,6 +192,81 @@ def load_suite(path: str | Path, *, official: bool = False) -> Suite:
     return suite
 
 
+def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    relative = integrity.get("semantic_review_evidence")
+    if not isinstance(relative, str) or not relative.strip():
+        return ["official semantic contamination evidence path is required"]
+    try:
+        path = _inside(suite.root, relative)
+    except ProtocolError as exc:
+        return [str(exc)]
+    if not path.is_file():
+        return ["official semantic contamination evidence file is missing"]
+    expected_hash = str(integrity.get("semantic_review_evidence_sha256", ""))
+    if sha256_file(path) != expected_hash:
+        return ["official semantic contamination evidence hash mismatch"]
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ["official semantic contamination evidence must be valid JSON"]
+    if not isinstance(evidence, dict):
+        return ["official semantic contamination evidence must be an object"]
+    hashes = (
+        "dataset_sha256",
+        "comparison_corpus_sha256",
+        "candidate_pairs_evidence_sha256",
+        "reviewer_evidence_sha256",
+    )
+    if any(not isinstance(evidence.get(field), str) or not re.fullmatch(r"[a-f0-9]{64}", evidence[field]) for field in hashes):
+        errors.append("official semantic contamination evidence contains invalid hashes")
+    if evidence.get("evidence_version") != "1.0.0":
+        errors.append("official semantic contamination evidence_version must be 1.0.0")
+    if evidence.get("dataset_sha256") != sha256_file(suite.dataset_path):
+        errors.append("official semantic contamination evidence dataset hash mismatch")
+    if evidence.get("detector") != integrity.get("semantic_detector"):
+        errors.append("official semantic contamination detector mismatch")
+    if evidence.get("detector_revision") != integrity.get("semantic_detector_revision"):
+        errors.append("official semantic contamination detector revision mismatch")
+    for field in ("detector_license", "similarity_metric"):
+        if not isinstance(evidence.get(field), str) or not str(evidence[field]).strip():
+            errors.append(f"official semantic contamination {field} is required")
+    threshold = evidence.get("threshold")
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not -1 <= float(threshold) <= 1:
+        errors.append("official semantic contamination threshold is invalid")
+    if evidence.get("cases") != len(suite.cases):
+        errors.append("official semantic contamination case count mismatch")
+    candidate_pairs = evidence.get("candidate_pairs")
+    confirmed = evidence.get("confirmed_duplicates")
+    if (
+        not isinstance(candidate_pairs, int)
+        or isinstance(candidate_pairs, bool)
+        or candidate_pairs < 0
+        or not isinstance(confirmed, int)
+        or isinstance(confirmed, bool)
+        or confirmed < 0
+        or confirmed > candidate_pairs
+    ):
+        errors.append("official semantic contamination pair counts are invalid")
+    if evidence.get("cross_split_reviewed") is not True or evidence.get("cross_suite_reviewed") is not True:
+        errors.append("official semantic contamination evidence requires cross-split and cross-suite review")
+    if (
+        evidence.get("independent_review_status") != "passed"
+        or not isinstance(evidence.get("reviewer_evidence"), str)
+        or not str(evidence["reviewer_evidence"]).strip()
+    ):
+        errors.append("official semantic contamination evidence requires independent reviewer evidence")
+    if evidence.get("passed") is not True or confirmed != 0:
+        errors.append("official semantic contamination evidence did not pass")
+    try:
+        performed_at = str(evidence.get("performed_at", "")).replace("Z", "+00:00")
+        if datetime.fromisoformat(performed_at).tzinfo is None:
+            raise ValueError
+    except ValueError:
+        errors.append("official semantic contamination performed_at must include a timezone")
+    return errors
+
+
 def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
     errors: list[str] = []
     config = suite.config
@@ -527,8 +602,11 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             or not isinstance(integrity.get("semantic_detector_revision"), str)
             or not integrity["semantic_detector_revision"].strip()
             or integrity.get("cross_split_reviewed") is not True
+            or integrity.get("cross_suite_reviewed") is not True
         ):
             errors.append("official semantic contamination evidence is incomplete or unpinned")
+        else:
+            errors.extend(_semantic_integrity_errors(suite, integrity))
         missing_provenance = [
             case.get("id")
             for case in suite.cases

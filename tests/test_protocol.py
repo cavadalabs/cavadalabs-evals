@@ -67,6 +67,19 @@ def test_official_suite_requires_pinned_semantic_contamination_evidence(tmp_path
     assert "passed semantic contamination review" in str(caught.value)
 
 
+def test_official_semantic_contamination_evidence_hash_is_verified(tmp_path: Path) -> None:
+    root = make_suite(tmp_path, status="approved")
+    (root / "semantic-evidence.json").write_text("{}")
+    with (root / "suite.toml").open("a") as handle:
+        handle.write(
+            '\n[dataset_integrity]\nsemantic_review_status = "passed"\nsemantic_review_evidence = "semantic-evidence.json"\n'
+            f'semantic_review_evidence_sha256 = "{"0" * 64}"\nsemantic_detector = "detector"\n'
+            'semantic_detector_revision = "revision"\ncross_split_reviewed = true\ncross_suite_reviewed = true\n'
+        )
+    with pytest.raises(ProtocolError, match="evidence hash mismatch"):
+        load_suite(root, official=True)
+
+
 def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "uv.lock").touch()

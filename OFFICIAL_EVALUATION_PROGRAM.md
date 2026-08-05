@@ -115,12 +115,14 @@ automated errors. The retained `0.5.0` ledger records the two factuality
 shortcut failures that caused the corrective release. These are reproducible
 development evidence only and do not replace independent review.
 Official validation now also requires a hash-pinned semantic detector identity,
-revision, evidence report, and completed cross-split review. The evidence schema
-exists; the approved embedding analysis has not yet been performed.
+revision, present evidence report, comparison-corpus and candidate-pair hashes,
+and completed independent cross-split/cross-suite review. The evidence schema
+and fail-closed verifier exist; the approved embedding analysis has not yet been
+performed.
 The active development set also includes 40 independent synthetic
-domain-and-register shift scenarios represented by 44 linked probes. Paired reporting is implemented, but this is
-designed construct coverage rather than representative deployment-shift
-evidence.
+domain-and-register shift scenarios represented by 44 linked probes. Paired
+reporting is implemented, but this is designed construct coverage rather than
+representative deployment-shift evidence.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.
