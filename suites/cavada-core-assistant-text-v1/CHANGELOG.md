@@ -1,5 +1,15 @@
 # Suite changelog
 
+## 0.5.0 - 2026-08-05
+
+- Replaced all 160 practice prompt clones with separately worded EN/IT
+  scenarios while preserving the preregistered constructs and case balance.
+- Reduced public/practice token-containment duplicate candidates from 160 to
+  zero at the declared 0.95 review threshold.
+- Preserved every historical dataset and added a reproducibility check for the
+  new immutable artifact.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.4.0 - 2026-08-05
 
 - Added non-empty mandatory criteria to every case and included them in judge

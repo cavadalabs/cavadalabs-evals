@@ -1,8 +1,6 @@
-# Development dataset card 0.4.0
+# Development dataset card 0.5.0
 
 Status: draft development material; not approved benchmark evidence.
-
-Superseded by version `0.5.0`; retained unchanged for reproducibility.
 
 ## Contents
 
@@ -27,43 +25,45 @@ The cases are deterministic CavadaLabs synthetic authoring produced from
 copied. Four cases use reserved `example.test` email placeholders; they do not
 describe natural people. Independent authorship and rights review is pending.
 
-Version `0.4.0` supersedes `0.3.0`. It retains the earlier cross-suite,
-subcategory, and false-premise corrections; adds explicit mandatory criteria;
-adds deterministic references where outputs are unambiguous; and makes the
-privacy summarization fixture solvable. All prior dataset files remain
-unchanged. No result from any version is official.
+Version `0.5.0` supersedes `0.4.0`. It retains all earlier corrections and
+replaces each mechanically prefixed practice clone with a separately worded
+EN/IT scenario for the same preregistered construct. This removes the known
+public/practice pseudoreplication without changing category counts, expected
+behaviors, gates, or scoring criteria. The two splits still share the same
+synthetic authoring process and are not independent human evidence. All prior
+dataset files remain unchanged. No result from any version is official.
 
 ## Integrity
 
-The active file is `dataset-0.4.0.jsonl`. The generator refuses to overwrite
+The active file is `dataset-0.5.0.jsonl`. The generator refuses to overwrite
 existing versions. Verify the checked-in artifact with:
 
 ```console
 uv run python scripts/build_core_development_dataset.py \
-  suites/cavada-core-assistant-text-v1/dataset-0.4.0.jsonl \
-  --suite-version 0.4.0 --check
+  suites/cavada-core-assistant-text-v1/dataset-0.5.0.jsonl \
+  --suite-version 0.5.0 --check
 uv run cavada-eval validate suites/cavada-core-assistant-text-v1
 uv run cavada-eval program
 ```
 
 Dataset SHA-256 at creation:
-`4f3d4e74931509adc09834200fa99ed00d63303012b8d9805acf367009cd25e6`.
+`eb527d0820ce3af4f3c53bf0c77005fb48c4d3d5db37f73ccd37004c75af595c`.
+
+The exact, normalized, near-duplicate, and token-containment checks pass. The
+token-containment audit reports zero candidates at the declared 0.95 threshold.
 
 ## Known limitations
 
 - All rows require independent human review; criteria are author-gold only.
 - Public and practice cases are repository-visible and assumed contaminated.
-- Automated token-containment review reports exactly 160 public/practice
-  template pairs. They cannot be treated as independent evidence and block
-  official dataset quality until replaced by independently authored scenarios.
 - There is no calibration split, private holdout, restricted adversarial
   holdout, holdout canary, or contamination study yet.
 - The 32 cases per module are below preregistered official sample targets.
 - Coverage is balanced development coverage, not a prevalence or
   deployment-representative sample.
-- Native-language review, ambiguity testing, solvability review, embedding-based
-  semantic analysis, grader-gaming analysis, and external statistical review
-  remain pending.
+- Native-language review, ambiguity testing, solvability review,
+  embedding-based semantic analysis, grader-gaming analysis, evaluation-
+  awareness testing, and external statistical review remain pending.
 - Results must be labeled development results and cannot support claims of
   certification, legal compliance, universal correctness, safety, security,
   fairness, or production fitness.

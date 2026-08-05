@@ -95,14 +95,15 @@ scaffolding changes the measurement target.
 
 ### Dataset and holdout design
 
-Development progress: version `0.4.0` now contains 320 versioned synthetic
+Development progress: version `0.5.0` now contains 320 versioned synthetic
 public/practice cases with balanced EN/IT and module coverage. They remain
 unreviewed, public, underpowered development material; calibration and private
 holdout authoring have not started. Every active case now carries explicit
 mandatory criteria passed to the judge, with deterministic references where
-the requested output is unambiguous. Token-containment audit currently reports
-160 public/practice template pairs and therefore blocks official quality gates
-until independently authored practice scenarios replace them.
+the requested output is unambiguous. The practice split now uses distinct
+scenarios and token-containment audit reports zero candidates at the declared
+0.95 threshold. Both splits still share one synthetic authoring process;
+independent review and deeper semantic-contamination analysis remain required.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.

@@ -17,7 +17,7 @@ from cavada_eval.program import (
     validate_cross_suite_duplicates,
     validate_judge_qualification_blueprint,
 )
-from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file, wilson_gate_power
+from cavada_eval.protocol import ProtocolError, Suite, load_suite, semantic_duplicate_candidates, sha256_file, wilson_gate_power
 from cavada_eval.runner import _judge_calibration_summary, _post_json, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
@@ -118,6 +118,11 @@ def test_blueprint_contract_rejects_missing_case_metadata() -> None:
     suite = Suite(root, config, (case,), "rubric", root / config["dataset"], root / config["rubric"])
     errors = validate_case_blueprint(root / "case_blueprint.toml", suite)
     assert "case[1] missing blueprint fields: ['ambiguity']" in errors
+
+
+def test_core_public_and_practice_cases_have_no_token_containment_duplicates() -> None:
+    suite = load_suite(Path("suites/cavada-core-assistant-text-v1").resolve())
+    assert semantic_duplicate_candidates(suite) == []
 
 
 def test_judge_qualification_blueprint_rejects_underpowered_samples(tmp_path: Path) -> None:
