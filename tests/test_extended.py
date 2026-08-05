@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
 from cavada_eval.pairwise import _winner
-from cavada_eval.program import load_program_registry, validate_cross_suite_duplicates
-from cavada_eval.protocol import ProtocolError, load_suite, sha256_file, wilson_gate_power
+from cavada_eval.program import load_program_registry, validate_case_blueprint, validate_cross_suite_duplicates
+from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file, wilson_gate_power
 from cavada_eval.runner import _post_json, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
@@ -101,6 +102,17 @@ def test_cross_suite_duplicates_are_rejected(tmp_path: Path) -> None:
     right_config.write_text(right_config.read_text().replace('name = "extended"', 'name = "extended-right"'))
     errors = validate_cross_suite_duplicates([load_suite(left), load_suite(right)])
     assert errors == ["cross-suite duplicate inputs: extended/one, extended-right/one"]
+
+
+def test_blueprint_contract_rejects_missing_case_metadata() -> None:
+    root = Path("suites/cavada-core-assistant-text-v1").resolve()
+    with (root / "suite.toml").open("rb") as handle:
+        config = tomllib.load(handle)
+    case = json.loads((root / config["dataset"]).read_text(encoding="utf-8").splitlines()[0])
+    case.pop("ambiguity")
+    suite = Suite(root, config, (case,), "rubric", root / config["dataset"], root / config["rubric"])
+    errors = validate_case_blueprint(root / "case_blueprint.toml", suite)
+    assert "case[1] missing blueprint fields: ['ambiguity']" in errors
 
 
 def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:

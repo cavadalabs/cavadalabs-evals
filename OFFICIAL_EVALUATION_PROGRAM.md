@@ -108,7 +108,7 @@ holdout authoring have not started.
   over-refusal.
 - [ ] Include deterministic, subjective, boundary, multilingual, multi-turn,
   perturbation, and distribution-shift cases.
-- [ ] Record source, license, authorship, rationale, ambiguity, review method,
+- [x] Record source, license, authorship, rationale, ambiguity, review method,
   personal-data class, and weight for every case.
 - [ ] Add unique holdout canaries, exposure records, rotation dates, and a
   contamination-response policy.

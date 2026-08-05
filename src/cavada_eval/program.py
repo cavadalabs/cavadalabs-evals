@@ -83,6 +83,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     splits = blueprint.get("splits")
     allocations = blueprint.get("allocations")
     modules = blueprint.get("modules")
+    required_case_fields = blueprint.get("required_case_fields")
     if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         errors.append("target_unique_scenarios must be a positive integer")
     if not isinstance(languages, list) or not languages or not all(isinstance(item, str) and item for item in languages):
@@ -124,6 +125,14 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     if not isinstance(modules, list) or not modules:
         errors.append("modules must contain at least one entry")
         return errors
+    if (
+        not isinstance(required_case_fields, list)
+        or not required_case_fields
+        or not all(isinstance(field, str) and field for field in required_case_fields)
+        or len(set(required_case_fields)) != len(required_case_fields)
+    ):
+        errors.append("required_case_fields must be a unique non-empty string array")
+        required_case_fields = []
 
     gate_map = {
         gate.get("category"): gate.get("min")
@@ -133,6 +142,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     seen: set[str] = set()
     module_total = 0
     holdout_total = 0
+    module_subcategories: dict[str, set[str]] = {}
     for index, module in enumerate(modules, 1):
         prefix = f"module[{index}]"
         if not isinstance(module, dict):
@@ -210,12 +220,77 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
             errors.append(f"{prefix}.subcategories contains duplicate ids")
         elif isinstance(target, int) and sum(value["target"] for value in subcategories) != target:
             errors.append(f"{prefix}.subcategories do not equal target")
+        elif isinstance(module_id, str):
+            module_subcategories[module_id] = {str(value["id"]) for value in subcategories}
     if isinstance(total, int) and module_total != total:
         errors.append("module targets do not equal target_unique_scenarios")
     if isinstance(splits, dict) and isinstance(splits.get("holdout"), int) and holdout_total > splits["holdout"]:
         errors.append("minimum module holdouts exceed the holdout split")
     if seen != set(gate_map):
         errors.append("blueprint modules and suite gate categories must match")
+    allowed_allocations = {
+        dimension: {str(value["id"]) for value in values}
+        for dimension, values in allocations.items()
+        if isinstance(values, list) and all(isinstance(value, dict) and "id" in value for value in values)
+    } if isinstance(allocations, dict) else {}
+    current_counts: dict[str, Counter[str]] = {
+        "language": Counter(),
+        "split": Counter(),
+        "module": Counter(),
+        **{dimension: Counter() for dimension in allowed_allocations},
+    }
+    group_contracts: dict[str, tuple[str, str, str]] = {}
+    for index, case in enumerate(suite.cases, 1):
+        prefix = f"case[{index}]"
+        missing = sorted(set(required_case_fields) - set(case))
+        if missing:
+            errors.append(f"{prefix} missing blueprint fields: {missing}")
+        module = case.get("module")
+        if module != case.get("category") or module not in module_subcategories:
+            errors.append(f"{prefix}.module must equal a declared category")
+        elif case.get("subcategory") not in module_subcategories[str(module)]:
+            errors.append(f"{prefix}.subcategory is not declared for module {module}")
+        language = case.get("language")
+        if isinstance(languages, list) and language not in languages:
+            errors.append(f"{prefix}.language is outside the blueprint")
+        split = case.get("split")
+        if isinstance(splits, dict) and split not in splits:
+            errors.append(f"{prefix}.split is outside the blueprint")
+        for dimension, allowed in allowed_allocations.items():
+            if case.get(dimension) not in allowed:
+                errors.append(f"{prefix}.{dimension} is outside the blueprint")
+            else:
+                current_counts[dimension][str(case[dimension])] += 1
+        for dimension, value in (("language", language), ("split", split), ("module", module)):
+            current_counts[dimension][str(value)] += 1
+        group = case.get("scenario_group_id")
+        contract = str(split), str(module), str(language)
+        if not isinstance(group, str) or not group:
+            errors.append(f"{prefix}.scenario_group_id must be non-empty")
+        elif group in group_contracts and group_contracts[group] != contract:
+            errors.append(f"scenario group {group!r} crosses split, module, or language boundaries")
+        else:
+            group_contracts[group] = contract
+    allocation_ceilings = {
+        dimension: {str(value["id"]): int(value["target"]) for value in values}
+        for dimension, values in allocations.items()
+        if isinstance(values, list)
+        and all(isinstance(value, dict) and isinstance(value.get("id"), str) and isinstance(value.get("target"), int) for value in values)
+    } if isinstance(allocations, dict) else {}
+    ceilings = {
+        "language": {str(value): int(each) for value in languages} if isinstance(languages, list) and isinstance(each, int) else {},
+        "split": {str(key): int(value) for key, value in splits.items()} if isinstance(splits, dict) else {},
+        "module": {
+            str(module["id"]): int(module["target"])
+            for module in modules
+            if isinstance(module, dict) and isinstance(module.get("id"), str) and isinstance(module.get("target"), int)
+        },
+        **allocation_ceilings,
+    }
+    for dimension, counts in current_counts.items():
+        for value, count in counts.items():
+            if value in ceilings.get(dimension, {}) and count > ceilings[dimension][value]:
+                errors.append(f"current {dimension}={value!r} count {count} exceeds blueprint target {ceilings[dimension][value]}")
     return errors
 
 
