@@ -2,14 +2,74 @@ from __future__ import annotations
 
 import json
 import runpy
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from cavada_eval.calibration import qualify_judge_run
+from cavada_eval.calibration import judge_evidence_errors, qualify_judge_run
 from cavada_eval.protocol import ProtocolError, load_suite
 
 assemble = runpy.run_path("scripts/assemble_judge_calibration.py")["assemble"]
+
+
+def test_exact_judge_qualification_requires_current_linked_independent_approval() -> None:
+    judge = {
+        "requested_model": "judge",
+        "expected_reported_model": "judge",
+        "revision": "fixed",
+        "endpoint": "https://judge.example/v1",
+        "prompt_sha256": "a" * 64,
+        "response_schema": "judgment.schema.json@1.0.0",
+        "temperature": 0,
+        "models": [{"id": "primary", "model": "judge", "expected_model": "judge", "revision": "fixed"}],
+        "consensus": "unanimous",
+    }
+    qualification = {
+        "qualification_version": "1.0.0",
+        "passed": True,
+        "rubric_sha256": "b" * 64,
+        "run_manifest_sha256": "c" * 64,
+        "corpus_manifest_sha256": "d" * 64,
+        "blueprint_sha256": "e" * 64,
+        "corpus_dataset_sha256": "f" * 64,
+        "bundle_verification": {"valid": True},
+        "judge_configuration": judge,
+        "judges": {"primary": {"passed": True}},
+    }
+    approval = {
+        "approval_version": "1.0.0",
+        "approval_id": "approval-1",
+        "scope": "judge-qualification",
+        "status": "passed",
+        "independent": True,
+        "qualification_sha256": "1" * 64,
+        "approver_id": "reviewer",
+        "approver_qualification_evidence": "restricted-reference",
+        "conflicts": "none declared",
+        "decision_rationale": "All preregistered qualification evidence passed review.",
+        "approved_at": "2026-08-01T00:00:00Z",
+        "expires_at": "2027-08-01T00:00:00Z",
+    }
+    now = datetime(2026, 8, 5, tzinfo=timezone.utc)
+    assert not judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=judge,
+        rubric_sha256="b" * 64,
+        now=now,
+    )
+    changed = {**judge, "revision": "different"}
+    errors = judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=changed,
+        rubric_sha256="b" * 64,
+        now=now,
+    )
+    assert "judge qualification does not match the exact run configuration" in errors
 
 
 def test_restricted_judge_calibration_corpus_is_balanced_and_runnable(tmp_path: Path) -> None:

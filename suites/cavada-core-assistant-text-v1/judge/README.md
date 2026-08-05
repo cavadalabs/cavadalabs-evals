@@ -77,6 +77,20 @@ invalid-case gate, repetition requirement, or stability gate failure returns a
 non-passing qualification result. Style, length, probe, language, severity, and
 model-family slices remain visible diagnostics unless separately powered.
 
+An independent qualified reviewer then copies
+`configs/judge_approval.example.json` into restricted evidence storage,
+replaces every fail-closed placeholder, and pins the qualification report's
+SHA-256. Official runs require both immutable files:
+
+```console
+uv run cavada-eval run SUITE ... --official \
+  --judge-qualification /restricted/qualifications/JUDGE-RUN.json \
+  --judge-approval /restricted/approvals/JUDGE-RUN.json
+```
+
+The runner verifies the approval period and linkage, every qualification gate,
+and the complete judge configuration before creating the run directory.
+
 The 2,252-item target powers module-level verdict gates. Language, severity,
 style, length, probe, and model-family slices remain diagnostic unless a future
 version preregisters and funds separate powered gates. This package does not

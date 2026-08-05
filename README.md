@@ -52,7 +52,8 @@ and query values are never written to manifests. Official non-public data needs
 a recorded external-destination authorization before it can reach an external
 target or judge. Non-public official bundles also require a current storage
 attestation covering encryption, immutability, access logging, retention, and
-tested backup/restore.
+tested backup/restore. Every official run also requires hash-linked,
+independently approved evidence for the exact qualified judge configuration.
 
 ## Artifacts
 

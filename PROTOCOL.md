@@ -34,7 +34,8 @@ are to be interpreted as requirements language.
 An official run MUST execute these stages in order:
 
 1. validate the complete suite and all local assets;
-2. capture source, environment, SUT, judge, and authorization evidence;
+2. verify exact judge qualification and independent approval, then capture
+   source, environment, SUT, judge, and authorization evidence;
 3. generate and preserve target responses;
 4. run deterministic metrics;
 5. run judges only when deterministic hard gates pass;
@@ -54,6 +55,10 @@ An official run MUST execute these stages in order:
   is skipped.
 - A deterministic hard failure MUST NOT be overridden by an LLM judge.
 - A model or judge identity mismatch MUST abort an official run.
+- An official run MUST verify a passing, unexpired independent approval whose
+  hash links the exact judge qualification report. The qualified judge model,
+  revision, endpoint, prompt, rubric, response schema, sampling, ensemble, and
+  consensus configuration MUST exactly match the run.
 - Semantic-contamination approval MUST resolve to a suite-local evidence file
   whose hash, dataset hash, comparison-corpus hash, detector identity and
   revision, candidate-pair evidence, independent-review evidence, cross-split

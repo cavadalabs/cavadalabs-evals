@@ -65,6 +65,8 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--max-estimated-cost", type=float, default=0)
     command.add_argument("--external-authorization", default="")
     command.add_argument("--storage-attestation", default="")
+    command.add_argument("--judge-qualification", default="")
+    command.add_argument("--judge-approval", default="")
     command.add_argument("--concurrency", type=int, default=1)
     command.add_argument("--requests-per-second", type=float, default=0)
     command.add_argument("--progress", action="store_true")
@@ -151,6 +153,8 @@ def parser() -> argparse.ArgumentParser:
     resume.add_argument("--judge-key-env", default="JUDGE_API_KEY")
     resume.add_argument("--external-authorization", default="")
     resume.add_argument("--storage-attestation", default="")
+    resume.add_argument("--judge-qualification", default="")
+    resume.add_argument("--judge-approval", default="")
     resume.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     resume.add_argument("--signing-key-id", default="")
     resume.add_argument("--progress", action="store_true")
@@ -312,6 +316,8 @@ def _execute(args: argparse.Namespace) -> int:
         concurrency=args.concurrency,
         requests_per_second=args.requests_per_second,
         progress=args.progress,
+        judge_qualification=args.judge_qualification,
+        judge_approval=args.judge_approval,
     )
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     print(run_dir)
@@ -369,6 +375,8 @@ def _resume(args: argparse.Namespace) -> int:
         concurrency=int(parameters.get("concurrency", 1)),
         requests_per_second=float(parameters.get("requests_per_second", 0)),
         progress=args.progress,
+        judge_qualification=args.judge_qualification,
+        judge_approval=args.judge_approval,
     )
     print(output)
     final = json.loads((output / "manifest.json").read_text(encoding="utf-8"))

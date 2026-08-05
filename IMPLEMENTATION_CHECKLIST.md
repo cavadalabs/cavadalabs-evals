@@ -119,6 +119,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Support multiple independent judge models and explicit consensus policies.
 - [x] Produce judge agreement, disagreement, and score-distribution metrics.
 - [x] Compute per-judge confusion matrices and qualification gates when cases contain gold verdicts.
+- [x] Require hash-linked, unexpired independent approval of the exact qualified judge configuration before an official run starts.
 - [!] Produce independently labeled calibration datasets for each official judge and risk severity.
 - [!] Qualify position, verbosity, style, self-preference, and reference-leakage bias using independently reviewed calibration data.
 - [x] Define judge qualification thresholds per suite.

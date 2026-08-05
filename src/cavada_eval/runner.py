@@ -18,6 +18,7 @@ from typing import Any
 
 from .artifacts import verify_bundle, write_bundle
 from .assets import asset_inventory, content_text, encoded_content, encoded_messages, openai_content
+from .calibration import judge_evidence_errors
 from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
 from .metrics import METRIC_VERSION, deterministic_evaluation
 from .profiles import ADAPTER_CONTRACT_VERSION
@@ -666,6 +667,8 @@ def run(
     concurrency: int = 1,
     requests_per_second: float = 0,
     progress: bool = False,
+    judge_qualification: str = "",
+    judge_approval: str = "",
 ) -> Path:
     modes = {"smoke", "regression", "candidate", "official", "redteam", "performance", "load", "soak", "offline", "monitoring"}
     if mode not in modes:
@@ -801,6 +804,47 @@ def run(
 
     safe_target_endpoint = _manifest_endpoint(endpoint)
     safe_judge_endpoint = _manifest_endpoint(judge_endpoint)
+    judge_manifest = {
+        "requested_model": judge_model,
+        "expected_reported_model": expected_judge_model or judge_model,
+        "revision": judge_revision,
+        "endpoint": safe_judge_endpoint,
+        "prompt_sha256": sha256_bytes(_judge_system_prompt(suite).encode("utf-8")),
+        "response_schema": "judgment.schema.json@1.0.0",
+        "temperature": 0,
+        "models": judge_specs,
+        "consensus": consensus,
+    }
+    judge_evidence: dict[str, Any] | None = None
+    if official and (not judge_qualification or not judge_approval):
+        raise ProtocolError("official runs require judge qualification and independent approval evidence")
+    if judge_qualification or judge_approval:
+        if not judge_qualification or not judge_approval:
+            raise ProtocolError("judge qualification and independent approval must be supplied together")
+        try:
+            qualification_record = json.loads(Path(judge_qualification).read_text(encoding="utf-8"))
+            approval_record = json.loads(Path(judge_approval).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProtocolError("judge qualification and approval must be readable JSON objects") from exc
+        qualification_sha256 = sha256_file(Path(judge_qualification))
+        approval_sha256 = sha256_file(Path(judge_approval))
+        evidence_errors = judge_evidence_errors(
+            qualification_record,
+            approval_record,
+            qualification_sha256=qualification_sha256,
+            expected_judge=judge_manifest,
+            rubric_sha256=sha256_file(suite.rubric_path),
+        )
+        if evidence_errors:
+            raise ProtocolError("invalid judge qualification evidence:\n" + "\n".join(evidence_errors))
+        judge_evidence = {
+            "qualification_sha256": qualification_sha256,
+            "approval_sha256": approval_sha256,
+            "approval_id": approval_record["approval_id"],
+            "approver_id": approval_record["approver_id"],
+            "approved_at": approval_record["approved_at"],
+            "expires_at": approval_record["expires_at"],
+        }
 
     target_key = os.getenv(target_key_env, "")
     judge_key = os.getenv(judge_key_env, "")
@@ -834,6 +878,8 @@ def run(
         recorded_judges = manifest.get("judge", {}).get("models")
         if recorded_judges is not None and recorded_judges != judge_specs:
             raise ProtocolError("resume mismatch for configured judge models")
+        if manifest.get("judge_qualification") != judge_evidence:
+            raise ProtocolError("resume mismatch for judge qualification evidence")
         if official and manifest.get("source", {}).get("commit") != evidence.get("commit"):
             raise ProtocolError("official resume requires the original source commit")
         run_id = str(manifest["run_id"])
@@ -911,17 +957,8 @@ def run(
                     sha256_file(suite.root / str((suite.config.get("target") or {}).get("responses"))) if target_kind == "recorded" else None
                 ),
             },
-            "judge": {
-                "requested_model": judge_model,
-                "expected_reported_model": expected_judge_model or judge_model,
-                "revision": judge_revision,
-                "endpoint": safe_judge_endpoint,
-                "prompt_sha256": sha256_bytes(_judge_system_prompt(suite).encode("utf-8")),
-                "response_schema": "judgment.schema.json@1.0.0",
-                "temperature": 0,
-                "models": judge_specs,
-                "consensus": consensus,
-            },
+            "judge": judge_manifest,
+            "judge_qualification": judge_evidence,
             "external_judge_authorized": bool(authorization_record) or bool(allow_external_judge and not official),
             "external_authorization": (
                 {key: authorization_record[key] for key in ("authorization_id", "approver", "purpose", "destinations", "expires_at")}

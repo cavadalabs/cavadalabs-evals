@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle
+from .calibration import judge_evidence_errors, judge_signature
 from .protocol import ProtocolError, atomic_json, sha256_file
 
 
@@ -34,29 +35,6 @@ def _evidence(campaign_root: Path, record: Any, label: str, errors: list[str]) -
     except ProtocolError as exc:
         errors.append(str(exc))
         return None
-
-
-def _judge_signature(judge: Any) -> str:
-    if not isinstance(judge, dict):
-        return ""
-    text_fields = ("requested_model", "expected_reported_model", "revision", "endpoint", "prompt_sha256", "response_schema")
-    models = judge.get("models")
-    if (
-        not all(isinstance(judge.get(field), str) and judge[field] for field in text_fields)
-        or not isinstance(judge.get("temperature"), (int, float))
-        or isinstance(judge.get("temperature"), bool)
-        or not isinstance(models, list)
-        or not models
-        or not all(
-            isinstance(model, dict)
-            and all(isinstance(model.get(field), str) and model[field] for field in ("id", "model", "expected_model", "revision"))
-            for model in models
-        )
-        or judge.get("consensus") not in {"majority", "unanimous"}
-    ):
-        return ""
-    fields = (*text_fields, "temperature", "models", "consensus")
-    return json.dumps({field: judge.get(field) for field in fields}, sort_keys=True, separators=(",", ":"))
 
 
 def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
@@ -100,10 +78,6 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
     qualification = _evidence(campaign_root, campaign.get("judge_qualification"), "judge qualification", errors)
     approval = _evidence(campaign_root, campaign.get("judge_independent_approval"), "judge independent approval", errors)
     transcript = _evidence(campaign_root, campaign.get("transcript_review"), "transcript review", errors)
-    if qualification is not None and qualification.get("passed") is not True:
-        errors.append("judge qualification did not pass")
-    if approval is not None and approval.get("status") != "passed":
-        errors.append("judge independent approval did not pass")
     if transcript is not None:
         reviewer_count = transcript.get("independent_reviewers")
         if (
@@ -123,6 +97,7 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
     execution_signatures: set[str] = set()
     source_commits: set[str] = set()
     artifact_versions: set[tuple[str, ...]] = set()
+    expected_judge_configuration: dict[str, Any] | None = None
     target_identities: set[tuple[str, str]] = set()
     summaries: list[dict[str, Any]] = []
     expected_suite = {field: suite[field] for field in suite_fields}
@@ -187,7 +162,10 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
                 for field in ("protocol_version", "schema_version", "report_version", "metric_version", "adapter_contract_version")
             )
         )
-        judge_signatures.add(_judge_signature(manifest.get("judge")))
+        manifest_judge = manifest.get("judge")
+        judge_signatures.add(judge_signature(manifest_judge))
+        if isinstance(manifest_judge, dict):
+            expected_judge_configuration = manifest_judge
         execution = {
             field: parameters.get(field)
             for field in ("mode", "repetitions", "judge_repetitions", "timeout_seconds", "concurrency", "requests_per_second", "case_order_sha256")
@@ -247,8 +225,17 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
         errors.append("pilot runs do not share one clean source commit")
     if len(artifact_versions) != 1 or any(not value for value in next(iter(artifact_versions), ())):
         errors.append("pilot runs do not share one complete protocol and artifact version set")
-    if qualification is not None and judge_signatures and _judge_signature(qualification.get("judge_configuration")) not in judge_signatures:
-        errors.append("pilot judge does not match the qualified configuration")
+    if qualification is not None and approval is not None and len(judge_signatures) == 1 and expected_judge_configuration is not None:
+        qualification_record = campaign.get("judge_qualification") or {}
+        errors.extend(
+            judge_evidence_errors(
+                qualification,
+                approval,
+                qualification_sha256=str(qualification_record.get("sha256", "")),
+                expected_judge=expected_judge_configuration,
+                rubric_sha256=str(suite["rubric_sha256"]),
+            )
+        )
     report = {
         "pilot_audit_version": "1.0.0",
         "passed": not errors,

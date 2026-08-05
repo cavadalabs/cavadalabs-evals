@@ -6,6 +6,8 @@ import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.comparison import _analysis_rows
@@ -206,9 +208,37 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         (run_dir / "manifest.json").write_text(json.dumps(manifest))
         write_bundle(run_dir)
         campaign_runs.append({"role": role, "family_alias": alias, "path": run_dir.name})
+    qualification = {
+        "qualification_version": "1.0.0",
+        "passed": True,
+        "rubric_sha256": suite["rubric_sha256"],
+        "run_manifest_sha256": "1" * 64,
+        "corpus_manifest_sha256": "2" * 64,
+        "blueprint_sha256": "3" * 64,
+        "corpus_dataset_sha256": "4" * 64,
+        "bundle_verification": {"valid": True},
+        "judge_configuration": judge,
+        "judges": {"primary": {"passed": True}},
+    }
+    qualification_path = tmp_path / "qualification.json"
+    qualification_path.write_text(json.dumps(qualification))
+    approval = {
+        "approval_version": "1.0.0",
+        "approval_id": "approval-1",
+        "scope": "judge-qualification",
+        "status": "passed",
+        "independent": True,
+        "qualification_sha256": sha256_file(qualification_path),
+        "approver_id": "independent-reviewer",
+        "approver_qualification_evidence": "restricted-evidence-reference",
+        "conflicts": "none declared",
+        "decision_rationale": "The preregistered evidence and gates were independently reviewed.",
+        "approved_at": "2026-08-05T12:00:00+00:00",
+        "expires_at": "2099-08-05T12:00:00+00:00",
+    }
     evidence = {
-        "qualification.json": {"passed": True, "judge_configuration": judge},
-        "approval.json": {"status": "passed"},
+        "qualification.json": qualification,
+        "approval.json": approval,
         "transcript.json": {"status": "passed", "identity_blinded": True, "independent_reviewers": 2, "separate_adjudicator": True},
     }
     evidence_records = {}
@@ -615,6 +645,34 @@ def test_retry_reuses_idempotency_key() -> None:
         thread.join()
     assert result == {"ok": True} and transport["attempts"] == 2
     assert Handler.keys == ["fixed-request", "fixed-request"]
+
+
+def test_run_rejects_unpaired_judge_qualification_evidence(tmp_path: Path) -> None:
+    qualification = tmp_path / "qualification.json"
+    qualification.write_text("{}")
+    with pytest.raises(ProtocolError, match="must be supplied together"):
+        run(
+            load_suite(_suite(tmp_path)),
+            repo_root=tmp_path,
+            endpoint="http://127.0.0.1:1/target",
+            model_label="target",
+            expected_model="target",
+            model_revision="target-revision",
+            request_model=None,
+            judge_endpoint="http://127.0.0.1:1/v1",
+            judge_model="judge",
+            expected_judge_model="judge",
+            judge_revision="judge-revision",
+            target_key_env="MISSING_TARGET_KEY",
+            judge_key_env="MISSING_JUDGE_KEY",
+            repetitions=1,
+            judge_repetitions=1,
+            max_cases=0,
+            timeout=1,
+            official=False,
+            allow_external_judge=False,
+            judge_qualification=str(qualification),
+        )
 
 
 def test_token_budget_aborts_after_preserving_raw_evidence(tmp_path: Path) -> None:

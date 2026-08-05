@@ -169,6 +169,10 @@ then creates a hash-pinned recorded-response suite outside the repository. The
 `judge-qualify` gate consumes only a verified finalized run and applies the
 preregistered module-level Wilson lower bounds, zero-invalid, two-repetition,
 and 0.95 repeat-stability requirements while preserving all diagnostic slices.
+Official execution also refuses to start unless the exact qualification report
+has a current, independent, hash-linked approval. Any judge model, revision,
+endpoint, prompt, rubric, schema, sampling, ensemble, or consensus change
+requires new qualification evidence.
 
 - [ ] Create a separate calibration corpus of human-gold responses across
   constructs, severities, languages, styles, lengths, and model families.

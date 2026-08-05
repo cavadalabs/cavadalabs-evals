@@ -15,6 +15,7 @@
     "suite": {"type": "object"},
     "target": {"type": "object"},
     "judge": {"type": "object"},
+    "judge_qualification": {"type": ["object", "null"]},
     "parameters": {"type": "object"},
     "source": {"type": "object"},
     "environment": {"type": "object"},

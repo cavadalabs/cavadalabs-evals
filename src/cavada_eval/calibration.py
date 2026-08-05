@@ -2,11 +2,100 @@ from __future__ import annotations
 
 import json
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle
 from .protocol import ProtocolError, atomic_json, sha256_file
+
+
+def judge_signature(judge: Any) -> str:
+    if not isinstance(judge, dict):
+        return ""
+    text_fields = ("requested_model", "expected_reported_model", "revision", "endpoint", "prompt_sha256", "response_schema")
+    models = judge.get("models")
+    if (
+        not all(isinstance(judge.get(field), str) and judge[field] for field in text_fields)
+        or not isinstance(judge.get("temperature"), (int, float))
+        or isinstance(judge.get("temperature"), bool)
+        or not isinstance(models, list)
+        or not models
+        or not all(
+            isinstance(model, dict)
+            and all(isinstance(model.get(field), str) and model[field] for field in ("id", "model", "expected_model", "revision"))
+            for model in models
+        )
+        or judge.get("consensus") not in {"majority", "unanimous"}
+    ):
+        return ""
+    fields = (*text_fields, "temperature", "models", "consensus")
+    return json.dumps({field: judge.get(field) for field in fields}, sort_keys=True, separators=(",", ":"))
+
+
+def judge_evidence_errors(
+    qualification: Any,
+    approval: Any,
+    *,
+    qualification_sha256: str,
+    expected_judge: Any,
+    rubric_sha256: str,
+    now: datetime | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    hashes = ("run_manifest_sha256", "corpus_manifest_sha256", "blueprint_sha256", "corpus_dataset_sha256")
+    judges = qualification.get("judges") if isinstance(qualification, dict) else None
+    if (
+        not isinstance(qualification, dict)
+        or qualification.get("qualification_version") != "1.0.0"
+        or qualification.get("passed") is not True
+        or qualification.get("rubric_sha256") != rubric_sha256
+        or not isinstance(qualification.get("bundle_verification"), dict)
+        or qualification["bundle_verification"].get("valid") is not True
+        or not all(
+            isinstance(qualification.get(field), str)
+            and len(qualification[field]) == 64
+            and all(character in "0123456789abcdef" for character in qualification[field])
+            for field in hashes
+        )
+        or not isinstance(judges, dict)
+        or not judges
+        or not all(isinstance(result, dict) and result.get("passed") is True for result in judges.values())
+    ):
+        errors.append("judge qualification report is incomplete or did not pass")
+    qualification_judge = qualification.get("judge_configuration") if isinstance(qualification, dict) else None
+    if judge_signature(qualification_judge) != judge_signature(expected_judge) or not judge_signature(expected_judge):
+        errors.append("judge qualification does not match the exact run configuration")
+    approval_fields = (
+        "approval_id",
+        "approver_id",
+        "approver_qualification_evidence",
+        "conflicts",
+        "decision_rationale",
+        "approved_at",
+        "expires_at",
+    )
+    if (
+        not isinstance(approval, dict)
+        or approval.get("approval_version") != "1.0.0"
+        or approval.get("scope") != "judge-qualification"
+        or approval.get("status") != "passed"
+        or approval.get("independent") is not True
+        or approval.get("qualification_sha256") != qualification_sha256
+        or not all(isinstance(approval.get(field), str) and approval[field].strip() for field in approval_fields)
+    ):
+        errors.append("judge independent approval is incomplete, unlinked, or did not pass")
+        return errors
+    try:
+        approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("judge independent approval timestamps are invalid")
+        return errors
+    current = now or datetime.now(timezone.utc)
+    if approved_at.tzinfo is None or expires_at.tzinfo is None or approved_at > current or expires_at <= current or expires_at <= approved_at:
+        errors.append("judge independent approval is not currently effective")
+    return errors
 
 
 def _json(path: Path) -> dict[str, Any]:
