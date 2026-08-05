@@ -1,5 +1,14 @@
 # Suite changelog
 
+## 0.5.1 - 2026-08-05
+
+- Corrected two EN/IT practice factuality prompts that exposed their expected
+  answer verbatim.
+- Added immutable per-case development QA ledgers for solvability, leakage,
+  shortcut, grader-gaming, and evaluation-awareness checks.
+- Preserved the failing `0.5.0` QA evidence and every historical dataset.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.5.0 - 2026-08-05
 
 - Replaced all 160 practice prompt clones with separately worded EN/IT

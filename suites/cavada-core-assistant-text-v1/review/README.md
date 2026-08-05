@@ -27,3 +27,9 @@ Required reviewer evidence:
 
 All files containing identities or restricted cases belong in approved
 restricted storage, not this repository.
+
+`author-qa-0.5.0.json` preserves the failed audit that found two factuality
+shortcuts. `author-qa-0.5.1.json` is the passing ledger for the active cases.
+Reproduce both with `scripts/audit_dataset_quality.py`. They record author and
+machine checks only; their `not-independent` declaration prevents them from
+being mistaken for approval evidence.

@@ -2,6 +2,10 @@
 
 Status: draft development material; not approved benchmark evidence.
 
+Superseded by version `0.5.1`; retained unchanged for reproducibility. The
+author QA ledger failed two factuality cases because their prompts exposed the
+expected answer verbatim.
+
 ## Contents
 
 - 320 synthetic cases: 160 public and 160 practice.
@@ -35,7 +39,7 @@ dataset files remain unchanged. No result from any version is official.
 
 ## Integrity
 
-The active file is `dataset-0.5.0.jsonl`. The generator refuses to overwrite
+The historical file is `dataset-0.5.0.jsonl`. The generator refuses to overwrite
 existing versions. Verify the checked-in artifact with:
 
 ```console
@@ -51,6 +55,11 @@ Dataset SHA-256 at creation:
 
 The exact, normalized, near-duplicate, and token-containment checks pass. The
 token-containment audit reports zero candidates at the declared 0.95 threshold.
+The reproducible `review/author-qa-0.5.0.json` ledger records per-case
+solvability evidence and lexical leakage, shortcut, grader-gaming, and
+evaluation-awareness checks. Its status is development author QA, not
+independent approval. Its recorded status is `fail-development-qa`; version
+`0.5.1` corrects the two findings without mutating this dataset.
 
 ## Known limitations
 
@@ -61,9 +70,9 @@ token-containment audit reports zero candidates at the declared 0.95 threshold.
 - The 32 cases per module are below preregistered official sample targets.
 - Coverage is balanced development coverage, not a prevalence or
   deployment-representative sample.
-- Native-language review, ambiguity testing, solvability review,
-  embedding-based semantic analysis, grader-gaming analysis, evaluation-
-  awareness testing, and external statistical review remain pending.
+- Independent native-language and ambiguity review, embedding-based semantic
+  analysis, and external statistical review remain pending. The author QA
+  checks are necessary development evidence but cannot close those gates.
 - Results must be labeled development results and cannot support claims of
   certification, legal compliance, universal correctness, safety, security,
   fairness, or production fitness.
