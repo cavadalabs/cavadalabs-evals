@@ -17,8 +17,8 @@ from cavada_eval.program import (
     validate_cross_suite_duplicates,
     validate_judge_qualification_blueprint,
 )
-from cavada_eval.protocol import ProtocolError, Suite, load_suite, semantic_duplicate_candidates, sha256_file, wilson_gate_power
-from cavada_eval.runner import _judge_calibration_summary, _post_json, call_target, run
+from cavada_eval.protocol import ProtocolError, Suite, load_suite, semantic_duplicate_candidates, sha256_file, validate_suite, wilson_gate_power
+from cavada_eval.runner import _distribution_shift_summary, _judge_calibration_summary, _post_json, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
 
@@ -74,6 +74,46 @@ def test_statistics_are_deterministic_and_paired() -> None:
     assert contains_pii_like("Contact person@example.test") is True
     assert wilson_gate_power(142, 0.95, 0.99) >= 0.80
     assert wilson_gate_power(141, 0.95, 0.99) < 0.80
+
+
+def test_distribution_shift_summary_is_paired_and_fail_closed() -> None:
+    cases = (
+        {"id": "baseline", "category": "quality", "operating_condition": "normal"},
+        {
+            "id": "shift",
+            "category": "quality",
+            "operating_condition": "distribution-shift",
+            "distribution_shift_reference_id": "baseline",
+        },
+        {
+            "id": "invalid-shift",
+            "category": "quality",
+            "operating_condition": "distribution-shift",
+            "distribution_shift_reference_id": "missing-result",
+        },
+    )
+    summary = _distribution_shift_summary(
+        [
+            {"case_id": "baseline", "status": "pass"},
+            {"case_id": "shift", "status": "fail"},
+        ],
+        cases,
+        confidence=0.95,
+        samples=500,
+        seed=0,
+    )
+    assert summary is not None
+    assert summary["declared_pairs"] == 2 and summary["valid_pairs"] == 1 and summary["invalid_pairs"] == 1
+    assert summary["comparison"]["absolute_delta"] == -1.0
+
+
+def test_distribution_shift_case_requires_a_matched_reference() -> None:
+    suite = load_suite(Path("suites/cavada-core-assistant-text-v1"))
+    cases = [dict(case) for case in suite.cases]
+    shifted = next(case for case in cases if case.get("operating_condition") == "distribution-shift")
+    shifted["distribution_shift_reference_id"] = "missing"
+    errors = validate_suite(Suite(suite.root, suite.config, tuple(cases), suite.rubric, suite.dataset_path, suite.rubric_path))
+    assert any("distribution-shift reference does not exist" in error for error in errors)
 
 
 def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path) -> None:

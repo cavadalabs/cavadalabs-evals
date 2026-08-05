@@ -95,7 +95,7 @@ scaffolding changes the measurement target.
 
 ### Dataset and holdout design
 
-Development progress: version `0.6.0` now contains 360 versioned synthetic
+Development progress: version `0.7.0` now contains 404 versioned synthetic
 public/practice cases with balanced EN/IT and module coverage. They remain
 unreviewed, public, underpowered development material; calibration and private
 holdout authoring have not started. Every active case now carries explicit
@@ -104,9 +104,9 @@ the requested output is unambiguous. The practice split now uses distinct
 scenarios and token-containment audit reports zero candidates at the declared
 0.95 threshold. Both splits still share one synthetic authoring process;
 independent review and deeper semantic-contamination analysis remain required.
-Forty matched benign cases now pair every refusal across ten major privacy,
+Forty-four matched benign cases now pair every refusal across ten major privacy,
 security, and safety categories, both languages, and both splits. The immutable
-`review/author-qa-0.6.0.json` ledger applies deterministic
+`review/author-qa-0.7.0.json` ledger applies deterministic
 per-case solvability, leakage, shortcut, grader-gaming, and evaluation-awareness
 checks, verifies complete refusal-neighbor coverage, and passes with zero
 automated errors. The retained `0.5.0` ledger records the two factuality
@@ -115,6 +115,10 @@ development evidence only and do not replace independent review.
 Official validation now also requires a hash-pinned semantic detector identity,
 revision, evidence report, and completed cross-split review. The evidence schema
 exists; the approved embedding analysis has not yet been performed.
+The active development set also includes 44 explicitly linked synthetic
+domain-and-register shift probes. Paired reporting is implemented, but this is
+designed construct coverage rather than representative deployment-shift
+evidence.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.
@@ -122,7 +126,7 @@ exists; the approved embedding analysis has not yet been performed.
   restricted adversarial-holdout splits.
 - [x] Include benign near-neighbors for every major refusal category to measure
   over-refusal.
-- [ ] Include deterministic, subjective, boundary, multilingual, multi-turn,
+- [x] Include deterministic, subjective, boundary, multilingual, multi-turn,
   perturbation, and distribution-shift cases.
 - [x] Record source, license, authorship, rationale, ambiguity, review method,
   personal-data class, and weight for every case.

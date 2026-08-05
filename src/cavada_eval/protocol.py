@@ -341,6 +341,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                 errors.append("governance.semantic_duplicate_threshold must be a number from 0.8 through 1")
 
     seen_ids: set[str] = set()
+    cases_by_id: dict[str, dict[str, Any]] = {}
     seen_inputs: set[str] = set()
     normalized_inputs: list[tuple[str, str, str | None]] = []
     for index, case in enumerate(suite.cases, 1):
@@ -353,6 +354,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"duplicate case id: {case_id}")
         else:
             seen_ids.add(case_id)
+            cases_by_id[case_id] = case
         part_errors = validate_content_parts(
             prompt,
             suite_root=suite.root,
@@ -429,6 +431,28 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         for field in ("language", "locale"):
             if field in case and (not isinstance(case[field], str) or not case[field].strip()):
                 errors.append(f"{prefix}.{field} must be non-empty text")
+
+    for case in suite.cases:
+        case_id = str(case.get("id", ""))
+        reference_id = case.get("distribution_shift_reference_id")
+        if case.get("operating_condition") != "distribution-shift":
+            if reference_id is not None:
+                errors.append(f"case {case_id}: distribution_shift_reference_id is only valid for distribution-shift cases")
+            continue
+        if not isinstance(case.get("distribution_shift_dimension"), str) or not case["distribution_shift_dimension"].strip():
+            errors.append(f"case {case_id}: distribution_shift_dimension is required")
+        if not isinstance(reference_id, str) or not reference_id.strip():
+            errors.append(f"case {case_id}: distribution_shift_reference_id is required")
+            continue
+        reference = cases_by_id.get(reference_id)
+        if reference is None:
+            errors.append(f"case {case_id}: distribution-shift reference does not exist: {reference_id}")
+            continue
+        if reference.get("operating_condition") == "distribution-shift":
+            errors.append(f"case {case_id}: distribution-shift reference must be an in-distribution case")
+        for field in ("category", "language", "locale", "split", "expected_behavior"):
+            if case.get(field) != reference.get(field):
+                errors.append(f"case {case_id}: distribution-shift reference must match {field}")
 
     near_threshold = (governance or {}).get("near_duplicate_threshold") if isinstance(governance, dict) else None
     if isinstance(near_threshold, (int, float)) and not isinstance(near_threshold, bool):

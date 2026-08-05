@@ -1,5 +1,18 @@
 # Suite changelog
 
+## 0.7.0 - 2026-08-05
+
+- Added 44 EN/IT domain-and-register shift probes across all ten modules and
+  both development splits.
+- Linked every probe to a validated construct reference with matching category,
+  locale, split, and expected behavior.
+- Added four benign privacy neighbors so every refusal remains boundary-paired.
+- Added paired shift reporting with bootstrap uncertainty and exact McNemar
+  evidence; invalid pairs are counted and excluded fail-closed.
+- Versioned the fixed 1,840-case blueprint allocation to 202 public, 202
+  practice, 320 calibration, and 1,116 holdout cases.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.6.0 - 2026-08-05
 
 - Added 40 matched benign neighbors for all 40 refusal cases across ten major

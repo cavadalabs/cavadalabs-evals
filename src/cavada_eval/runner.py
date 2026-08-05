@@ -43,7 +43,62 @@ from .protocol import (
     write_category_csv,
 )
 from .reporting import generate_reports
-from .statistics import bootstrap_mean_interval, distribution, stratified_bootstrap_mean_interval
+from .statistics import bootstrap_mean_interval, distribution, paired_binary_comparison, stratified_bootstrap_mean_interval
+
+
+def _distribution_shift_summary(
+    rows: list[dict[str, Any]],
+    cases: tuple[dict[str, Any], ...],
+    *,
+    confidence: float,
+    samples: int,
+    seed: int,
+) -> dict[str, Any] | None:
+    shift_cases = [case for case in cases if case.get("operating_condition") == "distribution-shift"]
+    if not shift_cases:
+        return None
+    statuses: dict[str, set[str]] = {}
+    for row in rows:
+        statuses.setdefault(str(row["case_id"]), set()).add(str(row["status"]))
+
+    def outcome(case_id: str) -> bool | None:
+        values = statuses.get(case_id, set())
+        if values == {"pass"}:
+            return True
+        if values and values <= {"pass", "fail"}:
+            return False
+        return None
+
+    baseline: dict[str, bool] = {}
+    shifted: dict[str, bool] = {}
+    categories: dict[str, tuple[dict[str, bool], dict[str, bool]]] = {}
+    for case in shift_cases:
+        pair_id = str(case["id"])
+        left = outcome(str(case["distribution_shift_reference_id"]))
+        right = outcome(pair_id)
+        if left is None or right is None:
+            continue
+        baseline[pair_id] = left
+        shifted[pair_id] = right
+        category = str(case["category"])
+        category_pair = categories.setdefault(category, ({}, {}))
+        category_pair[0][pair_id] = left
+        category_pair[1][pair_id] = right
+    comparison = (
+        paired_binary_comparison(baseline, shifted, confidence=confidence, samples=samples, seed=seed)
+        if baseline
+        else None
+    )
+    return {
+        "declared_pairs": len(shift_cases),
+        "valid_pairs": len(baseline),
+        "invalid_pairs": len(shift_cases) - len(baseline),
+        "comparison": comparison,
+        "by_category": {
+            category: paired_binary_comparison(left, right, confidence=confidence, samples=samples, seed=seed)
+            for category, (left, right) in sorted(categories.items())
+        },
+    }
 
 
 def _get(value: Any, dotted: str) -> Any:
@@ -973,6 +1028,8 @@ def run(
             "language": case.get("language", "missing"),
             "locale": case.get("locale", "missing"),
             "split": case.get("split", "missing"),
+            "operating_condition": case.get("operating_condition", "missing"),
+            "distribution_shift_reference_id": case.get("distribution_shift_reference_id"),
             "scenario_id": case.get("scenario_id"),
             "performance_phase": case.get("performance_phase", "steady"),
             "repetition": repetition,
@@ -1201,8 +1258,17 @@ def run(
     metrics["pass_rate_stratified_bootstrap_ci"] = stratified_bootstrap_mean_interval(
         category_binary, confidence=confidence, samples=bootstrap_samples, seed=bootstrap_seed
     )
+    distribution_shift = _distribution_shift_summary(
+        result_rows,
+        suite.cases,
+        confidence=confidence,
+        samples=bootstrap_samples,
+        seed=bootstrap_seed,
+    )
+    if distribution_shift is not None:
+        metrics["distribution_shift"] = distribution_shift
     slices: dict[str, dict[str, Any]] = {}
-    for dimension in ("risk_domain", "severity", "language", "locale", "split"):
+    for dimension in ("risk_domain", "severity", "language", "locale", "split", "operating_condition"):
         values: dict[str, Any] = {}
         for value in sorted({str(row.get(dimension, "missing")) for row in result_rows}):
             subset = [row for row in result_rows if str(row.get(dimension, "missing")) == value]

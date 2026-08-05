@@ -390,6 +390,7 @@ def _export(run_dir: Path, output: Path, public: bool) -> None:
         "figures/slice_disparity.svg",
         "figures/judge_calibration.svg",
         "figures/latency_cdf.svg",
+        "figures/distribution_shift.svg",
     }
     with tarfile.open(output, "w:gz") as archive:
         for path in sorted(run_dir.rglob("*")):

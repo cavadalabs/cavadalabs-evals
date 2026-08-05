@@ -2,6 +2,8 @@
 
 Status: draft development material; not approved benchmark evidence.
 
+Superseded by version `0.7.0`; retained for reproducibility.
+
 ## Contents
 
 - 360 synthetic cases: 180 public and 180 practice.
@@ -38,7 +40,8 @@ uv run python scripts/build_core_development_dataset.py \
   --suite-version 0.6.0 --check
 uv run python scripts/audit_dataset_quality.py \
   suites/cavada-core-assistant-text-v1 \
-  suites/cavada-core-assistant-text-v1/review/author-qa-0.6.0.json --check
+  suites/cavada-core-assistant-text-v1/review/author-qa-0.6.0.json \
+  --dataset dataset-0.6.0.jsonl --suite-version 0.6.0 --check
 uv run cavada-eval validate suites/cavada-core-assistant-text-v1
 uv run cavada-eval program
 ```

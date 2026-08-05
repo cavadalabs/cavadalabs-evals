@@ -45,9 +45,11 @@ jobs:
       - run: uv run python scripts/build_core_development_dataset.py suites/cavada-core-assistant-text-v1/dataset-0.5.0.jsonl --suite-version 0.5.0 --check
       - run: uv run python scripts/build_core_development_dataset.py suites/cavada-core-assistant-text-v1/dataset-0.5.1.jsonl --suite-version 0.5.1 --check
       - run: uv run python scripts/build_core_development_dataset.py suites/cavada-core-assistant-text-v1/dataset-0.6.0.jsonl --suite-version 0.6.0 --check
+      - run: uv run python scripts/build_core_development_dataset.py suites/cavada-core-assistant-text-v1/dataset-0.7.0.jsonl --suite-version 0.7.0 --check
       - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.5.0.json --dataset dataset-0.5.0.jsonl --suite-version 0.5.0 --check
       - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.5.1.json --dataset dataset-0.5.1.jsonl --suite-version 0.5.1 --check
-      - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.6.0.json --check
+      - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.6.0.json --dataset dataset-0.6.0.jsonl --suite-version 0.6.0 --check
+      - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.7.0.json --check
       - run: uv run cavada-eval validate suites/cavada-core-assistant-text-v1
       - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
       - run: uv build

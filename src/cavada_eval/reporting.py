@@ -123,6 +123,20 @@ def _html_document(
         if gate_rows
         else "<h2>Gates</h2><p>No declared gate failed.</p>"
     )
+    shift = metrics.get("distribution_shift", {})
+    shift_comparison = shift.get("comparison") if isinstance(shift, dict) else None
+    shift_section = ""
+    if isinstance(shift_comparison, dict):
+        shift_interval = shift_comparison.get("delta_ci", {})
+        shift_section = (
+            f'<h2>Distribution-shift pairs</h2><img src="{figures["distribution_shift"]}" '
+            'alt="Paired in-distribution and shifted pass rates">'
+            f'<p>Valid pairs: {shift.get("valid_pairs", 0)}/{shift.get("declared_pairs", 0)}; '
+            f'shift-minus-baseline delta: {float(shift_comparison.get("absolute_delta", 0)):.3%}; '
+            f'bootstrap interval: {float(shift_interval.get("lower", 0)):.3%}–'
+            f'{float(shift_interval.get("upper", 0)):.3%}; '
+            f'invalid pairs: {shift.get("invalid_pairs", 0)}.</p>'
+        )
     reproduction = html.escape(str(manifest.get("reproduction_command", "Unavailable; see manifest parameters.")))
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CavadaLabs Evaluation Report</title><style>body{{font:15px system-ui;max-width:1180px;margin:40px auto;padding:0 20px;color:#172033;line-height:1.45}}table{{border-collapse:collapse;width:100%;display:block;overflow:auto}}th,td{{border:1px solid #ccd3df;padding:8px;text-align:left}}th{{background:#eef3f8}}.pass{{color:#08752c}}.fail{{color:#a11616}}code{{background:#eef1f6;padding:2px 5px}}img{{max-width:100%;height:auto}}.notice{{border-left:5px solid #b26a00;padding:10px;background:#fff6df}}@media print{{body{{margin:10mm}}}}</style></head><body>
@@ -139,6 +153,7 @@ def _html_document(
 	<h2>Performance</h2><img src="{figures["latency"]}" alt="Target latency percentile chart"><img src="{figures["latency_cdf"]}" alt="Target latency cumulative distribution">
 	<h2>Stability, judge agreement and calibration</h2><img src="{figures["stability"]}" alt="Stability and judge agreement values"><img src="{figures["calibration"]}" alt="Judge calibration accuracy by judge">
 	<h2>Slice disparity</h2><img src="{figures["disparity"]}" alt="Maximum pass-rate disparity by slice dimension">
+{shift_section}
 <h2>Result slices</h2><table><thead><tr><th>Dimension</th><th>Value</th><th>Cases</th><th>Pass rate</th><th>Invalid</th><th>Error</th></tr></thead><tbody>{slice_rows}</tbody></table>
 {gate_section}
 <h2>Methodology</h2><p>Cases were validated before execution. Deterministic hard checks ran before LLM judges. Repetitions were aggregated at distinct-case level. Invalid, error, and skipped cases were excluded from pass-rate denominators and remain visible.</p>
@@ -190,6 +205,15 @@ def generate_reports(
         [float(row["target_latency_ms"]) for row in result_rows if isinstance(row.get("target_latency_ms"), (int, float))],
         figures / "latency_cdf.svg",
     )
+    shift_comparison = (metrics.get("distribution_shift") or {}).get("comparison") or {}
+    _bar_svg(
+        "Paired distribution-shift pass rates",
+        [
+            ("In-distribution reference", float(shift_comparison.get("baseline_pass_rate", 0))),
+            ("Shift probe", float(shift_comparison.get("candidate_pass_rate", 0))),
+        ],
+        figures / "distribution_shift.svg",
+    )
 
     figure_uris = {
         "overall": _data_uri(figures / "overall_scores.svg"),
@@ -201,6 +225,7 @@ def generate_reports(
         "disparity": _data_uri(figures / "slice_disparity.svg"),
         "calibration": _data_uri(figures / "judge_calibration.svg"),
         "latency_cdf": _data_uri(figures / "latency_cdf.svg"),
+        "distribution_shift": _data_uri(figures / "distribution_shift.svg"),
     }
 
     failures = [row for row in result_rows if row.get("status") != "pass"]
@@ -232,6 +257,15 @@ def generate_reports(
             "Categories:",
         ]
         + [f"- {row['category']}: {row['pass_rate']:.4f} ({row['pass']}/{row['pass'] + row['fail']})" for row in categories]
+        + (
+            [
+                "",
+                f"Distribution-shift valid pairs: {metrics['distribution_shift']['valid_pairs']}/{metrics['distribution_shift']['declared_pairs']}",
+                f"Distribution-shift delta: {metrics['distribution_shift']['comparison']['absolute_delta']:.4f}",
+            ]
+            if (metrics.get("distribution_shift") or {}).get("comparison")
+            else []
+        )
         + ["", "Not legal certification or a universal safety guarantee."]
     )
     _pdf(run_dir / "report.pdf", "CavadaLabs Evaluation Report", lines)
@@ -267,4 +301,5 @@ def generate_reports(
         "figures/slice_disparity.svg",
         "figures/judge_calibration.svg",
         "figures/latency_cdf.svg",
+        "figures/distribution_shift.svg",
     ]
