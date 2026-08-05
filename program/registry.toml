@@ -4,6 +4,7 @@ protocol_version = "1.0.0"
 compatibility_policy = "same-major-explicit-cross-version-mapping"
 result_expiry_days = 365
 assurance_levels = ["development", "candidate", "calibrated", "approved", "independently-reproduced"]
+source_register = "program/source-register.toml"
 
 [[suites]]
 id = "memo4345-v1"

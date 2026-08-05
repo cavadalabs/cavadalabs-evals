@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import tomllib
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,11 @@ PROGRAM_STATUSES = {"planned", "draft", "candidate", "calibrated", "approved", "
 ASSURANCE_LEVELS = ("development", "candidate", "calibrated", "approved", "independently-reproduced")
 EXECUTION_SUPPORT = {"built-in", "adapter-required"}
 MODALITIES = {"text", "image", "audio", "video", "retrieval", "tools", "mcp", "code", "embedding"}
+SOURCE_KINDS = {"law", "standard", "guidance", "threat-intelligence", "framework", "benchmark", "tool", "service"}
+SOURCE_APPROVALS = {"reference-approved", "adapter-candidate", "legal-review-required", "service-authorization-required", "blocked"}
+SOURCE_USES = {"reference-only", "optional-adapter", "discovery-only", "blocked"}
+REDISTRIBUTION = {"reference-only", "allowed-with-notice", "prohibited", "review-required"}
+DATA_TRANSFERS = {"none", "local-only", "third-party-service", "review-required"}
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*-v[1-9][0-9]*$")
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 STATUS_ASSURANCE = {
@@ -139,6 +145,7 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
     if errors:
         raise ProtocolError("invalid program registry:\n" + "\n".join(errors))
     suites = registry["suites"]
+    source_register = load_source_register(repo_root / registry["source_register"])
     return {
         **registry,
         "summary": {
@@ -148,8 +155,96 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
             "built_in": sum(item["execution_support"] == "built-in" for item in suites),
             "adapter_required": sum(item["execution_support"] == "adapter-required" for item in suites),
             "official_capable": sum(bool(item["official_capable"]) for item in suites),
+            "sources": source_register["summary"],
         },
     }
+
+
+def load_source_register(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            register = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ProtocolError(f"cannot load source register: {exc}") from exc
+    errors = validate_source_register(register)
+    if errors:
+        raise ProtocolError("invalid source register:\n" + "\n".join(errors))
+    sources = register["sources"]
+    return {
+        **register,
+        "summary": {
+            "count": len(sources),
+            "by_approval": {
+                status: sum(item["approval"] == status for item in sources)
+                for status in sorted(SOURCE_APPROVALS)
+            },
+            "by_official_use": {
+                use: sum(item["official_use"] == use for item in sources)
+                for use in sorted(SOURCE_USES)
+            },
+        },
+    }
+
+
+def validate_source_register(register: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    required = {"register_version", "reviewed_at", "review_due", "sources"}
+    if set(register) != required:
+        errors.append(f"source register fields must be exactly {sorted(required)}")
+    if not isinstance(register.get("register_version"), str) or not VERSION_PATTERN.fullmatch(str(register.get("register_version"))):
+        errors.append("source register version must be semantic X.Y.Z")
+    dates: dict[str, date] = {}
+    for field in ("reviewed_at", "review_due"):
+        try:
+            dates[field] = date.fromisoformat(str(register.get(field)))
+        except ValueError:
+            errors.append(f"source register {field} must be YYYY-MM-DD")
+    if dates.get("review_due") and dates.get("reviewed_at") and dates["review_due"] <= dates["reviewed_at"]:
+        errors.append("source register review_due must be after reviewed_at")
+    sources = register.get("sources")
+    if not isinstance(sources, list) or not sources:
+        errors.append("source register must contain sources")
+        return errors
+    source_fields = {
+        "id", "kind", "name", "publisher", "version", "revision", "primary_url", "license",
+        "license_url", "redistribution", "commercial_use", "data_transfer", "approval",
+        "official_use", "conditions",
+    }
+    seen: set[str] = set()
+    for index, source in enumerate(sources, 1):
+        prefix = f"source[{index}]"
+        if not isinstance(source, dict) or set(source) != source_fields:
+            errors.append(f"{prefix} fields must be exactly {sorted(source_fields)}")
+            continue
+        source_id = source.get("id")
+        if not isinstance(source_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", source_id):
+            errors.append(f"{prefix}.id must be kebab-case")
+        elif source_id in seen:
+            errors.append(f"duplicate source id: {source_id}")
+        else:
+            seen.add(source_id)
+        for field in ("name", "publisher", "version", "revision", "license", "commercial_use"):
+            if not isinstance(source.get(field), str) or not source[field].strip():
+                errors.append(f"{prefix}.{field} must be non-empty")
+        for field in ("primary_url", "license_url"):
+            if not isinstance(source.get(field), str) or not source[field].startswith("https://"):
+                errors.append(f"{prefix}.{field} must be an HTTPS URL")
+        for field, allowed in (
+            ("kind", SOURCE_KINDS),
+            ("approval", SOURCE_APPROVALS),
+            ("official_use", SOURCE_USES),
+            ("redistribution", REDISTRIBUTION),
+            ("data_transfer", DATA_TRANSFERS),
+        ):
+            if source.get(field) not in allowed:
+                errors.append(f"{prefix}.{field} is invalid")
+        if not isinstance(source.get("conditions"), list) or not source["conditions"] or not all(
+            isinstance(value, str) and value.strip() for value in source["conditions"]
+        ):
+            errors.append(f"{prefix}.conditions must be a non-empty string array")
+        if source.get("official_use") == "optional-adapter" and source.get("approval") != "adapter-candidate":
+            errors.append(f"{prefix} optional adapters must have adapter-candidate approval")
+    return errors
 
 
 def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> list[str]:
@@ -161,6 +256,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         "compatibility_policy",
         "result_expiry_days",
         "assurance_levels",
+        "source_register",
         "suites",
     }
     unknown = set(registry) - required
@@ -181,6 +277,8 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         errors.append("result_expiry_days must be a positive integer")
     if registry.get("assurance_levels") != list(ASSURANCE_LEVELS):
         errors.append(f"assurance_levels must be ordered as {list(ASSURANCE_LEVELS)}")
+    if registry.get("source_register") != "program/source-register.toml":
+        errors.append("source_register must be program/source-register.toml")
     suites = registry.get("suites")
     if not isinstance(suites, list) or not suites:
         errors.append("suites must contain at least one entry")

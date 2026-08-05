@@ -4,13 +4,14 @@
   "title": "CavadaLabs Evaluation Program Registry",
   "type": "object",
   "additionalProperties": false,
-  "required": ["program_version", "registry_version", "protocol_version", "compatibility_policy", "result_expiry_days", "assurance_levels", "suites"],
+  "required": ["program_version", "registry_version", "protocol_version", "compatibility_policy", "result_expiry_days", "assurance_levels", "source_register", "suites"],
   "properties": {
     "program_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "registry_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
     "protocol_version": {"const": "1.0.0"},
     "compatibility_policy": {"const": "same-major-explicit-cross-version-mapping"},
     "result_expiry_days": {"type": "integer", "minimum": 1},
+    "source_register": {"const": "program/source-register.toml"},
     "assurance_levels": {
       "const": ["development", "candidate", "calibrated", "approved", "independently-reproduced"]
     },

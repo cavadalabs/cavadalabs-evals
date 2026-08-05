@@ -95,8 +95,10 @@ verification.json             final integrity verification
 
 Read [PROTOCOL.md](PROTOCOL.md), [SECURITY.md](SECURITY.md),
 [IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md),
-[OFFICIAL_EVALUATION_PROGRAM.md](OFFICIAL_EVALUATION_PROGRAM.md), and the
-`docs/` directory before operating an official benchmark.
+[OFFICIAL_EVALUATION_PROGRAM.md](OFFICIAL_EVALUATION_PROGRAM.md),
+[program/POLICY.md](program/POLICY.md),
+[program/SOURCE_POLICY.md](program/SOURCE_POLICY.md), and the `docs/` directory
+before operating an official benchmark.
 
 ## Development verification
 

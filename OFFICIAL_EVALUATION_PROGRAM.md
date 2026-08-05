@@ -162,16 +162,16 @@ scaffolding changes the measurement target.
 
 ## 3. External benchmark and threat intelligence adapters
 
-- [ ] Create a pinned license/API/transfer review matrix for each adapter.
+- [x] Create a pinned license/API/transfer review matrix for each adapter.
 - [ ] Add an Inspect AI adapter for agentic, tool, MCP, multimodal, and sandboxed
   evaluations without changing CavadaLabs artifacts.
 - [ ] Add a garak adapter for exploratory discovery; promote accepted failures
   only into fixed, versioned suites.
 - [ ] Add pinned imports for compatible academic tasks through
   lm-evaluation-harness.
-- [ ] Evaluate MLCommons AILuminate integration without redistributing hidden or
+- [x] Evaluate MLCommons AILuminate integration without redistributing hidden or
   restricted material.
-- [ ] Evaluate AgentDojo, CyberSecEval, PrivacyLens, Presidio, and future public
+- [x] Evaluate AgentDojo, CyberSecEval, PrivacyLens, Presidio, and future public
   benchmarks under their current licenses and data-transfer terms.
 - [ ] Map security cases to OWASP LLM 2025, OWASP Agentic 2026, MITRE ATLAS, and
   relevant ENISA controls.

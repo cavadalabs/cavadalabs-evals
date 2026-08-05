@@ -77,6 +77,8 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
     assert registry["summary"]["by_status"]["draft"] == 1
     assert registry["summary"]["by_status"]["planned"] == 15
     assert registry["summary"]["official_capable"] == 0
+    assert registry["summary"]["sources"]["count"] == 24
+    assert registry["summary"]["sources"]["by_official_use"]["blocked"] == 1
 
     duplicate = tmp_path / "registry.toml"
     duplicate.write_text(
