@@ -124,6 +124,27 @@ def quality_report(suite_path: Path, *, dataset: Path | None = None, suite_versi
     duplicates = semantic_duplicate_candidates(suite)
     if duplicates:
         errors.append(f"token-containment duplicate candidates: {len(duplicates)}")
+    neighbor_gaps: list[str] = []
+    if tuple(int(part) for part in suite.version.split(".")) >= (0, 6, 0):
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for case in suite.cases:
+            groups.setdefault(str(case.get("scenario_group_id", "")), []).append(case)
+        for case in suite.cases:
+            if case["expected_behavior"] != "refuse":
+                continue
+            peers = groups.get(str(case.get("scenario_group_id", "")), [])
+            if not any(peer.get("pair_role") == "benign" and peer.get("neighbor_of") == case["id"] for peer in peers):
+                neighbor_gaps.append(str(case["id"]))
+        errors.extend(f"{case_id}: missing benign refusal neighbor" for case_id in neighbor_gaps)
+    summary = {
+        "cases": len(cases),
+        "automated_errors": len(errors),
+        "manual_review_flags": review_flags,
+        "token_containment_candidates": len(duplicates),
+        "status": "pass-development-qa" if not errors else "fail-development-qa",
+    }
+    if tuple(int(part) for part in suite.version.split(".")) >= (0, 6, 0):
+        summary["refusal_neighbor_gaps"] = len(neighbor_gaps)
     return {
         "report_version": "1.0.0",
         "suite": suite.name,
@@ -133,13 +154,7 @@ def quality_report(suite_path: Path, *, dataset: Path | None = None, suite_versi
         "review_method": "deterministic per-case checks plus Codex-assisted author review of generated template families",
         "independence": "not-independent",
         "approval_effect": "development QA only; does not approve cases or satisfy independent review gates",
-        "summary": {
-            "cases": len(cases),
-            "automated_errors": len(errors),
-            "manual_review_flags": review_flags,
-            "token_containment_candidates": len(duplicates),
-            "status": "pass-development-qa" if not errors else "fail-development-qa",
-        },
+        "summary": summary,
         "errors": errors,
         "known_limits": [
             "Target-visible exact references can be intentional task content and require construct review.",

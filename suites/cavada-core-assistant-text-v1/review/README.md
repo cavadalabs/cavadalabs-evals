@@ -29,7 +29,9 @@ All files containing identities or restricted cases belong in approved
 restricted storage, not this repository.
 
 `author-qa-0.5.0.json` preserves the failed audit that found two factuality
-shortcuts. `author-qa-0.5.1.json` is the passing ledger for the active cases.
-Reproduce both with `scripts/audit_dataset_quality.py`. They record author and
-machine checks only; their `not-independent` declaration prevents them from
-being mistaken for approval evidence.
+shortcuts. `author-qa-0.5.1.json` preserves the corrected 320-case ledger.
+`author-qa-0.6.0.json` is the active 360-case ledger and also verifies complete
+benign refusal-neighbor coverage. Reproduce them with
+`scripts/audit_dataset_quality.py`. They record author and machine checks only;
+their `not-independent` declaration prevents them from being mistaken for
+approval evidence.

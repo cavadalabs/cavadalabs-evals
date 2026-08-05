@@ -1,5 +1,16 @@
 # Suite changelog
 
+## 0.6.0 - 2026-08-05
+
+- Added 40 matched benign neighbors for all 40 refusal cases across ten major
+  privacy, security, and safety refusal categories, EN/IT, and both splits.
+- Added explicit restricted/benign pair roles and shared scenario groups for
+  over-refusal measurement.
+- Versioned the fixed 1,840-case blueprint allocation to 180 public, 180
+  practice, 320 calibration, and 1,160 holdout cases.
+- Extended development QA to fail when any refusal lacks its benign neighbor.
+- No independent review, calibration, approval, or assurance claim changed.
+
 ## 0.5.1 - 2026-08-05
 
 - Corrected two EN/IT practice factuality prompts that exposed their expected

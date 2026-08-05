@@ -2,6 +2,8 @@
 
 Status: draft development material; not approved benchmark evidence.
 
+Superseded by version `0.6.0`; retained unchanged for reproducibility.
+
 ## Contents
 
 - 320 synthetic cases: 160 public and 160 practice.
