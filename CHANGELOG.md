@@ -3,6 +3,12 @@
 All notable changes follow semantic versioning. Protocol, engine, schema,
 report, and suite versions are released independently.
 
+## Unreleased
+
+- Official execution now requires an effective engagement record bound to the
+  exact suite and SUT; public export requires a separate post-run approval bound
+  to the verified bundle, claims, expiry, and independent review decisions.
+
 ## 0.2.0 - 2026-08-03
 
 - Added the normative protocol, implementation checklist, schemas, suite lifecycle, governance validation, normalized duplicate detection, and secure multimodal assets.

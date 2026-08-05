@@ -43,6 +43,7 @@ from .protocol import (
     wilson_interval,
     write_category_csv,
 )
+from .release import verified_engagement
 from .reporting import generate_reports
 from .statistics import bootstrap_mean_interval, distribution, paired_binary_comparison, stratified_bootstrap_mean_interval
 
@@ -669,6 +670,7 @@ def run(
     progress: bool = False,
     judge_qualification: str = "",
     judge_approval: str = "",
+    engagement: str = "",
 ) -> Path:
     modes = {"smoke", "regression", "candidate", "official", "redteam", "performance", "load", "soak", "offline", "monitoring"}
     if mode not in modes:
@@ -761,6 +763,11 @@ def run(
     if official and suite.config["data_classification"] not in {"public", "synthetic"}:
         if storage_record is None or storage_record.get("encryption_at_rest") is not True or storage_record.get("immutability") is not True:
             raise ProtocolError("non-public official runs require current encrypted immutable storage attestation")
+    if official and not engagement:
+        raise ProtocolError("official runs require an approved engagement governance record")
+    engagement_evidence = (
+        verified_engagement(Path(engagement), suite, expected_model=expected_model, model_revision=model_revision) if engagement else None
+    )
     evidence = git_evidence(repo_root)
     if official and (not evidence["commit"] or evidence["dirty"]):
         raise ProtocolError("Official runs require a committed, clean source tree")
@@ -880,6 +887,8 @@ def run(
             raise ProtocolError("resume mismatch for configured judge models")
         if manifest.get("judge_qualification") != judge_evidence:
             raise ProtocolError("resume mismatch for judge qualification evidence")
+        if manifest.get("engagement") != engagement_evidence:
+            raise ProtocolError("resume mismatch for engagement governance evidence")
         if official and manifest.get("source", {}).get("commit") != evidence.get("commit"):
             raise ProtocolError("official resume requires the original source commit")
         run_id = str(manifest["run_id"])
@@ -917,11 +926,45 @@ def run(
             str(repetitions),
             "--judge-repetitions",
             str(judge_repetitions),
+            "--max-cases",
+            str(max_cases),
+            "--timeout",
+            str(timeout),
             "--mode",
             mode,
+            "--max-target-calls",
+            str(max_target_calls),
+            "--max-judge-calls",
+            str(max_judge_calls),
+            "--max-total-tokens",
+            str(max_total_tokens),
+            "--max-elapsed-seconds",
+            str(max_elapsed_seconds),
+            "--max-estimated-cost",
+            str(max_estimated_cost),
+            "--concurrency",
+            str(concurrency),
+            "--requests-per-second",
+            str(requests_per_second),
+            "--signing-key-env",
+            signing_key_env,
         ]
         if request_model:
             reproduction.extend(["--request-model", request_model])
+        for option, value, safe_reference in (
+            ("--external-authorization", external_authorization, "PATH_TO_EXTERNAL_AUTHORIZATION_JSON"),
+            ("--storage-attestation", storage_attestation, "PATH_TO_STORAGE_ATTESTATION_JSON"),
+            ("--judge-qualification", judge_qualification, "PATH_TO_JUDGE_QUALIFICATION_JSON"),
+            ("--judge-approval", judge_approval, "PATH_TO_JUDGE_APPROVAL_JSON"),
+            ("--engagement", engagement, "PATH_TO_ENGAGEMENT_JSON"),
+            ("--signing-key-id", signing_key_id, signing_key_id),
+        ):
+            if value:
+                reproduction.extend([option, safe_reference])
+        if allow_external_judge:
+            reproduction.append("--allow-external-judge")
+        if progress:
+            reproduction.append("--progress")
         if official:
             reproduction.append("--official")
         manifest = {
@@ -959,6 +1002,7 @@ def run(
             },
             "judge": judge_manifest,
             "judge_qualification": judge_evidence,
+            "engagement": engagement_evidence,
             "external_judge_authorized": bool(authorization_record) or bool(allow_external_judge and not official),
             "external_authorization": (
                 {key: authorization_record[key] for key in ("authorization_id", "approver", "purpose", "destinations", "expires_at")}

@@ -55,7 +55,22 @@ attestation covering encryption, immutability, access logging, retention, and
 tested backup/restore. Every official run also requires hash-linked,
 independently approved evidence for the exact qualified judge configuration.
 Approved suites additionally carry hash-pinned calibration and independent
-approval evidence; a status string alone cannot satisfy the release gate.
+approval evidence. Official execution requires a current engagement record
+hash-linked to the exact suite and SUT. Public export then requires a separate,
+post-run release approval linked to the immutable bundle; status strings alone
+cannot satisfy either gate.
+
+```bash
+uv run cavada-eval export runs/SUITE/RUN public.tar.gz --public \
+  --engagement /restricted/engagement.json \
+  --release-approval /restricted/release-approval.json
+```
+
+The public archive includes `public_release.json` with the bounded claim scope,
+expiry, evidence hashes, decision statuses, and hashes of every exported file.
+It does not expose restricted reviewer evidence. The engagement, approval, and
+their referenced evidence files must remain together in their restricted
+directories so every package-local SHA-256 can be checked.
 
 ## Artifacts
 
@@ -95,6 +110,9 @@ verification.json             final integrity verification
 - local media is checked for path escape, symlinks, type mismatch, size, image
   pixels, WAV duration, active file formats, and active PDF content;
 - reports are static, escaped, self-contained, and contain no active JavaScript;
+- official runs require an exact approved engagement; public exports require
+  independent post-run statistical, security, privacy/legal, disclosure, and
+  release decisions;
 - optional DeepEval telemetry, dotenv loading, legacy key files, update checks,
   error reporting, and cloud synchronization are disabled before import;
 - custom suite Python is never executed directly.

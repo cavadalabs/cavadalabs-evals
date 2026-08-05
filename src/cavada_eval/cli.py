@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
@@ -18,7 +19,8 @@ from .pairwise import pairwise_runs
 from .pilot import audit_pilot_campaign
 from .profiles import profile_summary
 from .program import load_program_registry
-from .protocol import ProtocolError, audit_suite, load_suite, promote_suite
+from .protocol import ProtocolError, audit_suite, load_suite, promote_suite, sha256_file
+from .release import verified_public_release
 from .retention import ACTIONS as RETENTION_ACTIONS
 from .retention import retention_record
 from .runner import run
@@ -67,6 +69,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--storage-attestation", default="")
     command.add_argument("--judge-qualification", default="")
     command.add_argument("--judge-approval", default="")
+    command.add_argument("--engagement", default="")
     command.add_argument("--concurrency", type=int, default=1)
     command.add_argument("--requests-per-second", type=float, default=0)
     command.add_argument("--progress", action="store_true")
@@ -155,6 +158,7 @@ def parser() -> argparse.ArgumentParser:
     resume.add_argument("--storage-attestation", default="")
     resume.add_argument("--judge-qualification", default="")
     resume.add_argument("--judge-approval", default="")
+    resume.add_argument("--engagement", default="")
     resume.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     resume.add_argument("--signing-key-id", default="")
     resume.add_argument("--progress", action="store_true")
@@ -200,6 +204,8 @@ def parser() -> argparse.ArgumentParser:
     export.add_argument("run")
     export.add_argument("output")
     export.add_argument("--public", action="store_true")
+    export.add_argument("--engagement", default="")
+    export.add_argument("--release-approval", default="")
 
     controls = commands.add_parser("controls", help="Generate a control-evidence report without a combined compliance score")
     controls.add_argument("run")
@@ -318,6 +324,7 @@ def _execute(args: argparse.Namespace) -> int:
         progress=args.progress,
         judge_qualification=args.judge_qualification,
         judge_approval=args.judge_approval,
+        engagement=args.engagement,
     )
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     print(run_dir)
@@ -377,15 +384,20 @@ def _resume(args: argparse.Namespace) -> int:
         progress=args.progress,
         judge_qualification=args.judge_qualification,
         judge_approval=args.judge_approval,
+        engagement=args.engagement,
     )
     print(output)
     final = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     return EXIT_PASS if final["status"] == "passed" else EXIT_GATE_FAILURE
 
 
-def _export(run_dir: Path, output: Path, public: bool) -> None:
-    verification = verify_bundle(run_dir)
-    if not verification["valid"]:
+def _export(run_dir: Path, output: Path, public: bool, *, engagement: str = "", release_approval: str = "") -> None:
+    release_record = None
+    if public:
+        if not engagement or not release_approval:
+            raise ProtocolError("public export requires --engagement and --release-approval")
+        release_record = verified_public_release(run_dir, Path(engagement), Path(release_approval))
+    elif not verify_bundle(run_dir)["valid"]:
         raise ProtocolError("cannot export an invalid bundle")
     if output.exists():
         raise ProtocolError(f"refusing to overwrite export: {output}")
@@ -405,11 +417,22 @@ def _export(run_dir: Path, output: Path, public: bool) -> None:
         "figures/latency_cdf.svg",
         "figures/distribution_shift.svg",
     }
+    selected = [
+        path
+        for path in sorted(run_dir.rglob("*"))
+        if path.is_file() and not path.is_symlink() and (not public or path.relative_to(run_dir).as_posix() in public_names)
+    ]
+    if release_record is not None:
+        release_record["public_files"] = {path.relative_to(run_dir).as_posix(): sha256_file(path) for path in selected}
     with tarfile.open(output, "w:gz") as archive:
-        for path in sorted(run_dir.rglob("*")):
-            relative = path.relative_to(run_dir).as_posix()
-            if path.is_file() and not path.is_symlink() and (not public or relative in public_names):
-                archive.add(path, arcname=relative, recursive=False)
+        for path in selected:
+            archive.add(path, arcname=path.relative_to(run_dir).as_posix(), recursive=False)
+        if release_record is not None:
+            payload = (json.dumps(release_record, indent=2, sort_keys=True) + "\n").encode()
+            info = tarfile.TarInfo("public_release.json")
+            info.size = len(payload)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(payload))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -569,7 +592,13 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(promote_suite(load_suite(args.suite), args.to, actor=args.actor, evidence=args.evidence), indent=2))
             return EXIT_PASS
         if args.command == "export":
-            _export(Path(args.run), Path(args.output), args.public)
+            _export(
+                Path(args.run),
+                Path(args.output),
+                args.public,
+                engagement=args.engagement,
+                release_approval=args.release_approval,
+            )
             print(Path(args.output))
             return EXIT_PASS
         if args.command == "controls":

@@ -87,7 +87,9 @@ and permitted claims, and whether CavadaLabs acts as developer, provider,
 deployer, evaluator, testing laboratory, scheme owner, or certification body.
 Roles are not interchangeable. An `approved` engagement requires accountable
 applicability evidence, conflict assessment, authorization, and a future expiry;
-the repository's example is deliberately non-approving.
+it is hash-linked to the exact protocol, suite artifacts, SUT identity, and SUT
+revision before official execution. The repository's example is deliberately
+non-approving.
 
 Commercial ownership cannot approve technical validity. Case authors cannot
 provide the sole label review; implementers cannot provide the sole security
@@ -116,6 +118,14 @@ credentials, and client-confidential evidence. Public statements include the
 suite, version, SUT, conditions, date, expiry, limitations, and assurance level;
 they never imply endorsement, accreditation, certification, or legal compliance
 without the corresponding authority.
+
+Public export is a post-run decision, not a pre-approval of unknown results. A
+release record conforming to `schemas/release-approval.schema.json` links the
+verified bundle, manifest, and engagement and records independent statistical,
+security, privacy/legal, disclosure, and release decisions. The release
+decision maker is distinct from the technical reviewers and from execution and
+commercial owners. The public archive carries only a sanitized release record
+and hashes of its public files; restricted reviewer evidence remains outside it.
 
 An engagement records whether post-release surveillance is required. When it
 is, the plan defines responsible owner, monitored changes, contamination,

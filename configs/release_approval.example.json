@@ -1,0 +1,22 @@
+{
+  "release_version": "1.0.0",
+  "release_id": "replace-with-immutable-release-id",
+  "status": "approved",
+  "run_id": "replace-me",
+  "bundle_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "engagement_id": "replace-me",
+  "engagement_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "assurance_level": "approved",
+  "permitted_claims": ["No claim: this template is not evidence."],
+  "limitations_acknowledged": true,
+  "decisions": {
+    "statistical": {"status": "passed", "independent": true, "reviewer_id": "UNASSIGNED", "review_evidence": "UNAVAILABLE", "review_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "qualification_evidence": "UNAVAILABLE", "qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conflicts": [], "conflict_mitigation": "", "rationale": "UNAVAILABLE"},
+    "security": {"status": "passed", "independent": true, "reviewer_id": "UNASSIGNED", "review_evidence": "UNAVAILABLE", "review_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "qualification_evidence": "UNAVAILABLE", "qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conflicts": [], "conflict_mitigation": "", "rationale": "UNAVAILABLE"},
+    "privacy_legal": {"status": "not-applicable", "independent": true, "reviewer_id": "UNASSIGNED", "review_evidence": "UNAVAILABLE", "review_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "qualification_evidence": "UNAVAILABLE", "qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conflicts": [], "conflict_mitigation": "", "rationale": "UNAVAILABLE"},
+    "disclosure": {"status": "passed", "independent": true, "reviewer_id": "UNASSIGNED", "review_evidence": "UNAVAILABLE", "review_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "qualification_evidence": "UNAVAILABLE", "qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conflicts": [], "conflict_mitigation": "", "rationale": "UNAVAILABLE"},
+    "release": {"status": "passed", "independent": true, "reviewer_id": "UNASSIGNED", "review_evidence": "UNAVAILABLE", "review_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "qualification_evidence": "UNAVAILABLE", "qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "conflicts": [], "conflict_mitigation": "", "rationale": "UNAVAILABLE"}
+  },
+  "approved_at": "1970-01-01T00:00:00Z",
+  "expires_at": "1970-01-01T00:00:00Z"
+}

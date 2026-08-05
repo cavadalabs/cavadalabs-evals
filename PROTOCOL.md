@@ -35,7 +35,8 @@ An official run MUST execute these stages in order:
 
 1. validate the complete suite and all local assets;
 2. verify exact judge qualification and independent approval, then capture
-   source, environment, SUT, judge, and authorization evidence;
+   the effective engagement mandate, source, environment, SUT, judge, and
+   authorization evidence;
 3. generate and preserve target responses;
 4. run deterministic metrics;
 5. run judges only when deterministic hard gates pass;
@@ -69,6 +70,19 @@ An official run MUST execute these stages in order:
   whose hash, dataset hash, comparison-corpus hash, detector identity and
   revision, candidate-pair evidence, independent-review evidence, cross-split
   scope, and cross-suite scope are verified before execution.
+- An official run MUST resolve an approved, unexpired engagement record whose
+  hash and structured scope match the exact protocol, suite configuration,
+  dataset, rubric, SUT identity, and SUT revision. Execution, commercial, and
+  governance approval roles and conflicts MUST be recorded. Authorization,
+  conflict, legal-applicability, and approver-qualification evidence MUST be
+  present as package-local regular files with verified hashes.
+- A public result export MUST occur only after the completed official bundle is
+  independently reviewed. Its release approval MUST hash-link the exact bundle,
+  manifest, and engagement; bound the permitted claims and expiry; acknowledge
+  limitations; and separately record statistical, security, privacy/legal,
+  disclosure, and release decisions. Each decision's review and reviewer-
+  qualification evidence MUST be present and hash-verified. Release approval
+  never changes the immutable run bundle.
 
 ## Versions and compatibility
 

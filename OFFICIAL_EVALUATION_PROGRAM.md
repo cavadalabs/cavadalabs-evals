@@ -126,7 +126,7 @@ representative deployment-shift evidence.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.
-- [ ] Create separate public practice, calibration, private holdout, and
+- [!] Create independently reviewed calibration, private holdout, and
   restricted adversarial-holdout splits.
 - [x] Include benign near-neighbors for every major refusal category to measure
   over-refusal.
@@ -134,9 +134,12 @@ representative deployment-shift evidence.
   perturbation, and distribution-shift cases.
 - [x] Record source, license, authorship, rationale, ambiguity, review method,
   personal-data class, and weight for every case.
-- [ ] Add unique holdout canaries, exposure records, rotation dates, and a
+- [!] Add unique holdout canaries, exposure records, rotation dates, and a
   contamination-response policy.
-- [ ] Test exact, normalized, semantic, cross-split, and cross-suite duplicates.
+- [x] Test exact, normalized, token-containment, cross-split, and cross-suite
+  duplicates in repository-visible data.
+- [!] Run the approved semantic detector and independent review against the
+  restricted calibration, holdout, and comparison corpora.
 - [x] Test solvability, leakage, shortcuts, grader gaming, and evaluation
   awareness.
 - [!] Provision restricted storage before creating the true private holdout.
@@ -181,16 +184,16 @@ holdout, pilot, statistical-review, and semantic-contamination evidence and
 record passing gates and limitations. The fail-closed examples remain
 templates, not completed calibration evidence.
 
-- [ ] Create a separate calibration corpus of human-gold responses across
+- [!] Create a separate calibration corpus of human-gold responses across
   constructs, severities, languages, styles, lengths, and model families.
-- [ ] Add pass, fail, invalid, borderline, reference-leakage, verbosity,
+- [x] Preregister pass, fail, invalid, borderline, reference-leakage, verbosity,
   position, order, style, and self-preference probes.
-- [ ] Measure confusion matrices, sensitivity, specificity, false-negative
+- [x] Implement confusion matrices, sensitivity, specificity, false-negative
   rates, calibration, stability, and inter-judge agreement.
-- [ ] Set predeclared qualification gates per construct and severity.
-- [ ] Qualify every exact judge identity, revision, prompt, rubric, and sampling
+- [x] Set predeclared qualification gates per construct and severity.
+- [!] Qualify every exact judge identity, revision, prompt, rubric, and sampling
   configuration.
-- [ ] Require requalification after any judge, prompt, rubric, or policy change.
+- [x] Require requalification after any judge, prompt, rubric, or policy change.
 - [!] Obtain human-gold calibration labels and independent approval of judge
   qualification results.
 
@@ -204,56 +207,60 @@ command verifies complete compatible bundles, controls, and hash-pinned review
 evidence. This does not mark a pilot item complete; no target or qualified
 judge endpoint is available.
 
-- [ ] Run pilots across at least three unrelated model families plus deliberate
+- [!] Run pilots across at least three unrelated model families plus deliberate
   positive and negative controls.
-- [ ] Inspect transcripts for parser failures, ambiguous tasks, impossible
+- [!] Inspect transcripts for parser failures, ambiguous tasks, impossible
   cases, leakage, degraded serving, and unintended solution paths.
-- [ ] Measure difficulty, discrimination, saturation, category balance,
+- [!] Measure difficulty, discrimination, saturation, category balance,
   stability, latency, and cost.
-- [ ] Revise only through documented candidate versions; never tune against the
+- [x] Revise only through documented candidate versions; never tune against the
   final holdout.
-- [ ] Run identity mismatch, malformed judge, timeout, rate limit, crash/resume,
-  cancellation, budget, tamper, and reproducibility exercises.
-- [ ] Freeze dataset, rubric, label handbook, judge configuration, gates, and
+- [x] Run mock identity mismatch, malformed judge, timeout, rate limit,
+  crash/resume, cancellation, budget, and tamper exercises.
+- [!] Run the corresponding production-environment exercises and preserve their
+  evidence.
+- [!] Freeze dataset, rubric, label handbook, judge configuration, gates, and
   protocol hashes.
-- [ ] Reproduce the release candidate from a clean environment.
+- [!] Reproduce the calibrated release candidate from a clean environment.
 - [!] Obtain independent reproduction on separately controlled infrastructure.
 
 ## 3. External benchmark and threat intelligence adapters
 
 - [x] Create a pinned license/API/transfer review matrix for each adapter.
-- [ ] Add an Inspect AI adapter for agentic, tool, MCP, multimodal, and sandboxed
+- [!] Add an approved Inspect AI adapter for agentic, tool, MCP, multimodal, and sandboxed
   evaluations without changing CavadaLabs artifacts.
-- [ ] Add a garak adapter for exploratory discovery; promote accepted failures
+- [!] Add an approved garak adapter for exploratory discovery; promote accepted failures
   only into fixed, versioned suites.
-- [ ] Add pinned imports for compatible academic tasks through
+- [!] Add approved pinned imports for compatible academic tasks through
   lm-evaluation-harness.
 - [x] Evaluate MLCommons AILuminate integration without redistributing hidden or
   restricted material.
 - [x] Evaluate AgentDojo, CyberSecEval, PrivacyLens, Presidio, and future public
   benchmarks under their current licenses and data-transfer terms.
-- [ ] Map security cases to OWASP LLM 2025, OWASP Agentic 2026, MITRE ATLAS, and
-  relevant ENISA controls.
+- [x] Publish a partial executable OWASP LLM 2026 mapping, preserve the 2025
+  mapping, and register current OWASP Agentic, MITRE ATLAS, and ENISA sources.
+- [!] Complete licensed or independently approved coverage mappings before any
+  framework-coverage claim.
 - [!] Obtain licenses, service authorizations, or protected benchmark access
   where required.
 
 ## 4. Platform gaps required by later suite families
 
-- [ ] Add an approved sandbox adapter for untrusted code, tools, parsers, and
+- [!] Add an approved sandbox adapter for untrusted code, tools, parsers, and
   custom metrics.
-- [ ] Add normalized external RAG retrieval traces with source hashes, ranks,
+- [!] Add normalized external RAG retrieval traces with source hashes, ranks,
   scores, and authorization boundaries.
-- [ ] Add observable agent state, permission, side-effect, and task-completion
+- [!] Add observable agent state, permission, side-effect, and task-completion
   traces.
-- [ ] Add an MCP test harness for schemas, trust boundaries, tool poisoning,
+- [!] Add an MCP test harness for schemas, trust boundaries, tool poisoning,
   description injection, authentication, and least privilege.
-- [ ] Add pinned language identification with licensed calibration data.
-- [ ] Add bounded image, audio, and video decoder workers outside the main
+- [!] Add pinned language identification with licensed calibration data.
+- [!] Add bounded image, audio, and video decoder workers outside the main
   evaluator process.
-- [ ] Add qualified OCR, VQA, grounding, ASR, diarization, audio/video, safety,
+- [!] Add qualified OCR, VQA, grounding, ASR, diarization, audio/video, safety,
   privacy, fairness, and generation metrics.
-- [ ] Add cryptographic C2PA verification and sanitized preview generation.
-- [ ] Add calibrated hardware, GPU/VRAM, and energy collectors.
+- [!] Add cryptographic C2PA verification and sanitized preview generation.
+- [!] Add calibrated hardware, GPU/VRAM, and energy collectors.
 - [!] Approve the sandbox, media, biometric, safety, fairness, and high-impact
   datasets and models before official use.
 
@@ -293,17 +300,17 @@ judge endpoint is available.
 
 Promotion to `approved` requires all applicable items below:
 
-- [ ] frozen measurement specification and analysis plan;
-- [ ] complete dataset card, provenance ledger, and license register;
-- [ ] private holdout and contamination evidence;
-- [ ] rubric and label handbook;
-- [ ] human-review and adjudication report;
-- [ ] judge qualification report;
-- [ ] power analysis and threshold rationale;
-- [ ] multi-model baseline and negative-control report;
-- [ ] red-team and security findings disposition;
-- [ ] clean reproducible build and verified golden bundle;
-- [ ] pinned dataset, rubric, suite, judge, adapter, and protocol hashes;
+- [!] frozen measurement specification and analysis plan;
+- [!] complete dataset card, provenance ledger, and license register;
+- [!] private holdout and contamination evidence;
+- [!] independently approved rubric and label handbook;
+- [!] human-review and adjudication report;
+- [!] judge qualification report;
+- [!] independently approved power analysis and threshold rationale;
+- [!] multi-model baseline and negative-control report;
+- [!] red-team and security findings disposition;
+- [!] clean reproducible build and verified golden bundle;
+- [!] pinned dataset, rubric, suite, judge, adapter, and protocol hashes;
 - [!] independent statistical, security, privacy/legal, and release approvals;
 - [!] signed release, immutable evidence storage, and independent reproduction.
 
@@ -312,13 +319,13 @@ expired external approval blocks promotion rather than becoming a warning.
 
 ## 8. Maintenance
 
-- [ ] Monitor saturation, contamination, evaluator drift, model gaming,
+- [!] Operate monitoring for saturation, contamination, evaluator drift, model gaming,
   regulatory changes, incidents, and appeals.
-- [ ] Rotate holdouts and canaries under a predeclared schedule.
-- [ ] Requalify judges and adapters after relevant changes.
-- [ ] Publish new immutable versions instead of editing released suites.
-- [ ] Expire, deprecate, revoke, or supersede results with an auditable reason.
-- [ ] Repeat independent review and reproduction at the declared assurance
+- [!] Rotate holdouts and canaries under a predeclared schedule.
+- [!] Requalify judges and adapters after relevant changes.
+- [!] Publish new immutable versions instead of editing released suites.
+- [!] Expire, deprecate, revoke, or supersede results with an auditable reason.
+- [!] Repeat independent review and reproduction at the declared assurance
   interval.
 
 ## Primary references

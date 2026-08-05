@@ -260,6 +260,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Add EU AI Act profiles for applicability/classification, prohibited practices, literacy, risk management, data governance, documentation, records, transparency, oversight, accuracy, robustness, cybersecurity, QMS, deployer duties, FRIA, and GPAI duties where applicable.
 - [x] Add NIST AI RMF/GenAI, OWASP GenAI, ISO/IEC 42001, ISO/IEC 23894, ISO 27001/27701, NIS2, DORA, and sector-profile mapping stubs without copying unlicensed standards text.
 - [x] Add a dated, machine-validated evidence crosswalk, preserve superseded OWASP mappings, and provide license-safe ISO and engagement-governance templates.
+- [x] Require an approved, unexpired engagement hash-linked to the exact suite and SUT before official execution.
 - [x] Generate a control-evidence report that never emits a combined compliance score.
 - [x] Distinguish automated pass/fail, manual required, not applicable, missing, and expired evidence.
 - [x] Version legal sources and record the effective date used by a run.
@@ -289,6 +290,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Produce manifest, raw responses, judgments, case results, metrics, category CSV, failures, and HTML.
 - [x] Produce methodology, protocol snapshot, suite snapshot, dataset card, environment, request ledger, checksums, and verification result.
 - [x] Produce self-contained restricted HTML and sanitized public HTML.
+- [x] Block public export until a post-run approval hash-links the verified bundle, engagement, permitted claims, expiry, limitations, and independent review decisions.
 - [x] Produce PDF, JSON, CSV, JSONL, JUnit, and machine-readable comparison exports.
 - [x] Add overall score with confidence interval and sample size.
 - [x] Add category charts plus risk/severity/language/locale/split tables and disparity charts.

@@ -18,7 +18,8 @@ verification = verify_bundle(Path("runs/example/run-id"))
 
 `load_suite(path, official=True)` performs all official preflight validation
 before network access. `run(...)` requires explicit endpoint, identity,
-revision, judge, repetition, budget, and authorization values; it returns the
+revision, judge, repetition, budget, authorization, and official-engagement
+values; it returns the
 immutable run directory. `compare_runs(...)` accepts only verified compatible
 bundles. `verify_bundle(...)` validates the closed artifact set, checksum file,
 optional HMAC signature, and every SHA-256.

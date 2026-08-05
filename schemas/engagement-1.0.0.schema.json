@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/engagement/1.0.0",
+  "title": "CavadaLabs Evaluation Engagement Governance Record 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engagement_version", "engagement_id", "status", "cavadalabs_roles", "counterparty_roles", "scope", "system_owner_reference", "jurisdictions", "requested_claims", "permitted_claims", "prohibited_claims", "conflicts_assessed", "conflicts", "complaints_process_reference", "appeals_process_reference", "correction_revocation_reference", "disclosure_policy_reference", "surveillance_required", "surveillance_plan_reference", "legal_applicability_evidence", "approver_id", "approved_at", "expires_at"],
+  "properties": {
+    "engagement_version": {"const": "1.0.0"},
+    "engagement_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "approved", "closed", "withdrawn"]},
+    "cavadalabs_roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["developer", "provider", "deployer", "evaluator", "testing-laboratory", "scheme-owner", "certification-body"]}},
+    "counterparty_roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "scope": {"type": "string", "minLength": 1},
+    "system_owner_reference": {"type": "string", "minLength": 1},
+    "jurisdictions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "requested_claims": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "permitted_claims": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "prohibited_claims": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "conflicts_assessed": {"type": "boolean"},
+    "conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "complaints_process_reference": {"type": "string", "minLength": 1},
+    "appeals_process_reference": {"type": "string", "minLength": 1},
+    "correction_revocation_reference": {"type": "string", "minLength": 1},
+    "disclosure_policy_reference": {"type": "string", "minLength": 1},
+    "surveillance_required": {"type": "boolean"},
+    "surveillance_plan_reference": {"type": "string"},
+    "legal_applicability_evidence": {"type": "string", "minLength": 1},
+    "approver_id": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

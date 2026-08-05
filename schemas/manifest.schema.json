@@ -10,15 +10,19 @@
     "report_version": {"type": "string"},
     "run_id": {"type": "string", "minLength": 1},
     "status": {"enum": ["running", "passed", "failed", "invalid", "cancelled"]},
+    "official_requested": {"type": "boolean"},
+    "official": {"type": "boolean"},
     "started_at": {"type": "string", "format": "date-time"},
     "finished_at": {"type": "string", "format": "date-time"},
     "suite": {"type": "object"},
     "target": {"type": "object"},
     "judge": {"type": "object"},
     "judge_qualification": {"type": ["object", "null"]},
+    "engagement": {"type": ["object", "null"]},
     "parameters": {"type": "object"},
     "source": {"type": "object"},
     "environment": {"type": "object"},
     "artifacts": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
-  }
+  },
+  "allOf": [{"if": {"properties": {"official_requested": {"const": true}}, "required": ["official_requested"]}, "then": {"required": ["engagement"], "properties": {"engagement": {"type": "object"}}}}]
 }
