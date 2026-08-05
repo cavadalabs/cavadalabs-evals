@@ -11,7 +11,15 @@ import pytest
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import _doctor
 from cavada_eval.compliance import generate_control_report
-from cavada_eval.protocol import ProtocolError, deterministic_checks, load_suite, new_run_dir, summarize, wilson_interval
+from cavada_eval.protocol import (
+    ProtocolError,
+    deterministic_checks,
+    load_suite,
+    new_run_dir,
+    semantic_duplicate_candidates,
+    summarize,
+    wilson_interval,
+)
 from cavada_eval.runner import _judge_result, _manifest_endpoint, run
 
 
@@ -95,6 +103,16 @@ def test_near_duplicates_require_a_shared_scenario_group(tmp_path: Path) -> None
     (root / "dataset.jsonl").write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
     with pytest.raises(ProtocolError, match="near-duplicate case inputs"):
         load_suite(root)
+
+
+def test_token_containment_duplicates_are_reported_without_blocking_draft_load(tmp_path: Path) -> None:
+    root = make_suite(tmp_path)
+    first = json.loads((root / "dataset.jsonl").read_text())
+    first["input"] = "Question about alpha beta gamma"
+    second = {**first, "id": "two", "input": "Separate practice question about alpha beta gamma"}
+    (root / "dataset.jsonl").write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+    candidates = semantic_duplicate_candidates(load_suite(root))
+    assert candidates == [{"left": "one", "right": "two", "token_containment": 1.0}]
 
 
 def test_secret_like_dataset_content_is_rejected(tmp_path: Path) -> None:

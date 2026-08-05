@@ -37,22 +37,32 @@ STATUS_ASSURANCE = {
 
 
 def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
-    rows: list[tuple[str, str, str, Counter[str], float]] = []
+    rows: list[tuple[str, str, str, Counter[str], set[str], float, float]] = []
     for suite in suites:
         threshold = float((suite.config.get("governance") or {}).get("near_duplicate_threshold", 0.92))
+        semantic_threshold = float((suite.config.get("governance") or {}).get("semantic_duplicate_threshold", 0.95))
         for case in suite.cases:
             normalized = " ".join(unicodedata.normalize("NFKC", content_text(case.get("input"))).casefold().split())
-            rows.append((suite.name, str(case.get("id")), normalized, Counter(normalized), threshold))
+            tokens = set(re.findall(r"\w+", normalized))
+            rows.append((suite.name, str(case.get("id")), normalized, Counter(normalized), tokens, threshold, semantic_threshold))
     if len(rows) > 5_000:
         return ["cross-suite duplicate validation is limited to 5,000 cases; use a reviewed indexed detector"]
     errors: list[str] = []
-    for index, (left_suite, left_id, left, left_chars, left_threshold) in enumerate(rows):
-        for right_suite, right_id, right, right_chars, right_threshold in rows[index + 1 :]:
+    for index, (left_suite, left_id, left, left_chars, left_tokens, left_threshold, left_semantic) in enumerate(rows):
+        for right_suite, right_id, right, right_chars, right_tokens, right_threshold, right_semantic in rows[index + 1 :]:
             if left_suite == right_suite:
                 continue
             if left == right:
                 errors.append(f"cross-suite duplicate inputs: {left_suite}/{left_id}, {right_suite}/{right_id}")
                 continue
+            if left_tokens and right_tokens:
+                containment = len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+                if containment >= min(left_semantic, right_semantic):
+                    errors.append(
+                        f"cross-suite token-containment duplicate inputs: {left_suite}/{left_id}, "
+                        f"{right_suite}/{right_id} (containment={containment:.3f})"
+                    )
+                    continue
             threshold = min(left_threshold, right_threshold)
             length_total = len(left) + len(right)
             if 2 * min(len(left), len(right)) / length_total < threshold:

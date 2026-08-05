@@ -331,6 +331,13 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             threshold = governance.get("near_duplicate_threshold")
             if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not 0.8 <= float(threshold) < 1:
                 errors.append("governance.near_duplicate_threshold must be a number from 0.8 (inclusive) to 1 (exclusive)")
+            semantic_threshold = governance.get("semantic_duplicate_threshold")
+            if (
+                not isinstance(semantic_threshold, (int, float))
+                or isinstance(semantic_threshold, bool)
+                or not 0.8 <= float(semantic_threshold) <= 1
+            ):
+                errors.append("governance.semantic_duplicate_threshold must be a number from 0.8 through 1")
 
     seen_ids: set[str] = set()
     seen_inputs: set[str] = set()
@@ -504,6 +511,7 @@ def audit_suite(suite: Suite) -> dict[str, Any]:
             (case.get("split", "missing"), splits),
         ):
             destination[str(value)] = destination.get(str(value), 0) + 1
+    semantic_candidates = semantic_duplicate_candidates(suite)
     return {
         "protocol_version": PROTOCOL_VERSION,
         "schema_version": SCHEMA_VERSION,
@@ -522,6 +530,7 @@ def audit_suite(suite: Suite) -> dict[str, Any]:
         "locales": dict(sorted(locales.items())),
         "splits": dict(sorted(splits.items())),
         "quality_findings": dataset_quality_findings(suite),
+        "semantic_duplicate_candidates": {"count": len(semantic_candidates), "sample": semantic_candidates[:20]},
         "minimum_sample_guidance": "Use suite-specific power analysis; category gates should normally have at least 30 independent cases.",
     }
 
@@ -542,7 +551,29 @@ def dataset_quality_findings(suite: Suite) -> list[str]:
     unresolved = sum((case.get("review") or {}).get("status") != "approved" for case in suite.cases)
     if unresolved:
         findings.append(f"{unresolved} cases have unresolved review status")
+    semantic_candidates = semantic_duplicate_candidates(suite)
+    if semantic_candidates:
+        findings.append(f"{len(semantic_candidates)} potential token-containment duplicate pairs require review")
     return findings
+
+
+def semantic_duplicate_candidates(suite: Suite) -> list[dict[str, Any]]:
+    threshold = float((suite.config.get("governance") or {}).get("semantic_duplicate_threshold", 0.95))
+    rows: list[tuple[str, str | None, set[str]]] = []
+    for case in suite.cases:
+        text = unicodedata.normalize("NFKC", content_text(case.get("input"))).casefold()
+        tokens = set(re.findall(r"\w+", text))
+        group = case.get("scenario_group_id")
+        rows.append((str(case.get("id")), group if isinstance(group, str) and group else None, tokens))
+    candidates: list[dict[str, Any]] = []
+    for index, (left_id, left_group, left) in enumerate(rows):
+        for right_id, right_group, right in rows[index + 1 :]:
+            if left_group is not None and left_group == right_group or not left or not right:
+                continue
+            containment = len(left & right) / min(len(left), len(right))
+            if containment >= threshold:
+                candidates.append({"left": left_id, "right": right_id, "token_containment": containment})
+    return candidates
 
 
 def dataset_card(suite: Suite) -> str:

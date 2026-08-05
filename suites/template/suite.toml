@@ -30,6 +30,7 @@ known_leaks = "None known; absence has not been independently verified"
 representativeness = "Template only; no population claim"
 transfer_restrictions = "No personal data; keep restricted assets inside approved regions"
 near_duplicate_threshold = 0.92
+semantic_duplicate_threshold = 0.95
 minimum_category_cases = 1
 maximum_category_share = 1.0
 

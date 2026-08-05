@@ -30,6 +30,7 @@ known_leaks = "All active 0.4.0 cases are repository-visible; inactive 0.1.0 thr
 representativeness = "Balanced development coverage only; not representative, calibrated, independently reviewed, or a private holdout"
 transfer_restrictions = "No personal data; future restricted splits must remain in approved regions and stores"
 near_duplicate_threshold = 0.92
+semantic_duplicate_threshold = 0.95
 minimum_category_cases = 80
 maximum_category_share = 0.15
 

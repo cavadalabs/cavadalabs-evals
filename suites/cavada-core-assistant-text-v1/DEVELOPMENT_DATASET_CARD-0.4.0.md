@@ -51,15 +51,16 @@ Dataset SHA-256 at creation:
 
 - All rows require independent human review; criteria are author-gold only.
 - Public and practice cases are repository-visible and assumed contaminated.
-- Practice cases remain template-related to public examples and cannot be
-  treated as independent evidence until semantic-duplicate review is complete.
+- Automated token-containment review reports exactly 160 public/practice
+  template pairs. They cannot be treated as independent evidence and block
+  official dataset quality until replaced by independently authored scenarios.
 - There is no calibration split, private holdout, restricted adversarial
   holdout, holdout canary, or contamination study yet.
 - The 32 cases per module are below preregistered official sample targets.
 - Coverage is balanced development coverage, not a prevalence or
   deployment-representative sample.
-- Native-language review, ambiguity testing, solvability review, semantic
-  duplicate analysis, grader-gaming analysis, and external statistical review
+- Native-language review, ambiguity testing, solvability review, embedding-based
+  semantic analysis, grader-gaming analysis, and external statistical review
   remain pending.
 - Results must be labeled development results and cannot support claims of
   certification, legal compliance, universal correctness, safety, security,

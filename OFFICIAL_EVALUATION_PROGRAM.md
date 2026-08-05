@@ -100,7 +100,9 @@ public/practice cases with balanced EN/IT and module coverage. They remain
 unreviewed, public, underpowered development material; calibration and private
 holdout authoring have not started. Every active case now carries explicit
 mandatory criteria passed to the judge, with deterministic references where
-the requested output is unambiguous.
+the requested output is unambiguous. Token-containment audit currently reports
+160 public/practice template pairs and therefore blocks official quality gates
+until independently authored practice scenarios replace them.
 
 - [x] Create a case blueprint by construct, category, severity, language,
   locale, expected behavior, difficulty, and scenario group.
