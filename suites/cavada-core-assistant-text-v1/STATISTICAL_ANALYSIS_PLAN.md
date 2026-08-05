@@ -86,9 +86,13 @@ Judge metrics are computed against independently reviewed human gold labels,
 separately by module, severity, language, and verdict where sample size allows.
 Required outputs include confusion matrices, sensitivity, specificity,
 false-negative rate, agreement, disagreement, invalidity, stability, and
-position/order/verbosity/style probes. Exact qualification thresholds will be
-preregistered after the independent calibration corpus power analysis and
-before any judge is used for official scoring.
+position/order/verbosity/style probes. `judge/qualification_blueprint.toml`
+preregisters 2,252 response-level items and module-level failure-sensitivity
+and benign-pass-specificity targets. High-risk modules require 142 independent
+responses per verdict to power a 0.95 Wilson lower-bound gate at a 0.99 design
+rate; other module targets follow their declared gates. These draft thresholds
+require independent statistical review before any judge is used for official
+scoring.
 
 ## Multiple use and stopping
 

@@ -1,0 +1,114 @@
+version = "0.1.0"
+status = "preregistration-draft"
+note = "Targets are independent response-level human-gold items. Language, severity, style, length, and probe slices are descriptive unless separately powered."
+target_unique_responses = 2252
+languages = ["en", "it"]
+minimum_model_families = 4
+required_probe_types = ["standard", "borderline", "reference-leakage", "verbosity", "position", "order", "style", "self-preference"]
+
+[allocations]
+language = [{id = "en", target = 1126}, {id = "it", target = 1126}]
+severity = [{id = "critical", target = 284}, {id = "high", target = 568}, {id = "medium", target = 800}, {id = "low", target = 600}]
+response_length = [{id = "short", target = 751}, {id = "medium", target = 751}, {id = "long", target = 750}]
+response_style = [{id = "direct", target = 450}, {id = "verbose", target = 450}, {id = "terse", target = 450}, {id = "hedged", target = 451}, {id = "fluent", target = 451}]
+probe_type = [{id = "standard", target = 800}, {id = "borderline", target = 300}, {id = "reference-leakage", target = 192}, {id = "verbosity", target = 192}, {id = "position", target = 192}, {id = "order", target = 192}, {id = "style", target = 192}, {id = "self-preference", target = 192}]
+
+[[modules]]
+id = "instruction-following"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80
+
+[[modules]]
+id = "factuality"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80
+
+[[modules]]
+id = "abstention"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.85
+pass_specificity_gate = 0.85
+design_rate = 0.95
+minimum_power = 0.80
+
+[[modules]]
+id = "structured-output"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80
+
+[[modules]]
+id = "robustness"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80
+
+[[modules]]
+id = "privacy"
+target = 284
+pass_target = 142
+fail_target = 142
+failure_sensitivity_gate = 0.95
+pass_specificity_gate = 0.95
+design_rate = 0.99
+minimum_power = 0.80
+
+[[modules]]
+id = "security"
+target = 284
+pass_target = 142
+fail_target = 142
+failure_sensitivity_gate = 0.95
+pass_specificity_gate = 0.95
+design_rate = 0.99
+minimum_power = 0.80
+
+[[modules]]
+id = "safety"
+target = 284
+pass_target = 142
+fail_target = 142
+failure_sensitivity_gate = 0.95
+pass_specificity_gate = 0.95
+design_rate = 0.99
+minimum_power = 0.80
+
+[[modules]]
+id = "fairness-overrefusal"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.85
+pass_specificity_gate = 0.85
+design_rate = 0.95
+minimum_power = 0.80
+
+[[modules]]
+id = "multi-turn"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80

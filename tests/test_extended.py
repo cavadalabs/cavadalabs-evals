@@ -11,9 +11,14 @@ from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
 from cavada_eval.pairwise import _winner
-from cavada_eval.program import load_program_registry, validate_case_blueprint, validate_cross_suite_duplicates
+from cavada_eval.program import (
+    load_program_registry,
+    validate_case_blueprint,
+    validate_cross_suite_duplicates,
+    validate_judge_qualification_blueprint,
+)
 from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file, wilson_gate_power
-from cavada_eval.runner import _post_json, call_target, run
+from cavada_eval.runner import _judge_calibration_summary, _post_json, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
 
@@ -115,6 +120,18 @@ def test_blueprint_contract_rejects_missing_case_metadata() -> None:
     assert "case[1] missing blueprint fields: ['ambiguity']" in errors
 
 
+def test_judge_qualification_blueprint_rejects_underpowered_samples(tmp_path: Path) -> None:
+    root = Path("suites/cavada-core-assistant-text-v1").resolve()
+    with (root / "suite.toml").open("rb") as handle:
+        config = tomllib.load(handle)
+    source = root / "judge" / "qualification_blueprint.toml"
+    weak = tmp_path / "weak.toml"
+    weak.write_text(source.read_text(encoding="utf-8").replace("pass_target = 100", "pass_target = 1", 1), encoding="utf-8")
+    suite = Suite(root, config, (), "rubric", root / config["dataset"], root / config["rubric"])
+    errors = validate_judge_qualification_blueprint(weak, suite)
+    assert "module[1].pass_target does not achieve minimum_power" in errors
+
+
 def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
     result = deterministic_evaluation(
         {
@@ -132,6 +149,21 @@ def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
     assert result["scores"]["structured_field_accuracy"] == 1.0
     assert retrieval_scores(["a"], ["a"], 1)["ndcg_at_k"] == 1.0
     assert error_rate("hello world".split(), "hello word".split()) == 0.5
+
+
+def test_judge_calibration_reports_false_pass_risk_by_slice(tmp_path: Path) -> None:
+    suite = load_suite(_suite(tmp_path))
+    passing = {**suite.cases[0], "id": "pass-case", "judge_gold_verdict": "pass"}
+    failing = {**suite.cases[0], "id": "fail-case", "severity": "critical", "judge_gold_verdict": "fail"}
+    calibration_suite = Suite(suite.root, suite.config, (passing, failing), suite.rubric, suite.dataset_path, suite.rubric_path)
+    rows = [
+        {"judge_id": "primary", "case_id": "pass-case", "judgment": {"verdict": "pass"}},
+        {"judge_id": "primary", "case_id": "fail-case", "judgment": {"verdict": "pass"}},
+    ]
+    result = _judge_calibration_summary(rows, calibration_suite)["primary"]
+    assert result["accuracy"] == 0.5 and result["failure_sensitivity"] == 0.0
+    assert result["false_pass_rate"] == 1.0 and result["pass_specificity"] == 1.0
+    assert result["slices"]["severity"]["critical"]["false_pass"] == 1
 
 
 def test_bundle_verification_detects_tampering(tmp_path: Path) -> None:

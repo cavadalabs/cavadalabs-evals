@@ -380,6 +380,69 @@ def _judge_system_prompt(suite: Suite) -> str:
     )
 
 
+def _judge_calibration_summary(rows: list[dict[str, Any]], suite: Suite) -> dict[str, dict[str, Any]]:
+    cases = {str(case["id"]): case for case in suite.cases if case.get("judge_gold_verdict") in {"pass", "fail"}}
+
+    def summarize(selected: list[dict[str, Any]]) -> dict[str, Any]:
+        by_case: dict[str, list[str | None]] = {}
+        for row in selected:
+            judgment = row.get("judgment")
+            verdict = judgment.get("verdict") if isinstance(judgment, dict) else None
+            by_case.setdefault(str(row["case_id"]), []).append(str(verdict) if verdict in {"pass", "fail"} else None)
+        confusion = {"true_pass": 0, "true_fail": 0, "false_pass": 0, "false_fail": 0}
+        invalid_cases = 0
+        repeated_cases = 0
+        stable_repeated_cases = 0
+        for case_id, verdicts in by_case.items():
+            valid = [verdict for verdict in verdicts if verdict is not None]
+            if len(verdicts) > 1:
+                repeated_cases += 1
+                stable_repeated_cases += int(len(valid) == len(verdicts) and len(set(valid)) == 1)
+            if len(valid) != len(verdicts) or len(set(valid)) != 1:
+                invalid_cases += 1
+                continue
+            gold = str(cases[case_id]["judge_gold_verdict"])
+            predicted = valid[0]
+            confusion[f"true_{gold}" if predicted == gold else f"false_{predicted}"] += 1
+        samples = sum(confusion.values())
+        fail_total = confusion["true_fail"] + confusion["false_pass"]
+        pass_total = confusion["true_pass"] + confusion["false_fail"]
+        sensitivity = confusion["true_fail"] / fail_total if fail_total else None
+        specificity = confusion["true_pass"] / pass_total if pass_total else None
+        return {
+            **confusion,
+            "cases": len(by_case),
+            "samples": samples,
+            "invalid_cases": invalid_cases,
+            "observations": sum(len(verdicts) for verdicts in by_case.values()),
+            "accuracy": (confusion["true_pass"] + confusion["true_fail"]) / samples if samples else 0.0,
+            "failure_sensitivity": sensitivity,
+            "pass_specificity": specificity,
+            "false_pass_rate": confusion["false_pass"] / fail_total if fail_total else None,
+            "false_fail_rate": confusion["false_fail"] / pass_total if pass_total else None,
+            "balanced_accuracy": (sensitivity + specificity) / 2 if sensitivity is not None and specificity is not None else None,
+            "repeated_cases": repeated_cases,
+            "stable_repeated_case_fraction": stable_repeated_cases / repeated_cases if repeated_cases else None,
+        }
+
+    calibration: dict[str, dict[str, Any]] = {}
+    judge_ids = sorted({str(row.get("judge_id", "primary")) for row in rows})
+    for judge_id in judge_ids:
+        judge_rows = [row for row in rows if str(row.get("judge_id", "primary")) == judge_id and str(row.get("case_id")) in cases]
+        if not judge_rows:
+            continue
+        result = summarize(judge_rows)
+        result["slices"] = {
+            dimension: {
+                value: summarize([row for row in judge_rows if str(cases[str(row["case_id"])].get(dimension)) == value])
+                for value in sorted({str(cases[str(row["case_id"])].get(dimension)) for row in judge_rows})
+            }
+            for dimension in ("category", "severity", "language")
+        }
+        calibration[judge_id] = result
+    return calibration
+
+
 def call_judge(
     suite: Suite,
     endpoint: str,
@@ -1138,23 +1201,8 @@ def run(
         "judge_agreement": distribution(row["judge_agreement"] for row in result_rows if isinstance(row.get("judge_agreement"), (int, float))),
         "judge_score": distribution(row["score"] for row in result_rows if isinstance(row.get("score"), (int, float))),
     }
-    gold_verdicts = {str(case["id"]): str(case["judge_gold_verdict"]) for case in suite.cases if case.get("judge_gold_verdict") in {"pass", "fail"}}
     calibration_rows = _read_jsonl(run_dir / "judgments.jsonl")
-    calibration: dict[str, dict[str, Any]] = {}
-    for judge_id in sorted({str(row.get("judge_id", "primary")) for row in calibration_rows}):
-        confusion = {"true_pass": 0, "true_fail": 0, "false_pass": 0, "false_fail": 0}
-        for row in calibration_rows:
-            if str(row.get("judge_id", "primary")) != judge_id or str(row.get("case_id")) not in gold_verdicts:
-                continue
-            judgment = row.get("judgment")
-            if not isinstance(judgment, dict) or judgment.get("verdict") not in {"pass", "fail"}:
-                continue
-            gold = gold_verdicts[str(row["case_id"])]
-            predicted = str(judgment["verdict"])
-            confusion[f"true_{gold}" if predicted == gold else f"false_{predicted}"] += 1
-        samples = sum(confusion.values())
-        if samples:
-            calibration[judge_id] = {**confusion, "samples": samples, "accuracy": (confusion["true_pass"] + confusion["true_fail"]) / samples}
+    calibration = _judge_calibration_summary(calibration_rows, suite)
     metrics["judge_calibration"] = calibration
     scenarios: dict[str, set[str]] = {}
     for row in result_rows:

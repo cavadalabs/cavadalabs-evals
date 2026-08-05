@@ -135,6 +135,12 @@ holdout authoring have not started.
 
 ### Judge qualification
 
+Development progress: the engine now reports distinct-case confusion counts,
+failure sensitivity, specificity, false-pass/false-fail rates, invalidity,
+repeat stability, and module/severity/language slices. A machine-validated
+2,252-item qualification blueprint is preregistered; the independently labeled
+restricted corpus does not yet exist.
+
 - [ ] Create a separate calibration corpus of human-gold responses across
   constructs, severities, languages, styles, lengths, and model families.
 - [ ] Add pass, fail, invalid, borderline, reference-leakage, verbosity,

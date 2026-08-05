@@ -358,6 +358,100 @@ def validate_reviewer_fixtures(path: Path, suite: Suite) -> list[str]:
     return errors
 
 
+def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str]:
+    try:
+        with path.open("rb") as handle:
+            blueprint = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"cannot load judge qualification blueprint: {exc}"]
+    errors: list[str] = []
+    target = blueprint.get("target_unique_responses")
+    allocations = blueprint.get("allocations")
+    modules = blueprint.get("modules")
+    required_probes = blueprint.get("required_probe_types")
+    if not isinstance(blueprint.get("version"), str) or not VERSION_PATTERN.fullmatch(blueprint["version"]):
+        errors.append("judge qualification blueprint version must be semantic X.Y.Z")
+    if blueprint.get("status") != "preregistration-draft":
+        errors.append("status must remain preregistration-draft until independent approval")
+    if not isinstance(target, int) or isinstance(target, bool) or target < 1:
+        errors.append("target_unique_responses must be a positive integer")
+    if not isinstance(blueprint.get("minimum_model_families"), int) or blueprint["minimum_model_families"] < 4:
+        errors.append("minimum_model_families must be at least four")
+    required_dimensions = {"language", "severity", "response_length", "response_style", "probe_type"}
+    if not isinstance(allocations, dict) or set(allocations) != required_dimensions:
+        errors.append(f"allocations must define exactly {sorted(required_dimensions)}")
+    else:
+        for dimension, values in allocations.items():
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(
+                    isinstance(value, dict)
+                    and set(value) == {"id", "target"}
+                    and isinstance(value["id"], str)
+                    and value["id"]
+                    and isinstance(value["target"], int)
+                    and not isinstance(value["target"], bool)
+                    and value["target"] > 0
+                    for value in values
+                )
+            ):
+                errors.append(f"allocation {dimension} must contain id/target entries")
+            elif len({value["id"] for value in values}) != len(values):
+                errors.append(f"allocation {dimension} contains duplicate ids")
+            elif isinstance(target, int) and sum(value["target"] for value in values) != target:
+                errors.append(f"allocation {dimension} does not equal target_unique_responses")
+    probe_values = allocations.get("probe_type", []) if isinstance(allocations, dict) else []
+    probe_ids = {str(value["id"]) for value in probe_values if isinstance(value, dict) and "id" in value}
+    if not isinstance(required_probes, list) or set(required_probes) != probe_ids:
+        errors.append("required_probe_types must exactly match the probe_type allocation")
+    suite_modules = {gate.get("category") for gate in suite.config.get("gates", []) if isinstance(gate, dict)}
+    seen: set[str] = set()
+    module_total = 0
+    if not isinstance(modules, list) or not modules:
+        errors.append("modules must contain qualification targets")
+        return errors
+    expected_fields = {
+        "id", "target", "pass_target", "fail_target", "failure_sensitivity_gate",
+        "pass_specificity_gate", "design_rate", "minimum_power",
+    }
+    for index, module in enumerate(modules, 1):
+        prefix = f"module[{index}]"
+        if not isinstance(module, dict) or set(module) != expected_fields:
+            errors.append(f"{prefix} fields must be exactly {sorted(expected_fields)}")
+            continue
+        module_id = module["id"]
+        if module_id not in suite_modules or module_id in seen:
+            errors.append(f"{prefix}.id must be a unique suite gate category")
+        seen.add(str(module_id))
+        count = module["target"]
+        pass_target = module["pass_target"]
+        fail_target = module["fail_target"]
+        if not all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in (count, pass_target, fail_target)):
+            errors.append(f"{prefix} targets must be positive integers")
+            continue
+        module_total += count
+        if pass_target + fail_target != count:
+            errors.append(f"{prefix} pass/fail targets do not equal target")
+        gate_values = (module["failure_sensitivity_gate"], module["pass_specificity_gate"])
+        design_rate = module["design_rate"]
+        minimum_power = module["minimum_power"]
+        if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < float(value) < 1 for value in (*gate_values, minimum_power)):
+            errors.append(f"{prefix} gates and minimum_power must be in (0, 1)")
+            continue
+        if not isinstance(design_rate, (int, float)) or isinstance(design_rate, bool) or not max(map(float, gate_values)) < float(design_rate) <= 1:
+            errors.append(f"{prefix}.design_rate must exceed both gates and be at most 1")
+            continue
+        for label, sample_size, gate in (("pass", pass_target, gate_values[1]), ("fail", fail_target, gate_values[0])):
+            if wilson_gate_power(sample_size, float(gate), float(design_rate)) < float(minimum_power):
+                errors.append(f"{prefix}.{label}_target does not achieve minimum_power")
+    if seen != suite_modules:
+        errors.append("judge qualification modules must match suite gate categories")
+    if isinstance(target, int) and module_total != target:
+        errors.append("module targets do not equal target_unique_responses")
+    return errors
+
+
 def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as handle:
@@ -613,5 +707,11 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         reviewer_path = absolute / "review" / "reviewer_qualification.jsonl"
         if reviewer_path.is_file():
             errors.extend(f"{prefix}.reviewer_qualification: {error}" for error in validate_reviewer_fixtures(reviewer_path, suite))
+        judge_blueprint_path = absolute / "judge" / "qualification_blueprint.toml"
+        if judge_blueprint_path.is_file():
+            errors.extend(
+                f"{prefix}.judge_qualification: {error}"
+                for error in validate_judge_qualification_blueprint(judge_blueprint_path, suite)
+            )
     errors.extend(validate_cross_suite_duplicates(loaded_suites))
     return errors
