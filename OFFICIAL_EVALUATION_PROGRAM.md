@@ -121,7 +121,7 @@ scaffolding changes the measurement target.
 - [x] Produce blind annotation packages that do not identify model providers.
 - [ ] Preserve raw labels, rationales, disagreements, adjudications, reviewer
   qualification evidence, and conflicts of interest.
-- [ ] Compute raw agreement and an appropriate chance-corrected agreement
+- [x] Compute raw agreement and an appropriate chance-corrected agreement
   statistic with uncertainty.
 - [!] Obtain at least two independent qualified reviews for subjective cases.
 - [!] Use a separate qualified adjudicator for unresolved disagreements.

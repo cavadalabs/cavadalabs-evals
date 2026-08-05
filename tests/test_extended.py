@@ -5,7 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from cavada_eval.annotations import export_annotation_package
+from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_annotations
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
@@ -250,6 +250,21 @@ def test_annotation_package_is_blind_and_never_overwrites(tmp_path: Path) -> Non
     assert manifest["identity_blinded"] is True and "Anonymous answer" in public_text
     assert "secret-model" not in public_text and "split" not in annotation
     assert not (output / "linkage.restricted.jsonl").exists() and '"case_id": "one"' in linkage.read_text(encoding="utf-8")
+    annotation.update(
+        {
+            "label": "pass",
+            "criterion_findings": {"correct": True},
+            "rationale": "The response meets the criterion.",
+            "confidence": 0.9,
+        }
+    )
+    (output / "annotations.jsonl").write_text(json.dumps(annotation) + "\n", encoding="utf-8")
+    left = tmp_path / "review-left"
+    right = tmp_path / "review-right"
+    ingest_annotations(output, linkage, left, reviewer_id="reviewer-a", qualification_evidence="qualification-a", conflicts="none declared")
+    ingest_annotations(output, linkage, right, reviewer_id="reviewer-b", qualification_evidence="qualification-b", conflicts="none declared")
+    agreement = annotation_agreement(left, right, tmp_path / "agreement", bootstrap_samples=100)
+    assert agreement["raw_agreement"] == 1 and agreement["cohen_kappa"] == 1
     try:
         export_annotation_package(suite, run_dir, output, linkage)
     except ProtocolError as exc:

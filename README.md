@@ -41,7 +41,8 @@ uv run cavada-eval run suites/memo4345-v1 \
 Useful commands:
 
 ```text
-init doctor list profiles program validate audit estimate run resume redteam annotations
+init doctor list profiles program validate audit estimate run resume redteam
+annotations annotations-ingest annotations-agreement
 compare pairwise report verify promote export controls
 import-external retention-record
 ```

@@ -8,7 +8,7 @@ import sys
 import tarfile
 from pathlib import Path
 
-from .annotations import export_annotation_package
+from .annotations import annotation_agreement, export_annotation_package, ingest_annotations
 from .artifacts import verify_bundle
 from .comparison import compare_runs
 from .compliance import generate_control_report
@@ -96,6 +96,19 @@ def parser() -> argparse.ArgumentParser:
     annotations.add_argument("run_dir")
     annotations.add_argument("output")
     annotations.add_argument("linkage_output")
+
+    annotations_ingest = commands.add_parser("annotations-ingest", help="Validate and preserve a completed reviewer package")
+    annotations_ingest.add_argument("package")
+    annotations_ingest.add_argument("linkage")
+    annotations_ingest.add_argument("output")
+    annotations_ingest.add_argument("--reviewer-id", required=True)
+    annotations_ingest.add_argument("--qualification-evidence", required=True)
+    annotations_ingest.add_argument("--conflicts", required=True)
+
+    annotations_agreement = commands.add_parser("annotations-agreement", help="Compute blinded reviewer agreement and disagreements")
+    annotations_agreement.add_argument("left")
+    annotations_agreement.add_argument("right")
+    annotations_agreement.add_argument("output")
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -416,6 +429,21 @@ def main(argv: list[str] | None = None) -> int:
             result = export_annotation_package(
                 load_suite(args.suite), Path(args.run_dir), Path(args.output), Path(args.linkage_output)
             )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return EXIT_PASS
+        if args.command == "annotations-ingest":
+            result = ingest_annotations(
+                Path(args.package),
+                Path(args.linkage),
+                Path(args.output),
+                reviewer_id=args.reviewer_id,
+                qualification_evidence=args.qualification_evidence,
+                conflicts=args.conflicts,
+            )
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return EXIT_PASS
+        if args.command == "annotations-agreement":
+            result = annotation_agreement(Path(args.left), Path(args.right), Path(args.output))
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "audit":
