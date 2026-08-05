@@ -1,6 +1,6 @@
-# Development dataset card 0.2.0
+# Development dataset card 0.2.1
 
-Status: superseded draft development material; not approved benchmark evidence.
+Status: draft development material; not approved benchmark evidence.
 
 ## Contents
 
@@ -19,28 +19,33 @@ behavior and reason, tags, source, license, authorship, personal-data class,
 ambiguity, review status, rationale, and weight. Structured-output cases also
 carry exact expected values and closed JSON schemas.
 
-## Provenance and rights
+## Provenance, rights, and correction
 
 The cases are deterministic CavadaLabs synthetic authoring produced from
 `scripts/build_core_development_dataset.py`. No third-party benchmark text was
 copied. Four cases use reserved `example.test` email placeholders; they do not
 describe natural people. Independent authorship and rights review is pending.
 
+Version `0.2.1` supersedes `0.2.0`, which contained one exact prompt duplicate
+from `security-privacy-smoke-v1`. The old file remains unchanged and is not the
+active dataset. No result from either version is official.
+
 ## Integrity
 
-The historical file is `dataset-0.2.0.jsonl`; version `0.2.1` supersedes it
-after detection of one cross-suite duplicate. The generator refuses to
-overwrite the file. Verify the historical artifact with:
+The active file is `dataset-0.2.1.jsonl`. Regenerate it only as a new semantic
+suite version; the generator refuses to overwrite an existing file. Verify the
+checked-in artifact with:
 
 ```console
 uv run python scripts/build_core_development_dataset.py \
-  suites/cavada-core-assistant-text-v1/dataset-0.2.0.jsonl \
-  --suite-version 0.2.0 --check
+  suites/cavada-core-assistant-text-v1/dataset-0.2.1.jsonl \
+  --suite-version 0.2.1 --check
 uv run cavada-eval validate suites/cavada-core-assistant-text-v1
+uv run cavada-eval program
 ```
 
 Dataset SHA-256 at creation:
-`49704d873a1b16c91230145f68e354f817726ca201de8342e36f828b7d48fb60`.
+`e098ce9fe42d833fc57afa51d5c8d013ca7cb84bb529dd63d9cc04d856a2942a`.
 
 ## Known limitations
 
@@ -52,12 +57,9 @@ Dataset SHA-256 at creation:
   and cannot clear official dataset-quality or power gates.
 - Coverage is deliberately balanced development coverage, not a prevalence or
   deployment-representative sample.
-- Native-language review, ambiguity testing, solvability review, cross-suite
-  semantic duplicate analysis, grader-gaming analysis, and external statistical
-  review remain pending.
-- Results on this dataset must be labeled development results and cannot support
-  claims of certification, legal compliance, universal correctness, safety,
-  security, fairness, or production fitness.
-
-The immutable `dataset.jsonl` file contains the four inactive `0.1.0`
-authoring fixtures and remains only for historical reproducibility.
+- Native-language review, ambiguity testing, solvability review, semantic
+  duplicate analysis, grader-gaming analysis, and external statistical review
+  remain pending.
+- Results must be labeled development results and cannot support claims of
+  certification, legal compliance, universal correctness, safety, security,
+  fairness, or production fitness.

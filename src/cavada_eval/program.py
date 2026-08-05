@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import tomllib
+import unicodedata
+from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+from .assets import content_text
 from .profiles import profile_summary
 from .protocol import PROTOCOL_VERSION, ProtocolError, Suite, load_suite, wilson_gate_power
 
@@ -30,6 +34,40 @@ STATUS_ASSURANCE = {
     "deprecated": set(ASSURANCE_LEVELS),
     "retired": set(ASSURANCE_LEVELS),
 }
+
+
+def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
+    rows: list[tuple[str, str, str, Counter[str], float]] = []
+    for suite in suites:
+        threshold = float((suite.config.get("governance") or {}).get("near_duplicate_threshold", 0.92))
+        for case in suite.cases:
+            normalized = " ".join(unicodedata.normalize("NFKC", content_text(case.get("input"))).casefold().split())
+            rows.append((suite.name, str(case.get("id")), normalized, Counter(normalized), threshold))
+    if len(rows) > 5_000:
+        return ["cross-suite duplicate validation is limited to 5,000 cases; use a reviewed indexed detector"]
+    errors: list[str] = []
+    for index, (left_suite, left_id, left, left_chars, left_threshold) in enumerate(rows):
+        for right_suite, right_id, right, right_chars, right_threshold in rows[index + 1 :]:
+            if left_suite == right_suite:
+                continue
+            if left == right:
+                errors.append(f"cross-suite duplicate inputs: {left_suite}/{left_id}, {right_suite}/{right_id}")
+                continue
+            threshold = min(left_threshold, right_threshold)
+            length_total = len(left) + len(right)
+            if 2 * min(len(left), len(right)) / length_total < threshold:
+                continue
+            smaller, larger = (left_chars, right_chars) if len(left_chars) <= len(right_chars) else (right_chars, left_chars)
+            if 2 * sum(min(count, larger[character]) for character, count in smaller.items()) / length_total < threshold:
+                continue
+            matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
+            ratio = matcher.ratio()
+            if ratio >= threshold:
+                errors.append(
+                    f"cross-suite near-duplicate inputs: {left_suite}/{left_id}, "
+                    f"{right_suite}/{right_id} (similarity={ratio:.3f})"
+                )
+    return errors
 
 
 def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
@@ -396,6 +434,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
 
     known_profiles = {item["name"]: bool(item["built_in"]) for item in profile_summary()}
     seen: set[str] = set()
+    loaded_suites: list[Suite] = []
     for index, item in enumerate(suites, 1):
         prefix = f"suite[{index}]"
         if not isinstance(item, dict):
@@ -487,6 +526,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         except ProtocolError as exc:
             errors.append(f"{prefix}.path is invalid: {exc}")
             continue
+        loaded_suites.append(suite)
         if (suite.name, suite.version, suite.status) != (suite_id, item.get("version"), status):
             errors.append(
                 f"{prefix} registry identity/status does not match suite: "
@@ -498,4 +538,5 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         reviewer_path = absolute / "review" / "reviewer_qualification.jsonl"
         if reviewer_path.is_file():
             errors.extend(f"{prefix}.reviewer_qualification: {error}" for error in validate_reviewer_fixtures(reviewer_path, suite))
+    errors.extend(validate_cross_suite_duplicates(loaded_suites))
     return errors
