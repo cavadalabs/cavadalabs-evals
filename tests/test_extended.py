@@ -5,6 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from cavada_eval.annotations import export_annotation_package
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
@@ -229,6 +230,30 @@ def test_recorded_target_adapter_is_offline_and_pinned(tmp_path: Path) -> None:
     answer, _, reported, payload, transport = call_target(suite, "recorded://suite", "", {"case_id": "one", "input": "Question"}, None, 1)
     assert (answer, reported) == ("Recorded answer", "recorded-model")
     assert payload["source_sha256"] and transport["recorded"] is True
+
+
+def test_annotation_package_is_blind_and_never_overwrites(tmp_path: Path) -> None:
+    root = _suite(tmp_path)
+    suite = load_suite(root)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text('{"target":{"label":"secret-model"}}\n', encoding="utf-8")
+    (run_dir / "raw_responses.jsonl").write_text(
+        json.dumps({"case_id": "one", "repetition": 1, "reported_model": "secret-model", "response": {"answer": "Anonymous answer", "model": "secret-model"}}) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "annotations"
+    manifest = export_annotation_package(suite, run_dir, output)
+    annotation = json.loads((output / "annotations.jsonl").read_text(encoding="utf-8"))
+    public_text = json.dumps(annotation) + (output / "package_manifest.json").read_text(encoding="utf-8")
+    assert manifest["identity_blinded"] is True and "Anonymous answer" in public_text
+    assert "secret-model" not in public_text and "split" not in annotation
+    try:
+        export_annotation_package(suite, run_dir, output)
+    except ProtocolError as exc:
+        assert "already exists" in str(exc)
+    else:  # pragma: no cover - assertion branch
+        raise AssertionError("annotation package overwrote existing evidence")
 
 
 def test_openai_target_prepends_hash_pinned_system_prompt(tmp_path: Path) -> None:

@@ -118,7 +118,7 @@ scaffolding changes the measurement target.
 - [x] Produce a versioned label handbook with pass, fail, invalid, severity,
   borderline, safe-completion, refusal, and adjudication examples.
 - [x] Produce reviewer training and qualification fixtures.
-- [ ] Produce blind annotation packages that do not identify model providers.
+- [x] Produce blind annotation packages that do not identify model providers.
 - [ ] Preserve raw labels, rationales, disagreements, adjudications, reviewer
   qualification evidence, and conflicts of interest.
 - [ ] Compute raw agreement and an appropriate chance-corrected agreement

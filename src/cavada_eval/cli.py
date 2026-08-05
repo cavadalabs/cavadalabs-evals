@@ -8,6 +8,7 @@ import sys
 import tarfile
 from pathlib import Path
 
+from .annotations import export_annotation_package
 from .artifacts import verify_bundle
 from .comparison import compare_runs
 from .compliance import generate_control_report
@@ -89,6 +90,11 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate suite schema and integrity")
     validate.add_argument("suite")
     validate.add_argument("--official", action="store_true")
+
+    annotations = commands.add_parser("annotations", help="Export an identity-blinded human annotation package")
+    annotations.add_argument("suite")
+    annotations.add_argument("run_dir")
+    annotations.add_argument("output")
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -404,6 +410,10 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PASS
         if args.command == "validate":
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))
+            return EXIT_PASS
+        if args.command == "annotations":
+            result = export_annotation_package(load_suite(args.suite), Path(args.run_dir), Path(args.output))
+            print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "audit":
             print(json.dumps(audit_suite(load_suite(args.suite)), ensure_ascii=False, indent=2))
