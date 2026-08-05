@@ -39,6 +39,7 @@ from .protocol import (
     sha256_bytes,
     sha256_file,
     summarize,
+    wilson_interval,
     write_category_csv,
 )
 from .reporting import generate_reports
@@ -409,6 +410,8 @@ def _judge_calibration_summary(rows: list[dict[str, Any]], suite: Suite) -> dict
         pass_total = confusion["true_pass"] + confusion["false_fail"]
         sensitivity = confusion["true_fail"] / fail_total if fail_total else None
         specificity = confusion["true_pass"] / pass_total if pass_total else None
+        sensitivity_ci = wilson_interval(confusion["true_fail"], fail_total) if fail_total else None
+        specificity_ci = wilson_interval(confusion["true_pass"], pass_total) if pass_total else None
         return {
             **confusion,
             "cases": len(by_case),
@@ -417,7 +420,17 @@ def _judge_calibration_summary(rows: list[dict[str, Any]], suite: Suite) -> dict
             "observations": sum(len(verdicts) for verdicts in by_case.values()),
             "accuracy": (confusion["true_pass"] + confusion["true_fail"]) / samples if samples else 0.0,
             "failure_sensitivity": sensitivity,
+            "failure_sensitivity_ci": (
+                {"lower": sensitivity_ci[0], "upper": sensitivity_ci[1], "confidence": 0.95}
+                if sensitivity_ci
+                else None
+            ),
             "pass_specificity": specificity,
+            "pass_specificity_ci": (
+                {"lower": specificity_ci[0], "upper": specificity_ci[1], "confidence": 0.95}
+                if specificity_ci
+                else None
+            ),
             "false_pass_rate": confusion["false_pass"] / fail_total if fail_total else None,
             "false_fail_rate": confusion["false_fail"] / pass_total if pass_total else None,
             "balanced_accuracy": (sensitivity + specificity) / 2 if sensitivity is not None and specificity is not None else None,
@@ -432,12 +445,22 @@ def _judge_calibration_summary(rows: list[dict[str, Any]], suite: Suite) -> dict
         if not judge_rows:
             continue
         result = summarize(judge_rows)
+        dimensions = (
+            "category",
+            "severity",
+            "language",
+            "response_length",
+            "response_style",
+            "probe_type",
+            "model_family_alias",
+        )
         result["slices"] = {
             dimension: {
                 value: summarize([row for row in judge_rows if str(cases[str(row["case_id"])].get(dimension)) == value])
                 for value in sorted({str(cases[str(row["case_id"])].get(dimension)) for row in judge_rows})
             }
-            for dimension in ("category", "severity", "language")
+            for dimension in dimensions
+            if any(cases[str(row["case_id"])].get(dimension) is not None for row in judge_rows)
         }
         calibration[judge_id] = result
     return calibration

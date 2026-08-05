@@ -4,6 +4,9 @@ note = "Targets are independent response-level human-gold items. Language, sever
 target_unique_responses = 2252
 languages = ["en", "it"]
 minimum_model_families = 4
+minimum_judge_repetitions = 2
+maximum_invalid_cases = 0
+minimum_repeat_stability = 0.95
 required_probe_types = ["standard", "borderline", "reference-leakage", "verbosity", "position", "order", "style", "self-preference"]
 
 [allocations]

@@ -158,8 +158,14 @@ def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
 
 def test_judge_calibration_reports_false_pass_risk_by_slice(tmp_path: Path) -> None:
     suite = load_suite(_suite(tmp_path))
-    passing = {**suite.cases[0], "id": "pass-case", "judge_gold_verdict": "pass"}
-    failing = {**suite.cases[0], "id": "fail-case", "severity": "critical", "judge_gold_verdict": "fail"}
+    passing = {**suite.cases[0], "id": "pass-case", "judge_gold_verdict": "pass", "probe_type": "standard"}
+    failing = {
+        **suite.cases[0],
+        "id": "fail-case",
+        "severity": "critical",
+        "judge_gold_verdict": "fail",
+        "probe_type": "borderline",
+    }
     calibration_suite = Suite(suite.root, suite.config, (passing, failing), suite.rubric, suite.dataset_path, suite.rubric_path)
     rows = [
         {"judge_id": "primary", "case_id": "pass-case", "judgment": {"verdict": "pass"}},
@@ -169,6 +175,8 @@ def test_judge_calibration_reports_false_pass_risk_by_slice(tmp_path: Path) -> N
     assert result["accuracy"] == 0.5 and result["failure_sensitivity"] == 0.0
     assert result["false_pass_rate"] == 1.0 and result["pass_specificity"] == 1.0
     assert result["slices"]["severity"]["critical"]["false_pass"] == 1
+    assert result["failure_sensitivity_ci"]["lower"] == 0.0
+    assert result["slices"]["probe_type"]["borderline"]["false_pass"] == 1
 
 
 def test_bundle_verification_detects_tampering(tmp_path: Path) -> None:

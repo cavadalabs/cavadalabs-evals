@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from .artifacts import verify_bundle
+from .calibration import qualify_judge_run
 from .comparison import compare_runs
 from .compliance import generate_control_report
 from .external import import_external_results
@@ -118,6 +119,12 @@ def parser() -> argparse.ArgumentParser:
     annotations_adjudicate.add_argument("--adjudicator-id", required=True)
     annotations_adjudicate.add_argument("--qualification-evidence", required=True)
     annotations_adjudicate.add_argument("--conflicts", required=True)
+
+    judge_qualify = commands.add_parser("judge-qualify", help="Apply preregistered gates to a verified judge calibration run")
+    judge_qualify.add_argument("run")
+    judge_qualify.add_argument("blueprint")
+    judge_qualify.add_argument("corpus_manifest")
+    judge_qualify.add_argument("output")
 
     audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
     audit.add_argument("suite")
@@ -467,6 +474,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
+        if args.command == "judge-qualify":
+            result = qualify_judge_run(
+                Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output)
+            )
+            print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
+            return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
         if args.command == "audit":
             print(json.dumps(audit_suite(load_suite(args.suite)), ensure_ascii=False, indent=2))
             return EXIT_PASS

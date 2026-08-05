@@ -152,7 +152,12 @@ Development progress: the engine now reports distinct-case confusion counts,
 failure sensitivity, specificity, false-pass/false-fail rates, invalidity,
 repeat stability, and module/severity/language slices. A machine-validated
 2,252-item qualification blueprint is preregistered; the independently labeled
-restricted corpus does not yet exist.
+restricted corpus does not yet exist. A fail-closed assembler now validates the
+exact allocation, evidence hashes, verdict balance, and four-family minimum,
+then creates a hash-pinned recorded-response suite outside the repository. The
+`judge-qualify` gate consumes only a verified finalized run and applies the
+preregistered module-level Wilson lower bounds, zero-invalid, two-repetition,
+and 0.95 repeat-stability requirements while preserving all diagnostic slices.
 
 - [ ] Create a separate calibration corpus of human-gold responses across
   constructs, severities, languages, styles, lengths, and model families.
