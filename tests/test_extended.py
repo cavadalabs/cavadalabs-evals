@@ -9,7 +9,8 @@ from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.external import import_external_results
 from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
 from cavada_eval.pairwise import _winner
-from cavada_eval.protocol import ProtocolError, load_suite, sha256_file
+from cavada_eval.program import load_program_registry
+from cavada_eval.protocol import ProtocolError, load_suite, sha256_file, wilson_gate_power
 from cavada_eval.runner import _post_json, call_target, run
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
@@ -64,6 +65,30 @@ def test_statistics_are_deterministic_and_paired() -> None:
     assert comparison["absolute_delta"] == 0.5 and comparison["wins"] == 1
     assert normalize_text("Ｃafé\u0301  TEST") == normalize_text("Café́ test")
     assert contains_pii_like("Contact person@example.test") is True
+    assert wilson_gate_power(142, 0.95, 0.99) >= 0.80
+    assert wilson_gate_power(141, 0.95, 0.99) < 0.80
+
+
+def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path) -> None:
+    repo = Path.cwd()
+    registry_path = repo / "program" / "registry.toml"
+    registry = load_program_registry(registry_path, repo_root=repo)
+    assert registry["summary"]["by_status"]["candidate"] == 2
+    assert registry["summary"]["by_status"]["draft"] == 1
+    assert registry["summary"]["by_status"]["planned"] == 15
+    assert registry["summary"]["official_capable"] == 0
+
+    duplicate = tmp_path / "registry.toml"
+    duplicate.write_text(
+        registry_path.read_text(encoding="utf-8").replace('id = "memo4345-v1"', 'id = "security-privacy-smoke-v1"', 1),
+        encoding="utf-8",
+    )
+    try:
+        load_program_registry(duplicate, repo_root=repo)
+    except ProtocolError as exc:
+        assert "duplicate suite id" in str(exc)
+    else:  # pragma: no cover - assertion branch
+        raise AssertionError("duplicate program suite identity was accepted")
 
 
 def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
@@ -202,6 +227,46 @@ def test_recorded_target_adapter_is_offline_and_pinned(tmp_path: Path) -> None:
     answer, _, reported, payload, transport = call_target(suite, "recorded://suite", "", {"case_id": "one", "input": "Question"}, None, 1)
     assert (answer, reported) == ("Recorded answer", "recorded-model")
     assert payload["source_sha256"] and transport["recorded"] is True
+
+
+def test_openai_target_prepends_hash_pinned_system_prompt(tmp_path: Path) -> None:
+    class Handler(BaseHTTPRequestHandler):
+        payload: dict[str, object] = {}
+
+        def do_POST(self) -> None:  # noqa: N802
+            Handler.payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            body = b'{"model":"target-real","choices":[{"message":{"content":"Answer"}}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    root = _suite(tmp_path)
+    (root / "system.txt").write_text("Fixed system prompt.\n", encoding="utf-8")
+    config = (root / "suite.toml").read_text(encoding="utf-8").replace(
+        'kind = "json"', 'kind = "openai"\nsystem_prompt = "system.txt"'
+    )
+    (root / "suite.toml").write_text(config, encoding="utf-8")
+    suite = load_suite(root)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        answer, _, reported, _, _ = call_target(
+            suite, f"http://127.0.0.1:{server.server_port}", "", "Question", "target-request", 5
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+    assert (answer, reported) == ("Answer", "target-real")
+    assert Handler.payload["messages"] == [
+        {"role": "system", "content": "Fixed system prompt.\n"},
+        {"role": "user", "content": "Question"},
+    ]
 
 
 def test_retry_reuses_idempotency_key() -> None:

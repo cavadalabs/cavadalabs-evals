@@ -14,6 +14,7 @@ from .compliance import generate_control_report
 from .external import import_external_results
 from .pairwise import pairwise_runs
 from .profiles import profile_summary
+from .program import load_program_registry
 from .protocol import ProtocolError, audit_suite, load_suite, promote_suite
 from .retention import ACTIONS as RETENTION_ACTIONS
 from .retention import retention_record
@@ -81,6 +82,9 @@ def parser() -> argparse.ArgumentParser:
     listing.add_argument("--suites-root", default="suites")
 
     commands.add_parser("profiles", help="List benchmark profiles and built-in official support")
+
+    program = commands.add_parser("program", help="Validate and show the modular evaluation program registry")
+    program.add_argument("--registry", default="program/registry.toml")
 
     validate = commands.add_parser("validate", help="Validate suite schema and integrity")
     validate.add_argument("suite")
@@ -203,6 +207,13 @@ def _doctor(repo: Path) -> dict[str, object]:
         "ERROR_REPORTING": "false",
     }
     unsafe = [name for name, value in telemetry.items() if value is not None and value.casefold() != expected[name]]
+    program_error = ""
+    try:
+        program = load_program_registry(repo / "program" / "registry.toml", repo_root=repo)
+        program_summary: object = program["summary"]
+    except ProtocolError as exc:
+        program_error = str(exc)
+        program_summary = {"error": program_error}
     return {
         "repository": str(repo),
         "python": sys.version.split()[0],
@@ -210,11 +221,13 @@ def _doctor(repo: Path) -> dict[str, object]:
         "git": (repo / ".git").exists(),
         "uv_lock": (repo / "uv.lock").is_file(),
         "protocol": (repo / "PROTOCOL.md").is_file(),
+        "program": program_summary,
         "telemetry_environment": telemetry,
         "unsafe_explicit_telemetry_settings": unsafe,
         "ready": bool(schema_paths)
         and not schema_errors
         and not unsafe
+        and not program_error
         and (repo / ".git").exists()
         and (repo / "uv.lock").is_file()
         and (repo / "PROTOCOL.md").is_file(),
@@ -381,6 +394,13 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PASS
         if args.command == "profiles":
             print(json.dumps(profile_summary(), indent=2))
+            return EXIT_PASS
+        if args.command == "program":
+            registry_path = Path(args.registry)
+            if not registry_path.is_absolute():
+                registry_path = repo / registry_path
+            program_registry = load_program_registry(registry_path, repo_root=repo)
+            print(json.dumps(program_registry, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "validate":
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))

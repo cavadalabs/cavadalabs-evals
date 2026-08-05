@@ -261,6 +261,20 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                     errors.append("recorded target responses must be a regular in-suite file")
                 elif official and target.get("responses_sha256") != sha256_file(responses_path):
                     errors.append("official recorded target requires matching target.responses_sha256")
+    system_prompt = target.get("system_prompt") if isinstance(target, dict) else None
+    if system_prompt is not None:
+        if target_kind != "openai" or not isinstance(system_prompt, str) or not system_prompt:
+            errors.append("target.system_prompt requires a non-empty in-suite path and target.kind=openai")
+        else:
+            try:
+                system_prompt_path = _inside(suite.root, system_prompt)
+            except ProtocolError as exc:
+                errors.append(str(exc))
+            else:
+                if not system_prompt_path.is_file() or system_prompt_path.is_symlink():
+                    errors.append("target.system_prompt must be a regular in-suite file")
+                elif official and target.get("system_prompt_sha256") != sha256_file(system_prompt_path):
+                    errors.append("official target requires matching target.system_prompt_sha256")
     capabilities = target.get("capabilities", []) if isinstance(target, dict) else []
     if capabilities and (not isinstance(capabilities, list) or not all(isinstance(item, str) and item for item in capabilities)):
         errors.append("target.capabilities must be an array of non-empty strings")
@@ -666,6 +680,29 @@ def wilson_interval(successes: int, total: int, confidence: float = 0.95) -> tup
     centre = (p + z * z / (2 * total)) / denominator
     margin = z * math.sqrt((p * (1 - p) + z * z / (4 * total)) / total) / denominator
     return max(0.0, centre - margin), min(1.0, centre + margin)
+
+
+def wilson_gate_power(total: int, gate: float, true_rate: float, confidence: float = 0.95) -> float:
+    if total < 1 or total > 100_000:
+        raise ProtocolError("total must be between 1 and 100,000")
+    if not 0 < gate <= true_rate <= 1:
+        raise ProtocolError("gate and true_rate must satisfy 0 < gate <= true_rate <= 1")
+    if true_rate == 1:
+        return float(wilson_interval(total, total, confidence)[0] >= gate)
+    log_p = math.log(true_rate)
+    log_q = math.log1p(-true_rate)
+    probabilities = (
+        math.exp(
+            math.lgamma(total + 1)
+            - math.lgamma(successes + 1)
+            - math.lgamma(total - successes + 1)
+            + successes * log_p
+            + (total - successes) * log_q
+        )
+        for successes in range(total + 1)
+        if wilson_interval(successes, total, confidence)[0] >= gate
+    )
+    return min(1.0, math.fsum(probabilities))
 
 
 def deterministic_checks(case: dict[str, Any], answer: str) -> dict[str, bool]:

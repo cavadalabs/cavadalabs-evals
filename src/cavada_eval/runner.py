@@ -299,9 +299,18 @@ def call_target(
     if kind == "openai":
         if not request_model:
             raise ProtocolError("OpenAI target requires --request-model")
+        messages = list(conversation_messages or [{"role": "user", "content": openai_prompt}])
+        system_prompt = target.get("system_prompt")
+        if system_prompt:
+            prompt_path = (suite.root / str(system_prompt)).resolve()
+            try:
+                prompt_path.relative_to(suite.root.resolve())
+            except ValueError as exc:
+                raise ProtocolError("target.system_prompt escapes the suite") from exc
+            messages.insert(0, {"role": "system", "content": prompt_path.read_text(encoding="utf-8")})
         payload: dict[str, Any] = {
             "model": request_model,
-            "messages": conversation_messages if conversation else [{"role": "user", "content": openai_prompt}],
+            "messages": messages,
             "temperature": float(suite.config.get("temperature", 0)),
             "max_tokens": int(suite.config.get("max_tokens", 2048)),
         }

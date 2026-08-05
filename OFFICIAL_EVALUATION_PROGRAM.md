@@ -21,12 +21,12 @@ system configuration, population, and gates named in the report.
 - [x] Use one CavadaLabs protocol and artifact contract.
 - [x] Keep deterministic, judge, statistical, performance, security, and
   compliance evidence separate.
-- [ ] Add a machine-readable suite registry and support matrix.
-- [ ] Add a program-level version and compatibility policy.
-- [ ] Define common assurance levels for development, candidate, calibrated,
+- [x] Add a machine-readable suite registry and support matrix.
+- [x] Add a program-level version and compatibility policy.
+- [x] Define common assurance levels for development, candidate, calibrated,
   approved, and independently reproduced evidence.
-- [ ] Define a common naming and versioning policy for modular suites.
-- [ ] Define deprecation, revocation, incident correction, and result-expiry
+- [x] Define a common naming and versioning policy for modular suites.
+- [x] Define deprecation, revocation, incident correction, and result-expiry
   policies.
 - [!] Assign protocol owner, data steward, statistical reviewer, security owner,
   privacy/legal owner, release approver, and signing authority.
@@ -65,32 +65,32 @@ scaffolding changes the measurement target.
 
 ### Measurement specification
 
-- [ ] Define the intended users, deployment contexts, exclusions, and decisions
+- [x] Define the intended users, deployment contexts, exclusions, and decisions
   supported by results.
-- [ ] Define the SUT boundary, standard system prompt policy, API contract,
+- [x] Define the SUT boundary, standard system prompt policy, API contract,
   context policy, reasoning controls, refusal policy, and token budget.
-- [ ] Define measurement constructs and observable criteria.
-- [ ] Define quality, instruction following, factuality, abstention, robustness,
+- [x] Define measurement constructs and observable criteria.
+- [x] Define quality, instruction following, factuality, abstention, robustness,
   privacy, security, safety, fairness, over-refusal, and multi-turn modules.
-- [ ] Define English and Italian locale coverage using native authoring and
+- [x] Define English and Italian locale coverage using native authoring and
   review; do not treat machine translation as equivalent evidence.
-- [ ] Define realistic, best-case, worst-case, and adversarial operating
+- [x] Define realistic, best-case, worst-case, and adversarial operating
   conditions.
-- [ ] Define allowed claims, prohibited claims, limitations, and result expiry.
+- [x] Define allowed claims, prohibited claims, limitations, and result expiry.
 
 ### Statistical design
 
-- [ ] Predeclare one primary metric and any hard gates per construct.
-- [ ] Derive sample sizes from the desired confidence-bound claims and minimum
+- [x] Predeclare one primary metric and any hard gates per construct.
+- [x] Derive sample sizes from the desired confidence-bound claims and minimum
   detectable effects.
-- [ ] Define independent sampling units and correlated conversation/scenario
+- [x] Define independent sampling units and correlated conversation/scenario
   groups.
-- [ ] Define repetitions, stochastic-variation decomposition, bootstrap seeds,
+- [x] Define repetitions, stochastic-variation decomposition, bootstrap seeds,
   and confidence levels.
-- [ ] Define paired comparison, non-inferiority, multiple-testing, and missing
+- [x] Define paired comparison, non-inferiority, multiple-testing, and missing
   evidence policies.
-- [ ] Prevent arbitrary aggregation across unrelated constructs.
-- [ ] Publish the power analysis and threshold rationale before target pilots.
+- [x] Prevent arbitrary aggregation across unrelated constructs.
+- [x] Publish the power analysis and threshold rationale before target pilots.
 - [!] Obtain independent statistical review of the frozen analysis plan.
 
 ### Dataset and holdout design
