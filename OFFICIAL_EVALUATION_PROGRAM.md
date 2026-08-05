@@ -185,6 +185,12 @@ and 0.95 repeat-stability requirements while preserving all diagnostic slices.
 
 ### Pilot and freeze
 
+The executable campaign, model-family independence rule, control requirements,
+fixed command, transcript review, exit criteria, and current external blockers
+are preregistered in
+`suites/cavada-core-assistant-text-v1/PILOT_PROTOCOL.md`. This does not mark a
+pilot item complete; no target or qualified judge endpoint is available.
+
 - [ ] Run pilots across at least three unrelated model families plus deliberate
   positive and negative controls.
 - [ ] Inspect transcripts for parser failures, ambiguous tasks, impossible

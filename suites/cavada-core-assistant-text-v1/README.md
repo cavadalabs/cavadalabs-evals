@@ -26,7 +26,8 @@ reproducible author-QA ledger. The frozen design target is 1,840 independent
 scenarios, subject to pre-pilot statistical review.
 
 Read `MEASUREMENT_SPEC.md`, `STATISTICAL_ANALYSIS_PLAN.md`, and
-`case_blueprint.toml` before authoring cases.
+`case_blueprint.toml` before authoring cases. `PILOT_PROTOCOL.md` defines the
+fixed multi-family campaign and its external entry criteria.
 `DEVELOPMENT_DATASET_CARD-0.8.0.md` records the current limitations and
 regeneration command. Do not create the private holdout in this public
 repository.
