@@ -1,4 +1,4 @@
-# Measurement specification 0.1.0
+# Measurement specification 0.2.0
 
 Status: preregistration draft; no target pilot results have been inspected.
 

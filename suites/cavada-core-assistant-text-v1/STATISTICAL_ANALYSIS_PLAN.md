@@ -1,4 +1,4 @@
-# Statistical analysis plan 0.1.0
+# Statistical analysis plan 0.2.0
 
 Status: preregistration draft; thresholds may change only before target pilots
 and must receive independent statistical review before approval.

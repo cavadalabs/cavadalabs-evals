@@ -1,4 +1,4 @@
-# Label handbook 0.1.0
+# Label handbook 0.2.0
 
 Status: draft author handbook. It becomes qualification evidence only after
 independent native-language and statistical review.
@@ -145,7 +145,7 @@ record and never overwrites them.
 
 ## Qualification
 
-The draft fixture set covers all ten modules, both languages, all four labels,
+The reviewer qualification fixture set covers all ten modules, both languages, all four labels,
 and multiple severities. Passing requirements will be fixed before reviewers
 see the scored qualification set. No author, model developer, benchmark runner,
 or financially conflicted person can be the sole reviewer or adjudicator.

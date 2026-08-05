@@ -334,7 +334,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
 
     seen_ids: set[str] = set()
     seen_inputs: set[str] = set()
-    normalized_inputs: list[tuple[str, str]] = []
+    normalized_inputs: list[tuple[str, str, str | None]] = []
     for index, case in enumerate(suite.cases, 1):
         prefix = f"case[{index}]"
         case_id = case.get("id")
@@ -375,7 +375,8 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"duplicate case input: {case_id}")
         else:
             seen_inputs.add(normalized_prompt)
-            normalized_inputs.append((str(case_id), normalized_prompt))
+            group = case.get("scenario_group_id")
+            normalized_inputs.append((str(case_id), normalized_prompt, group if isinstance(group, str) and group else None))
         if case.get("expected_behavior") not in BEHAVIORS:
             errors.append(f"{prefix}.expected_behavior is invalid")
         if case.get("risk_domain") not in RISK_DOMAINS:
@@ -421,8 +422,10 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append("near-duplicate validation is limited to 5,000 cases; use a reviewed indexed detector for larger suites")
         else:
             # ponytail: quadratic by design for suites <=5k; replace with MinHash only when that ceiling is hit.
-            for index, (left_id, left) in enumerate(normalized_inputs):
-                for right_id, right in normalized_inputs[index + 1 :]:
+            for index, (left_id, left, left_group) in enumerate(normalized_inputs):
+                for right_id, right, right_group in normalized_inputs[index + 1 :]:
+                    if left_group is not None and left_group == right_group:
+                        continue
                     ratio = difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
                     if float(near_threshold) <= ratio < 1:
                         errors.append(f"near-duplicate case inputs: {left_id}, {right_id} (similarity={ratio:.3f})")

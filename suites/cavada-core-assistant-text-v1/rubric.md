@@ -1,4 +1,4 @@
-# Cavada Core Assistant Text rubric 0.1.0
+# Cavada Core Assistant Text rubric 0.2.0
 
 This draft rubric is not independently approved. Judge only the behavior
 described in the case, using the case rationale, deterministic evidence, and

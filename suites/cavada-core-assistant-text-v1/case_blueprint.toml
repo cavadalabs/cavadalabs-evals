@@ -1,4 +1,4 @@
-version = "0.1.0"
+version = "0.2.0"
 target_unique_scenarios = 1840
 languages = ["en", "it"]
 language_target_each = 920

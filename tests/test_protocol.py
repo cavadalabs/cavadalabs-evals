@@ -81,6 +81,22 @@ def test_duplicate_cases_are_rejected(tmp_path: Path) -> None:
         load_suite(root)
 
 
+def test_near_duplicates_require_a_shared_scenario_group(tmp_path: Path) -> None:
+    root = make_suite(tmp_path)
+    config = root / "suite.toml"
+    config.write_text(config.read_text() + "\n[governance]\nnear_duplicate_threshold = 0.9\n")
+    first = json.loads((root / "dataset.jsonl").read_text())
+    first["scenario_group_id"] = "paired-1"
+    second = {**first, "id": "two", "input": "Question!", "scenario_group_id": "paired-1"}
+    (root / "dataset.jsonl").write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+    assert len(load_suite(root).cases) == 2
+
+    second["scenario_group_id"] = "independent-2"
+    (root / "dataset.jsonl").write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+    with pytest.raises(ProtocolError, match="near-duplicate case inputs"):
+        load_suite(root)
+
+
 def test_secret_like_dataset_content_is_rejected(tmp_path: Path) -> None:
     root = make_suite(tmp_path)
     path = root / "dataset.jsonl"
