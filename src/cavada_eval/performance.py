@@ -457,6 +457,14 @@ def load_performance_runtime(path: str | Path) -> PerformanceRuntime:
 
 def performance_plan_summary(plan: PerformancePlan, runtime: PerformanceRuntime | None = None) -> dict[str, Any]:
     cells = _expand_cells(plan, runtime)
+    planned_contexts = sorted({int(cell["context_tokens"]) for cell in cells})
+    planned_outputs = sorted({int(cell["output_tokens"]) for cell in cells})
+    requests_per_repetition = sum(
+        int(cell["warmup_requests"])
+        + (int(cell["measured_requests"]) if cell["arrival"] == "closed-loop" else max(1, math.ceil(cell["request_rate"] * cell["duration_seconds"])))
+        for cell in cells
+        if not cell.get("skip_reason")
+    )
     result = {
         "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
         "plan": plan.config["name"],
@@ -465,10 +473,13 @@ def performance_plan_summary(plan: PerformancePlan, runtime: PerformanceRuntime 
         "workload_sha256": plan.workload_sha256,
         "workload_assets": plan.workload_assets,
         "workload_cases": len(plan.workload),
-        "contexts": sorted({int(row["context_tokens"]) for row in plan.workload}),
+        "contexts": planned_contexts,
+        "output_tokens": planned_outputs,
+        "available_workload_contexts": sorted({int(row["context_tokens"]) for row in plan.workload}),
         "scenarios": len(plan.config["scenarios"]),
         "cells_per_repetition": len(cells),
         "repetitions": plan.config["execution"]["repetitions"],
+        "planned_requests": requests_per_repetition * int(plan.config["execution"]["repetitions"]),
     }
     if runtime:
         result["runtime"] = {

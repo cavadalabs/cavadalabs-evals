@@ -36,6 +36,15 @@ set a justified tolerance. Never relabel approximate prompts as iso-token.
 
 ## 3. Run
 
+Use the short functional profile first:
+
+```bash
+uv run cavada-eval perf run performance/plans/llm-serving-smoke-v1.toml \
+  /secure/path/runtime.toml
+```
+
+Then run the full reference campaign:
+
 ```bash
 uv run cavada-eval perf run performance/plans/llm-serving-v1.toml \
   /secure/path/runtime.toml
