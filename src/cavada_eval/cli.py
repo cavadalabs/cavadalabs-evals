@@ -24,7 +24,7 @@ from .performance import (
     run_performance_campaign,
 )
 from .pilot import audit_pilot_campaign
-from .profiles import profile_summary
+from .profiles import benchmark_preset, canonical_preset, preset_summary, profile_summary, stratified_cases
 from .program import load_program_registry
 from .protocol import ProtocolError, audit_suite, load_suite, promote_suite, sha256_file
 from .release import verified_public_release
@@ -54,9 +54,10 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--judge-revision", default="")
     command.add_argument("--target-key-env", default="TARGET_API_KEY")
     command.add_argument("--judge-key-env", default="JUDGE_API_KEY")
-    command.add_argument("--repetitions", type=int, default=1)
-    command.add_argument("--judge-repetitions", type=int, default=1)
-    command.add_argument("--max-cases", type=int, default=0)
+    command.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    command.add_argument("--repetitions", type=int)
+    command.add_argument("--judge-repetitions", type=int)
+    command.add_argument("--max-cases", type=int)
     command.add_argument("--timeout", type=float, default=90)
     command.add_argument("--official", action="store_true")
     command.add_argument("--allow-external-judge", action="store_true")
@@ -65,7 +66,6 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--mode",
         choices=("smoke", "regression", "candidate", "official", "redteam", "performance", "load", "soak", "offline", "monitoring"),
-        default="candidate",
     )
     command.add_argument("--max-target-calls", type=int, default=0)
     command.add_argument("--max-judge-calls", type=int, default=0)
@@ -84,7 +84,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="cavada-eval", description="CavadaLabs reproducible AI evaluation protocol")
-    root.add_argument("--version", action="version", version="cavadalabs-evals 0.2.0")
+    root.add_argument("--version", action="version", version="cavadalabs-evals 0.3.0")
     commands = root.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Create a new draft suite from the secure template")
@@ -97,6 +97,7 @@ def parser() -> argparse.ArgumentParser:
     listing.add_argument("--suites-root", default="suites")
 
     commands.add_parser("profiles", help="List benchmark profiles and built-in official support")
+    commands.add_parser("presets", help="List the versioned smoke, quick, standard, and reference execution presets")
 
     program = commands.add_parser("program", help="Validate and show the modular evaluation program registry")
     program.add_argument("--registry", default="program/registry.toml")
@@ -148,8 +149,9 @@ def parser() -> argparse.ArgumentParser:
 
     estimate = commands.add_parser("estimate", help="Estimate calls before execution without network access")
     estimate.add_argument("suite")
-    estimate.add_argument("--repetitions", type=int, default=1)
-    estimate.add_argument("--judge-repetitions", type=int, default=1)
+    estimate.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    estimate.add_argument("--repetitions", type=int)
+    estimate.add_argument("--judge-repetitions", type=int)
 
     execute = commands.add_parser("run", help="Run an immutable benchmark")
     _run_arguments(execute)
@@ -234,11 +236,13 @@ def parser() -> argparse.ArgumentParser:
     perf = commands.add_parser("perf", help="Run generation-only LLM serving performance benchmarks")
     perf_commands = perf.add_subparsers(dest="perf_command", required=True)
     perf_validate = perf_commands.add_parser("validate", help="Validate a performance plan without network access")
-    perf_validate.add_argument("plan")
+    perf_validate.add_argument("plan", nargs="?")
+    perf_validate.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
     perf_validate.add_argument("--runtime")
     perf_run = perf_commands.add_parser("run", help="Run a validated performance campaign against an external endpoint")
-    perf_run.add_argument("plan")
+    perf_run.add_argument("plan", nargs="?")
     perf_run.add_argument("runtime")
+    perf_run.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
     perf_run.add_argument("--output-root")
     perf_run.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     perf_run.add_argument("--signing-key-id", default="")
@@ -309,7 +313,13 @@ def _doctor(repo: Path) -> dict[str, object]:
 
 
 def _execute(args: argparse.Namespace) -> int:
-    resolved_official = bool(args.official or args.mode == "official")
+    preset_name = canonical_preset(args.preset)
+    preset = benchmark_preset(preset_name) if preset_name else None
+    repetitions = int(args.repetitions if args.repetitions is not None else preset["repetitions"] if preset else 1)
+    judge_repetitions = int(args.judge_repetitions if args.judge_repetitions is not None else preset["judge_repetitions"] if preset else 1)
+    max_cases = int(args.max_cases if args.max_cases is not None else preset["max_cases"] if preset else 0)
+    mode = str(args.mode if args.mode is not None else preset["mode"] if preset else "candidate")
+    resolved_official = bool(args.official or mode == "official")
     suite = load_suite(args.suite, official=resolved_official)
     repo_root = _repository_root(suite.root)
     run_dir = run(
@@ -326,15 +336,16 @@ def _execute(args: argparse.Namespace) -> int:
         judge_revision=args.judge_revision,
         target_key_env=args.target_key_env,
         judge_key_env=args.judge_key_env,
-        repetitions=args.repetitions,
-        judge_repetitions=args.judge_repetitions,
-        max_cases=args.max_cases,
+        repetitions=repetitions,
+        judge_repetitions=judge_repetitions,
+        max_cases=max_cases,
         timeout=args.timeout,
         official=resolved_official,
         allow_external_judge=args.allow_external_judge,
         signing_key_env=args.signing_key_env,
         signing_key_id=args.signing_key_id,
-        mode="redteam" if args.command == "redteam" else args.mode,
+        mode="redteam" if args.command == "redteam" else mode,
+        preset=preset_name,
         max_target_calls=args.max_target_calls,
         max_judge_calls=args.max_judge_calls,
         max_total_tokens=args.max_total_tokens,
@@ -394,6 +405,7 @@ def _resume(args: argparse.Namespace) -> int:
         signing_key_env=args.signing_key_env,
         signing_key_id=args.signing_key_id,
         mode=str(parameters.get("mode", "candidate")),
+        preset=str(parameters.get("preset", "")),
         max_target_calls=int(parameters.get("max_target_calls", 0)),
         max_judge_calls=int(parameters.get("max_judge_calls", 0)),
         max_total_tokens=int(parameters.get("max_total_tokens", 0)),
@@ -491,6 +503,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "profiles":
             print(json.dumps(profile_summary(), indent=2))
             return EXIT_PASS
+        if args.command == "presets":
+            print(json.dumps(preset_summary(), indent=2))
+            return EXIT_PASS
         if args.command == "program":
             registry_path = Path(args.registry)
             if not registry_path.is_absolute():
@@ -499,8 +514,18 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(program_registry, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "perf":
+            preset_name = canonical_preset(args.preset) if args.perf_command in {"validate", "run"} else ""
+            if preset_name:
+                preset_plan = (repo / str(benchmark_preset(preset_name)["performance_plan"])).resolve()
+                if args.plan and Path(args.plan).resolve() != preset_plan:
+                    raise ProtocolError(f"--preset {preset_name} requires plan {preset_plan}")
+                plan_path = preset_plan
+            elif args.perf_command in {"validate", "run"}:
+                if not args.plan:
+                    raise ProtocolError("performance plan is required unless --preset is used")
+                plan_path = Path(args.plan)
             if args.perf_command == "validate":
-                plan = load_performance_plan(args.plan)
+                plan = load_performance_plan(plan_path)
                 if args.runtime:
                     runtime = load_performance_runtime(args.runtime)
                     result = performance_plan_summary(plan, runtime)
@@ -510,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
                 return EXIT_PASS
             if args.perf_command == "run":
                 output = run_performance_campaign(
-                    load_performance_plan(args.plan),
+                    load_performance_plan(plan_path),
                     load_performance_runtime(args.runtime),
                     repo_root=repo,
                     output_root=Path(args.output_root) if args.output_root else None,
@@ -578,15 +603,22 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PASS
         if args.command == "estimate":
             suite = load_suite(args.suite)
-            if args.repetitions < 1 or args.judge_repetitions < 1:
+            preset_name = canonical_preset(args.preset)
+            preset = benchmark_preset(preset_name) if preset_name else None
+            repetitions = int(args.repetitions if args.repetitions is not None else preset["repetitions"] if preset else 1)
+            judge_repetitions = int(args.judge_repetitions if args.judge_repetitions is not None else preset["judge_repetitions"] if preset else 1)
+            selected = stratified_cases(suite.cases, int(preset["max_cases"])) if preset else suite.cases
+            if repetitions < 1 or judge_repetitions < 1:
                 raise ProtocolError("repetitions must be positive")
-            target_calls = len(suite.cases) * args.repetitions
+            target_calls = len(selected) * repetitions
             print(
                 json.dumps(
                     {
-                        "cases": len(suite.cases),
+                        "preset": preset_name or None,
+                        "preset_version": preset["version"] if preset else None,
+                        "cases": len(selected),
                         "target_calls": target_calls,
-                        "maximum_judge_calls": target_calls * args.judge_repetitions,
+                        "maximum_judge_calls": target_calls * judge_repetitions,
                         "network_used": False,
                     },
                     indent=2,

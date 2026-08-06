@@ -1,0 +1,70 @@
+plan_version = "1.0.0"
+revision = "1.0.0"
+name = "llm-serving-quick-v1"
+description = "Approximately one hundred bounded requests for fast LLM serving regression; not an official reference campaign."
+profile = "llm-serving-v1"
+data_classification = "synthetic"
+
+[workload]
+id = "llm-serving-synthetic-v1"
+revision = "1.0.0"
+path = "../workloads/llm-serving-synthetic-v1.jsonl"
+sha256 = "5e3f2782a0ea26c3a697c4bbf43adef356514f78584689c0a71e2e3a98f78562"
+mode = "iso-prompt"
+input_token_tolerance_fraction = 0.05
+
+[generation]
+stream = true
+temperature = 0
+request_defaults = { top_p = 1 }
+
+[execution]
+repetitions = 1
+warmup_requests = 1
+measured_requests = 4
+open_loop_duration_seconds = 10
+bootstrap_samples = 500
+seed = 4345
+randomize_cells = true
+cooldown_seconds = 1
+max_in_flight = 16
+
+[limits]
+timeout_seconds = 300
+max_requests = 110
+max_total_tokens = 2000000
+max_campaign_seconds = 3600
+max_context_tokens = 8192
+max_output_tokens = 512
+
+[slo]
+ttft_p95_ms = 30000
+e2e_p99_ms = 120000
+goodput_ttft_ms = 30000
+goodput_e2e_ms = 120000
+maximum_error_rate = 0.01
+minimum_output_tokens_fraction = 0.5
+
+[[scenarios]]
+id = "quick-latency"
+arrival = "closed-loop"
+context_tokens = [128, 2048, 8192]
+output_tokens = [128, 512]
+concurrency = [1]
+
+[[scenarios]]
+id = "quick-throughput"
+arrival = "closed-loop"
+context_tokens = [2048]
+output_tokens = [512]
+concurrency = [1, 2, 4]
+warmup_requests = 2
+measured_requests = 8
+
+[[scenarios]]
+id = "quick-open-loop"
+arrival = "open-loop"
+context_tokens = [128]
+output_tokens = [128]
+request_rates = [0.5, 1, 2]
+duration_seconds = 10

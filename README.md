@@ -7,7 +7,7 @@ artifacts do not depend on a vendor database or framework.
 
 ## Status
 
-The engine is an active pre-1.0 implementation. The MEMO4345 suite remains
+The engine is an active pre-1.0 developer preview. The MEMO4345 suite remains
 `candidate`; it cannot produce an official result until independent calibration
 and the required governance evidence exist. `official` means conformance to the
 versioned protocol, never universal safety, correctness, or legal certification.
@@ -38,6 +38,28 @@ uv run cavada-eval run suites/memo4345-v1 \
   --max-cases 10
 ```
 
+Use a versioned execution preset instead of choosing sample sizes and
+repetitions manually:
+
+```bash
+uv run cavada-eval presets
+uv run cavada-eval run suites/cavada-core-assistant-text-v1 \
+  --preset quick \
+  --endpoint http://127.0.0.1:8000/v1 \
+  --model-label local-model \
+  --expected-model local-model \
+  --model-revision immutable-model-revision \
+  --request-model local-model \
+  --judge-endpoint http://127.0.0.1:8010/v1 \
+  --judge-model local-judge \
+  --expected-judge-model local-judge \
+  --judge-revision immutable-judge-revision
+```
+
+`run` evaluates response behavior with suite metrics and judges. `perf run`
+uses a separate generation-only workload and measures serving performance; it
+does not score response correctness or safety.
+
 Useful commands:
 
 ```text
@@ -55,6 +77,9 @@ uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml \
   --runtime /secure/path/runtime.toml
 uv run cavada-eval perf run performance/plans/llm-serving-v1.toml \
   /secure/path/runtime.toml
+
+# Or select the immutable built-in plan by preset:
+uv run cavada-eval perf run /secure/path/runtime.toml --preset quick
 ```
 
 The versioned plan covers closed-loop users, open-loop offered load, concurrency
@@ -141,6 +166,11 @@ Read [PROTOCOL.md](PROTOCOL.md), [SECURITY.md](SECURITY.md),
 [program/POLICY.md](program/POLICY.md),
 [program/SOURCE_POLICY.md](program/SOURCE_POLICY.md), and the `docs/` directory
 before operating an official benchmark.
+
+Community participation is governed by [CONTRIBUTING.md](CONTRIBUTING.md),
+[GOVERNANCE.md](GOVERNANCE.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
+[RESULTS_POLICY.md](RESULTS_POLICY.md). Repository publication does not make a
+suite or result official.
 
 ## Development verification
 

@@ -310,6 +310,7 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Add a fail-closed `pilot-audit` command for the preregistered multi-family campaign, controls, review evidence, and exact run compatibility.
 - [x] Add configuration files for models, judges, protocols, and authorized destinations without storing secrets.
 - [x] Add clear preflight output and a no-network dry run.
+- [x] Add versioned smoke, quick, standard, and reference presets with deterministic, scenario-group-safe stratified selection.
 - [x] Add shell-safe reproduction commands that reference environment-variable names only.
 - [x] Add examples for text, RAG, agent, conversation, structured extraction, image, audio, video, and compliance evidence.
 - [x] Add troubleshooting, threat-model, privacy, methodology, adapter, metric, and report documentation.

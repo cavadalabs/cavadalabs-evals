@@ -12,6 +12,7 @@ import pytest
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import _doctor
 from cavada_eval.compliance import generate_control_report
+from cavada_eval.profiles import benchmark_preset, canonical_preset, stratified_cases
 from cavada_eval.protocol import (
     ProtocolError,
     _calibration_evidence_errors,
@@ -24,6 +25,22 @@ from cavada_eval.protocol import (
     wilson_interval,
 )
 from cavada_eval.runner import _judge_result, _manifest_endpoint, run
+
+
+def test_benchmark_presets_are_canonical_and_group_safe() -> None:
+    cases = (
+        {"id": "a", "scenario_group_id": "pair", "scenario_role": "primary", "category": "alpha", "risk_domain": "quality", "severity": "low", "language": "en", "split": "public"},
+        {"id": "a-variant", "scenario_group_id": "pair", "scenario_role": "variant", "category": "alpha", "risk_domain": "quality", "severity": "low", "language": "en", "split": "public"},
+        {"id": "b", "category": "beta", "risk_domain": "security", "severity": "high", "language": "it", "split": "practice"},
+        {"id": "c", "category": "alpha", "risk_domain": "quality", "severity": "medium", "language": "it", "split": "practice"},
+        {"id": "d", "category": "beta", "risk_domain": "security", "severity": "critical", "language": "en", "split": "public"},
+    )
+    selected = stratified_cases(cases, 4)
+    assert selected == stratified_cases(cases, 4)
+    assert len(selected) <= 4 and {case["category"] for case in selected} == {"alpha", "beta"}
+    assert ({"a", "a-variant"} <= {case["id"] for case in selected}) or not ({"a", "a-variant"} & {case["id"] for case in selected})
+    assert canonical_preset("full") == "reference"
+    assert benchmark_preset("quick")["max_cases"] == 100
 
 
 def make_suite(tmp_path: Path, *, status: str = "approved", review: str = "approved") -> Path:

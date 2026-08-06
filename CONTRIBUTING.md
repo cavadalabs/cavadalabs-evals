@@ -11,6 +11,9 @@ parameters in the manifest, and an explicit hard/soft-fail policy. New adapters
 must document capabilities, authentication, egress, identity verification,
 timeouts, response limits, and data-transfer behavior.
 
+Unless explicitly marked otherwise, an intentional contribution submitted for
+inclusion is licensed under Apache License 2.0 as described in `LICENSE`.
+
 Pull requests touching `PROTOCOL.md`, `AGENTS.md`, `schemas/`, `standards/`,
 suite governance, signing, or official-run gates require designated protocol
 and security owners. Never add real secrets, customer data, private holdouts,

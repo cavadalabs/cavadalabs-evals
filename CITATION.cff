@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use CavadaLabs Evals, cite the software version and the exact protocol, suite, dataset, and result-bundle hashes."
+title: "CavadaLabs Evals"
+type: software
+authors:
+  - name: CavadaLabs
+version: 0.3.0
+date-released: 2026-08-06
+license: Apache-2.0
+repository-code: "https://github.com/cavadalabs/cavadalabs-evals"
+abstract: "A local-first protocol and engine for reproducible, auditable AI quality, safety, security, compliance-evidence, and serving-performance evaluations."
+keywords:
+  - artificial intelligence
+  - evaluation
+  - benchmarking
+  - AI safety
+  - LLM serving
+

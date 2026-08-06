@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cavada_eval.artifacts import verify_bundle
-from cavada_eval.cli import main
+from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     compare_performance_runs,
     load_performance_plan,
@@ -175,3 +175,8 @@ def test_performance_plan_fails_closed_before_network(tmp_path: Path) -> None:
     with pytest.raises(ProtocolError, match="only permits public or synthetic"):
         load_performance_plan(plan)
     assert load_performance_runtime(runtime).config["id"] == "runtime-a"
+
+
+def test_performance_preset_accepts_runtime_without_explicit_plan() -> None:
+    args = parser().parse_args(["perf", "run", "runtime.toml", "--preset", "quick"])
+    assert args.plan is None and args.runtime == "runtime.toml" and args.preset == "quick"

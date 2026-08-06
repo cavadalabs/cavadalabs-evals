@@ -22,3 +22,23 @@ belong outside the repository and start from `runtime.example.toml`.
 
 Changing any row requires a new workload revision, a new hash in a newly
 versioned plan, and updated documentation. Never edit released inputs in place.
+
+## Built-in execution presets
+
+| Preset | Plan | Intended use |
+| --- | --- | --- |
+| `smoke` | `llm-serving-smoke-v1.toml` | Endpoint and artifact-path check |
+| `quick` | `llm-serving-quick-v1.toml` | 98-request development regression |
+| `standard` | `llm-serving-standard-v1.toml` | 825-request broad candidate campaign |
+| `reference` (`full`) | `llm-serving-v1.toml` | Complete preregistered reference matrix |
+
+Run a preset without manually selecting its plan:
+
+```bash
+uv run cavada-eval perf validate --preset quick --runtime /secure/runtime.toml
+uv run cavada-eval perf run /secure/runtime.toml --preset quick
+```
+
+Preset plans are immutable inputs, not runtime overrides. Performance request
+counts are determined by cells, warm-up, load, duration, and repetitions; they
+are intentionally distinct from quality-suite case counts.

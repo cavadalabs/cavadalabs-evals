@@ -1,7 +1,7 @@
 # Repository readiness audit
 
 - Audit date: 2026-08-06
-- Release candidate: 0.2.0
+- Release candidate: 0.3.0
 - Scope: repository-implementable CavadaLabs Evaluation Protocol controls
 
 ## Conclusion
@@ -13,6 +13,9 @@ unqualified modalities and claims are blocked in official mode.
 The dedicated LLM serving path adds generation-only closed/open-loop campaigns,
 128k/256k input contexts, outputs through 8k, strict runtime evidence, and exact
 verified-run comparisons without including judge overhead.
+Versioned smoke, quick, standard, and reference presets provide deterministic
+quality-suite sampling and immutable performance plans without changing released
+datasets or silently rewriting execution inputs.
 
 This is not evidence that any model is universally correct, safe, secure,
 unbiased, or legally compliant. An official result states conformance only to

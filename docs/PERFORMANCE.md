@@ -27,6 +27,10 @@ record the exact command/revisions, and stop only the process it started.
 ```bash
 uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml \
   --runtime /secure/path/runtime.toml
+
+# Equivalent built-in plan selection:
+uv run cavada-eval perf validate --preset reference \
+  --runtime /secure/path/runtime.toml
 ```
 
 The reference workload is `iso-prompt`: every runtime receives identical text,
@@ -43,11 +47,18 @@ uv run cavada-eval perf run performance/plans/llm-serving-smoke-v1.toml \
   /secure/path/runtime.toml
 ```
 
-Then run the full reference campaign:
+Use `quick` for a repeatable development regression and `standard` for a broad
+candidate campaign:
 
 ```bash
-uv run cavada-eval perf run performance/plans/llm-serving-v1.toml \
-  /secure/path/runtime.toml
+uv run cavada-eval perf run /secure/path/runtime.toml --preset quick
+uv run cavada-eval perf run /secure/path/runtime.toml --preset standard
+```
+
+Then run the full reference campaign (`full` is accepted as a CLI alias):
+
+```bash
+uv run cavada-eval perf run /secure/path/runtime.toml --preset reference
 ```
 
 The plan combines:
@@ -60,9 +71,9 @@ The plan combines:
 - separate warm-ups, three randomized measurement blocks, cooldowns, bounded
   execution, and bootstrap tail-latency intervals.
 
-The full plan is intentionally expensive. Copy it to a new versioned plan and
-reduce sample counts only for development smoke tests; do not present a reduced
-plan as the reference protocol.
+The reference plan is intentionally expensive. Do not mutate it or present a
+smoke, quick, or standard campaign as the reference protocol. Any new plan is a
+new versioned measurement input with its own hash and claim scope.
 
 Exit code `0` means execution completed and every evaluated cell passed its
 aggregate SLO gates. Exit code `1` preserves a completed report but signals an

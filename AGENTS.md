@@ -36,3 +36,6 @@ When creating or running a benchmark:
 8. Preserve raw streaming events and all failures. Enforce token, request, duration, timeout, context, output, and in-flight limits.
 9. Compare only verified runs with identical plan/workload hashes and exact shared cells. Report skipped cells and every block.
 10. Do not attribute results solely to a GPU or model, and do not claim quality, safety, compliance, utilization, or energy from client-side performance measurements.
+11. Prefer the versioned `smoke`, `quick`, `standard`, or `reference` preset; `full` is only a CLI alias for `reference`.
+12. Use `run --preset ...` for behavior quality/safety and `perf run --preset ...` for serving performance. Never describe one as the other.
+13. Only the complete `reference` preset can be considered for an official run, and all other official gates still apply.

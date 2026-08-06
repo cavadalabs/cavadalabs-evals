@@ -5,8 +5,16 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+## 0.3.0 - 2026-08-06
+
 - Changed the source-code license from MIT to Apache License 2.0 before public
   community contributions.
+- Added versioned smoke, quick, standard, and reference presets with stable,
+  stratified, scenario-group-safe quality-suite selection and dedicated quick
+  and standard LLM serving plans.
+- Added community governance, conduct, support, result/trademark policy,
+  citation metadata, issue and pull-request templates, dependency updates, and
+  a tag-gated GitHub release workflow with provenance and SBOM attestations.
 - Added the dedicated generation-only LLM serving performance protocol, strict
   plan/runtime/workload validation, closed/open-loop load generation, 128k/256k
   context and 8k output reference cells, tail latency/goodput/cost reporting,

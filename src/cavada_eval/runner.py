@@ -21,7 +21,7 @@ from .assets import asset_inventory, content_text, encoded_content, encoded_mess
 from .calibration import judge_evidence_errors
 from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
 from .metrics import METRIC_VERSION, deterministic_evaluation
-from .profiles import ADAPTER_CONTRACT_VERSION
+from .profiles import ADAPTER_CONTRACT_VERSION, BENCHMARK_PRESET_VERSION, canonical_preset, stratified_cases
 from .protocol import (
     PROTOCOL_VERSION,
     REPORT_VERSION,
@@ -671,7 +671,12 @@ def run(
     judge_qualification: str = "",
     judge_approval: str = "",
     engagement: str = "",
+    preset: str = "",
 ) -> Path:
+    try:
+        preset = canonical_preset(preset)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
     modes = {"smoke", "regression", "candidate", "official", "redteam", "performance", "load", "soak", "offline", "monitoring"}
     if mode not in modes:
         raise ProtocolError(f"unsupported run mode: {mode}")
@@ -681,13 +686,15 @@ def run(
         raise ProtocolError("official mode requires official integrity validation")
     if repetitions < 1 or judge_repetitions < 1:
         raise ProtocolError("Repetitions must be positive")
-    if not 1 <= concurrency <= 64 or requests_per_second < 0 or max_total_tokens < 0:
-        raise ProtocolError("concurrency must be 1..64; rate and token budgets cannot be negative")
+    if not 1 <= concurrency <= 64 or requests_per_second < 0 or max_total_tokens < 0 or max_cases < 0:
+        raise ProtocolError("concurrency must be 1..64; rate, token, and case budgets cannot be negative")
     target_kind = (suite.config.get("target") or {}).get("kind", "json")
     if official and ((target_kind != "recorded" and not _secure_endpoint(endpoint)) or not _secure_endpoint(judge_endpoint)):
         raise ProtocolError("Official runs require HTTPS or loopback endpoints")
     if official and max_cases > 0:
         raise ProtocolError("Official runs cannot use --max-cases")
+    if official and preset and preset != "reference":
+        raise ProtocolError("Official runs require the reference preset")
     if official and repetitions < int(suite.config.get("official_min_repetitions", 1)):
         raise ProtocolError("Official run has too few target repetitions")
     if official and judge_repetitions < int(suite.config.get("official_min_judge_repetitions", 1)):
@@ -802,7 +809,10 @@ def run(
     if official and len({item["expected_model"] for item in judge_specs}) != len(judge_specs):
         raise ProtocolError("official additional judges must have distinct expected model identities")
 
-    planned_target_calls = len(suite.cases) * repetitions
+    selected_cases = stratified_cases(suite.cases, max_cases) if preset else (suite.cases[:max_cases] if max_cases > 0 else suite.cases)
+    selection_policy = "deterministic stratified scenario groups" if preset and max_cases > 0 else "dataset order"
+    case_order_sha256 = sha256_bytes("\n".join(str(case["id"]) for case in selected_cases).encode("utf-8"))
+    planned_target_calls = len(selected_cases) * repetitions
     planned_judge_calls = planned_target_calls * judge_repetitions * len(judge_specs)
     if official and max_target_calls and max_target_calls < planned_target_calls:
         raise ProtocolError("official target-call budget is lower than the complete suite plan")
@@ -877,7 +887,13 @@ def run(
             "judge.revision": judge_revision,
             "parameters.repetitions": repetitions,
             "parameters.judge_repetitions": judge_repetitions,
+            "parameters.max_cases": max_cases,
         }
+        recorded_parameters = manifest.get("parameters") or {}
+        if preset or "preset" in recorded_parameters:
+            expected_resume["parameters.preset"] = preset
+        if preset or "case_order_sha256" in recorded_parameters:
+            expected_resume["parameters.case_order_sha256"] = case_order_sha256
         for dotted, expected_value in expected_resume.items():
             actual = _get(manifest, dotted) if "." in dotted else manifest.get(dotted)
             if actual != expected_value:
@@ -967,6 +983,8 @@ def run(
             reproduction.append("--progress")
         if official:
             reproduction.append("--official")
+        if preset:
+            reproduction.extend(["--preset", preset])
         manifest = {
             "protocol_version": PROTOCOL_VERSION,
             "schema_version": SCHEMA_VERSION,
@@ -1018,9 +1036,12 @@ def run(
             },
             "parameters": {
                 "mode": mode,
+                "preset": preset,
+                "preset_version": BENCHMARK_PRESET_VERSION if preset else None,
                 "repetitions": repetitions,
                 "judge_repetitions": judge_repetitions,
                 "max_cases": max_cases,
+                "selected_cases": len(selected_cases),
                 "timeout_seconds": timeout,
                 "max_target_calls": max_target_calls,
                 "max_judge_calls": max_judge_calls,
@@ -1030,8 +1051,8 @@ def run(
                 "concurrency": concurrency,
                 "requests_per_second": requests_per_second,
                 "progress_events": progress,
-                "case_order_policy": "dataset order",
-                "case_order_sha256": sha256_bytes("\n".join(str(case["id"]) for case in suite.cases).encode("utf-8")),
+                "case_order_policy": selection_policy,
+                "case_order_sha256": case_order_sha256,
                 "cache": {"target": "disabled", "judge": "disabled"},
             },
             "pricing": suite.config.get("pricing") or None,
@@ -1042,7 +1063,7 @@ def run(
     atomic_json(run_dir / "manifest.json", manifest)
     if not resumed:
         atomic_json(run_dir / "environment.json", manifest["environment"])
-        atomic_json(run_dir / "asset_inventory.json", asset_inventory(suite.cases, suite_root=suite.root, snapshot_dir=run_dir / "assets"))
+        atomic_json(run_dir / "asset_inventory.json", asset_inventory(selected_cases, suite_root=suite.root, snapshot_dir=run_dir / "assets"))
         protocol_source = repo_root / "PROTOCOL.md"
         if not protocol_source.is_file():
             protocol_source = Path(__file__).resolve().parents[2] / "PROTOCOL.md"
@@ -1320,9 +1341,8 @@ def run(
         emit_event("observation_finished", case_id=case["id"], repetition=repetition, status=result["status"])
         return result
 
-    selected = suite.cases[:max_cases] if max_cases > 0 else suite.cases
     tasks: list[tuple[dict[str, Any], int]] = []
-    for case in selected:
+    for case in selected_cases:
         if case["review"]["status"] != "approved":
             result = {
                 "case_id": case["id"],
@@ -1358,7 +1378,7 @@ def run(
     bootstrap_samples = int(statistics_config.get("bootstrap_samples", 10_000))
     bootstrap_seed = int(statistics_config.get("seed", 0))
     case_metrics, case_categories = summarize(result_rows, confidence=confidence)
-    scenario_rows = _scenario_analysis_rows(result_rows, suite.cases)
+    scenario_rows = _scenario_analysis_rows(result_rows, selected_cases)
     analysis_rows = scenario_rows if scenario_rows is not None else result_rows
     metrics, categories = summarize(analysis_rows, confidence=confidence)
     metrics["analysis_unit"] = "scenario" if scenario_rows is not None else "case"
@@ -1393,7 +1413,7 @@ def run(
     )
     distribution_shift = _distribution_shift_summary(
         result_rows,
-        suite.cases,
+        selected_cases,
         confidence=confidence,
         samples=bootstrap_samples,
         seed=bootstrap_seed,

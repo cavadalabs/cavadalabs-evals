@@ -1,11 +1,30 @@
 [project]
 name = "cavadalabs-evals"
-version = "0.2.0"
+version = "0.3.0"
 description = "CavadaLabs protocol for reproducible, auditable AI evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [{name = "CavadaLabs"}]
+keywords = ["ai", "evaluation", "benchmark", "llm", "safety", "performance"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/cavadalabs/cavadalabs-evals"
+Documentation = "https://github.com/cavadalabs/cavadalabs-evals#readme"
+Repository = "https://github.com/cavadalabs/cavadalabs-evals.git"
+Issues = "https://github.com/cavadalabs/cavadalabs-evals/issues"
 
 [project.scripts]
 cavada-eval = "cavada_eval.cli:main"
