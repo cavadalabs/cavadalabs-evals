@@ -5,7 +5,7 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
-## 0.4.0 - 2026-08-06
+## 0.3.1 - 2026-08-06
 
 - Added a complete offline `cavada-eval demo`, a deterministic synthetic demo
   suite, a generated result visual, a contributor map, and a short roadmap.

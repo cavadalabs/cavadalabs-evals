@@ -85,7 +85,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="cavada-eval", description="CavadaLabs reproducible AI evaluation protocol")
-    root.add_argument("--version", action="version", version="cavadalabs-evals 0.4.0")
+    root.add_argument("--version", action="version", version="cavadalabs-evals 0.3.1")
     commands = root.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Create a new draft suite from the secure template")

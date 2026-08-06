@@ -1,6 +1,6 @@
 [project]
 name = "cavadalabs-evals"
-version = "0.4.0"
+version = "0.3.1"
 description = "CavadaLabs protocol for reproducible, auditable AI evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
