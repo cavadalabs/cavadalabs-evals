@@ -1,5 +1,49 @@
 # Python API
 
+## Offline demo JSON contract
+
+`cavada-eval demo` writes one JSON object to standard output and exits with
+status 0 only after producing a passing, verified local bundle. It never makes
+an external network request and never represents an official benchmark.
+
+Stable fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `status` | string | `passed` after the demo and bundle verification succeed. |
+| `official` | boolean | Always `false`; the fixture is onboarding material. |
+| `external_network_used` | boolean | Always `false`; the judge uses loopback only. |
+| `verification.valid` | boolean | Whether bundle hashes and the closed file set verify. |
+| `verification.failures` | array of strings | Integrity failures; empty on success. |
+| `verification.signature` | string | `absent`, `unverified`, `valid`, or `invalid`. |
+
+Informative fields are local absolute paths and may change on every run:
+`run`, `report`, `metrics`, and `failures`. `verification.files` is the current
+number of files covered by the bundle and may change as report contents evolve.
+
+Current example, with paths shortened for readability:
+
+```json
+{
+  "status": "passed",
+  "official": false,
+  "external_network_used": false,
+  "run": "/work/runs/demo-v1/<run-id>",
+  "report": "/work/runs/demo-v1/<run-id>/report_public.html",
+  "metrics": "/work/runs/demo-v1/<run-id>/metrics.json",
+  "failures": "/work/runs/demo-v1/<run-id>/failures.jsonl",
+  "verification": {
+    "valid": true,
+    "failures": [],
+    "signature": "absent",
+    "files": 32
+  }
+}
+```
+
+Consumers should branch only on the stable fields and treat paths and file
+counts as run-specific values.
+
 The CLI is the stable operator interface. The typed Python surface for embedded
 use is deliberately small:
 

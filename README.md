@@ -31,7 +31,9 @@ runs/demo-v1/<run-id>/failures.jsonl
 
 In under a minute you have evaluated a fixed AI-system fixture, generated a
 reproducible report, and verified the evidence bundle. The demo is onboarding
-material, not a benchmark or certification.
+material, not a benchmark or certification. See the
+[offline demo JSON contract](docs/API.md#offline-demo-json-contract) for stable
+automation fields.
 
 ![Pass rate by category from the offline demo](docs/images/demo-category-scores.svg)
 
