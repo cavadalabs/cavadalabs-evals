@@ -5,6 +5,8 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Changed the source-code license from MIT to Apache License 2.0 before public
+  community contributions.
 - Added the dedicated generation-only LLM serving performance protocol, strict
   plan/runtime/workload validation, closed/open-loop load generation, 128k/256k
   context and 8k output reference cells, tail latency/goodput/cost reporting,

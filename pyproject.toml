@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "CavadaLabs protocol for reproducible, auditable AI evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "Apache-2.0"
 dependencies = []
 
 [project.scripts]

@@ -153,5 +153,5 @@ uv build
 uv run python scripts/generate_provenance.py
 ```
 
-The MIT license applies to source code. Every dataset, rubric, media asset, and
+The Apache License 2.0 applies to source code. Every dataset, rubric, media asset, and
 third-party benchmark keeps its own declared license and redistribution terms.

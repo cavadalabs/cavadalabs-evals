@@ -9,7 +9,7 @@ belong outside the repository and start from `runtime.example.toml`.
 
 - ID/revision: `llm-serving-synthetic-v1@1.0.0`
 - Owner/origin: CavadaLabs, generated in-house on 2026-08-06
-- License: repository MIT license
+- License: repository Apache License 2.0
 - Classification: synthetic; no intended personal data
 - Purpose: prompt-length scaling, long-context serving, latency, throughput,
   capacity, and tokenizer-difference observation
