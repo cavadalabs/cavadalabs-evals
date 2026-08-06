@@ -10,7 +10,7 @@ from .artifacts import verify_bundle, write_bundle
 from .protocol import ProtocolError, atomic_json, contains_secret_like, sha256_file
 
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
-STATUSES = {"pass", "fail", "invalid", "error", "skipped"}
+STATUSES = {"pass", "fail", "scored", "invalid", "error", "skipped"}
 
 
 def import_external_results(source_path: Path, output_dir: Path) -> dict[str, Any]:
