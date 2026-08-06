@@ -1,6 +1,6 @@
 # Repository readiness audit
 
-- Audit date: 2026-08-05
+- Audit date: 2026-08-06
 - Release candidate: 0.2.0
 - Scope: repository-implementable CavadaLabs Evaluation Protocol controls
 
@@ -10,6 +10,9 @@ The repository implementation gate is complete. It provides a fail-closed,
 versioned, reproducible evidence pipeline for supported text, structured, RAG,
 conversation, agent-trace, PNG/JPEG, and bounded WAV inputs. Unsupported or
 unqualified modalities and claims are blocked in official mode.
+The dedicated LLM serving path adds generation-only closed/open-loop campaigns,
+128k/256k input contexts, outputs through 8k, strict runtime evidence, and exact
+verified-run comparisons without including judge overhead.
 
 This is not evidence that any model is universally correct, safe, secure,
 unbiased, or legally compliant. An official result states conformance only to
@@ -26,6 +29,8 @@ the named protocol, suite, versions, population, configuration, and gates.
   to the verified bundle, permitted claims, expiry, and independent decisions.
 - Deliberate gate failure, crash/resume, retry/idempotency, malicious media,
   judge disagreement/calibration, external import, and report-generation tests.
+- Mock streaming closed/open-loop performance runs, SLO/goodput checks, raw
+  evidence preservation, bundle verification, and exact-cell comparison tests.
 - Optional DeepEval import with telemetry, cloud sync, dotenv, key-file loading,
   update checks, and error reporting disabled before import.
 
@@ -36,7 +41,7 @@ the release candidate is handed off.
 ## External obligations that remain open
 
 The authoritative item-by-item list is every `[!]` entry in
-`IMPLEMENTATION_CHECKLIST.md` (49 entries at this audit). They are intentionally
+`IMPLEMENTATION_CHECKLIST.md` (53 entries at this audit). They are intentionally
 not represented as implementation defects or passed controls. They fall into:
 
 1. **Repository and release authority:** remote ownership, protected branches,
@@ -61,6 +66,9 @@ not represented as implementation defects or passed controls. They fall into:
 7. **Production security systems:** organizational DLP, KMS, RBAC, append-only
    WORM storage, backup/restore, incident response, results registry, security
    review, penetration test, and multi-tenant operational approval.
+8. **Performance publication:** tokenizer-calibrated equal-token workloads,
+   synchronized hardware/power telemetry, validated load-generator/network
+   capacity, and independent approval of the frozen reference plan.
 
 ## Source review
 

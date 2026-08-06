@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-workload-item/1.0.0",
+  "title": "CavadaLabs LLM Performance Workload Item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "context_tokens"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "context_tokens": {"type": "integer", "minimum": 1},
+    "system": {"type": "string"},
+    "prompt": {"type": "string", "minLength": 1},
+    "prompt_file": {"type": "string", "minLength": 1},
+    "prompt_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "prefix": {"type": "string"},
+    "repeat_text": {"type": "string", "minLength": 1},
+    "repeat_count": {"type": "integer", "minimum": 1},
+    "suffix": {"type": "string"}
+  },
+  "oneOf": [
+    {"required": ["prompt"], "not": {"anyOf": [{"required": ["prompt_file"]}, {"required": ["repeat_text"]}]}},
+    {"required": ["prompt_file", "prompt_sha256"], "not": {"anyOf": [{"required": ["prompt"]}, {"required": ["repeat_text"]}]}},
+    {"required": ["repeat_text", "repeat_count"], "not": {"anyOf": [{"required": ["prompt"]}, {"required": ["prompt_file"]}]}}
+  ]
+}

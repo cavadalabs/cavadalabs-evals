@@ -330,3 +330,29 @@ never means universal correctness, universal safety, or legal certification.
 - [x] The final repository audit records all remaining `[!]` external obligations.
 - [!] Complete an independent security review and penetration test before public multi-tenant operation.
 - [!] Complete legal and organizational approval before any compliance claim.
+
+## 22. Dedicated LLM serving performance protocol
+
+- [x] Publish a normative generation-only performance protocol separate from quality and judge execution.
+- [x] Define strict versioned schemas for plan, workload row, runtime descriptor, and campaign manifest.
+- [x] Validate all local inputs before network access and restrict v1 workloads to public or synthetic data.
+- [x] Keep inference-engine process management outside the core while recording engine/model/artifact revisions and a sanitized launch command.
+- [x] Require exact reported model identity and provider-reported input/output token usage.
+- [x] Support identical-text `iso-prompt` and strict tokenizer-calibrated `iso-token` modes without conflating them.
+- [x] Provide a synthetic scaling workload through 128k and 256k declared input contexts.
+- [x] Provide requested output sweeps through 8k tokens and fail closed when input plus output exceeds runtime capacity.
+- [x] Implement bounded closed-loop users and open-loop offered-rate generation with client queue-delay evidence.
+- [x] Separate warm-up from measured observations, randomize repeated blocks deterministically, and preserve execution events.
+- [x] Enforce request, token, campaign-time, request-timeout, context, output, and maximum-in-flight limits.
+- [x] Preserve hashed request ledgers, raw stream events, transport diagnostics, observations, errors, warm-ups, and cell results.
+- [x] Measure TTFT, E2E, derived TPOT/decode rate, inter-chunk diagnostics, input/output/request throughput, queue delay, errors, and optional dated cost.
+- [x] Report p50/p90/p95/p99 distributions and bootstrap confidence intervals for p95/p99 latency estimates.
+- [x] Keep aggregate p95/p99/error SLO gates separate from per-request goodput thresholds.
+- [x] Produce immutable JSON/JSONL/CSV, HTML/PDF, accessible SVG figures, bundle hashes, optional signature, and verification output.
+- [x] Compare only verified exact shared cells from identical plan/workload hashes and distinct runtime identities.
+- [x] Add English `perf validate`, `perf run`, and `perf compare` commands plus a Codex operating procedure.
+- [x] Add mock-streaming end-to-end tests covering closed-loop, open-loop, artifacts, SLOs, and exact comparison.
+- [!] Calibrate and approve tokenizer-specific iso-token workloads for each model family before making strict equal-token claims.
+- [!] Provision synchronized, calibrated GPU/VRAM/power/energy/thermal collectors before reporting server-resource or energy metrics.
+- [!] Validate the load generator's maximum sustainable rate and network capacity on each production benchmark topology.
+- [!] Complete independent methodology/security review and freeze the first approved reference plan before commercial official publication.

@@ -16,6 +16,13 @@ from .comparison import compare_runs
 from .compliance import generate_control_report
 from .external import import_external_results
 from .pairwise import pairwise_runs
+from .performance import (
+    compare_performance_runs,
+    load_performance_plan,
+    load_performance_runtime,
+    performance_plan_summary,
+    run_performance_campaign,
+)
 from .pilot import audit_pilot_campaign
 from .profiles import profile_summary
 from .program import load_program_registry
@@ -223,6 +230,22 @@ def parser() -> argparse.ArgumentParser:
     retention.add_argument("--action", required=True, choices=sorted(RETENTION_ACTIONS))
     retention.add_argument("--actor", required=True)
     retention.add_argument("--evidence", required=True)
+
+    perf = commands.add_parser("perf", help="Run generation-only LLM serving performance benchmarks")
+    perf_commands = perf.add_subparsers(dest="perf_command", required=True)
+    perf_validate = perf_commands.add_parser("validate", help="Validate a performance plan without network access")
+    perf_validate.add_argument("plan")
+    perf_validate.add_argument("--runtime")
+    perf_run = perf_commands.add_parser("run", help="Run a validated performance campaign against an external endpoint")
+    perf_run.add_argument("plan")
+    perf_run.add_argument("runtime")
+    perf_run.add_argument("--output-root")
+    perf_run.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
+    perf_run.add_argument("--signing-key-id", default="")
+    perf_compare = perf_commands.add_parser("compare", help="Compare exact compatible performance runs")
+    perf_compare.add_argument("runs", nargs="+")
+    perf_compare.add_argument("--output", required=True)
+    perf_compare.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     return root
 
 
@@ -474,6 +497,35 @@ def main(argv: list[str] | None = None) -> int:
                 registry_path = repo / registry_path
             program_registry = load_program_registry(registry_path, repo_root=repo)
             print(json.dumps(program_registry, indent=2, ensure_ascii=False))
+            return EXIT_PASS
+        if args.command == "perf":
+            if args.perf_command == "validate":
+                plan = load_performance_plan(args.plan)
+                if args.runtime:
+                    runtime = load_performance_runtime(args.runtime)
+                    result = performance_plan_summary(plan, runtime)
+                else:
+                    result = performance_plan_summary(plan)
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return EXIT_PASS
+            if args.perf_command == "run":
+                output = run_performance_campaign(
+                    load_performance_plan(args.plan),
+                    load_performance_runtime(args.runtime),
+                    repo_root=repo,
+                    output_root=Path(args.output_root) if args.output_root else None,
+                    signing_key_env=args.signing_key_env,
+                    signing_key_id=args.signing_key_id,
+                )
+                manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+                print(output)
+                return EXIT_PASS if manifest["status"] == "completed" and manifest["cells"]["slo_failed"] == 0 else EXIT_GATE_FAILURE
+            result = compare_performance_runs(
+                [Path(path) for path in args.runs],
+                Path(args.output),
+                signing_key_env=args.signing_key_env,
+            )
+            print(json.dumps({"baseline": result["baseline"], "shared_cells": result["shared_cells"]}, indent=2))
             return EXIT_PASS
         if args.command == "validate":
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))

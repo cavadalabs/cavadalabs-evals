@@ -35,6 +35,7 @@ jobs:
       - run: uvx pip-audit==2.10.1 --strict --progress-spinner off
       - run: uv run cavada-eval doctor
       - run: uv run cavada-eval program
+      - run: uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml
       - run: uv run cavada-eval validate suites/template
       - run: uv run cavada-eval validate suites/memo4345-v1
       - run: uv run cavada-eval validate suites/security-privacy-smoke-v1

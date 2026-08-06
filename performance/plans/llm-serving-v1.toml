@@ -1,0 +1,82 @@
+plan_version = "1.0.0"
+revision = "1.0.0"
+name = "llm-serving-v1"
+description = "Portable OpenAI-compatible LLM latency, throughput, long-context and capacity campaign. Thresholds are examples, not universal SLOs."
+profile = "llm-serving-v1"
+data_classification = "synthetic"
+
+[workload]
+id = "llm-serving-synthetic-v1"
+revision = "1.0.0"
+path = "../workloads/llm-serving-synthetic-v1.jsonl"
+sha256 = "5e3f2782a0ea26c3a697c4bbf43adef356514f78584689c0a71e2e3a98f78562"
+mode = "iso-prompt"
+input_token_tolerance_fraction = 0.05
+
+[generation]
+stream = true
+temperature = 0
+request_defaults = { top_p = 1 }
+
+[execution]
+repetitions = 3
+warmup_requests = 5
+measured_requests = 100
+open_loop_duration_seconds = 30
+bootstrap_samples = 500
+seed = 4345
+randomize_cells = true
+cooldown_seconds = 5
+max_in_flight = 256
+
+[limits]
+timeout_seconds = 900
+max_requests = 15000
+max_total_tokens = 1500000000
+max_campaign_seconds = 172800
+max_context_tokens = 262144
+max_output_tokens = 8192
+
+[slo]
+ttft_p95_ms = 5000
+e2e_p99_ms = 120000
+goodput_ttft_ms = 5000
+goodput_e2e_ms = 120000
+maximum_error_rate = 0.01
+minimum_output_tokens_fraction = 0.5
+
+[[scenarios]]
+id = "single-user-context-output"
+arrival = "closed-loop"
+context_tokens = [128, 512, 2048, 8192, 32768, 65536, 131072, 262144]
+output_tokens = [128, 512, 2048, 8192]
+concurrency = [1]
+warmup_requests = 2
+measured_requests = 20
+
+[[scenarios]]
+id = "multi-user-throughput"
+arrival = "closed-loop"
+context_tokens = [2048, 32768, 131072]
+output_tokens = [512]
+concurrency = [1, 2, 4, 8, 16, 32, 64]
+warmup_requests = 10
+measured_requests = 100
+
+[[scenarios]]
+id = "long-context-concurrency"
+arrival = "closed-loop"
+context_tokens = [131072, 262144]
+output_tokens = [2048]
+concurrency = [1, 2, 4]
+warmup_requests = 1
+measured_requests = 10
+
+[[scenarios]]
+id = "open-loop-capacity"
+arrival = "open-loop"
+context_tokens = [2048]
+output_tokens = [512]
+request_rates = [1, 2, 5, 10, 20]
+warmup_requests = 5
+duration_seconds = 30

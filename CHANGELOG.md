@@ -5,6 +5,10 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Added the dedicated generation-only LLM serving performance protocol, strict
+  plan/runtime/workload validation, closed/open-loop load generation, 128k/256k
+  context and 8k output reference cells, tail latency/goodput/cost reporting,
+  verified artifacts, exact-cell comparison, CLI commands, and Codex workflow.
 - Official execution now requires an effective engagement record bound to the
   exact suite and SUT; public export requires a separate post-run approval bound
   to the verified bundle, claims, expiry, and independent review decisions.

@@ -112,6 +112,15 @@ recorded authorization identifying purpose, destination, region, approver, and
 expiry. Public reports MUST NOT disclose private holdout inputs or restricted
 failure payloads.
 
+## Serving-performance profile
+
+Generation-only serving measurements MUST follow
+`PERFORMANCE_PROTOCOL.md`. Their execution status, SLO result, and quality or
+safety evidence are separate. A verified performance bundle may claim
+conformance to that named performance protocol, but it is not an approved suite
+or commercial official result until the applicable governance, engagement,
+independent review, signing, and publication gates in this protocol also pass.
+
 ## Known measurement limitations
 
 Finite datasets cannot cover all future inputs. Model and judge outputs may be

@@ -45,7 +45,22 @@ init doctor list profiles program validate audit estimate run resume redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
 judge-qualify pilot-audit compare pairwise report verify promote export controls
 import-external retention-record
+perf validate | perf run | perf compare
 ```
+
+Run a generation-only serving benchmark against an externally managed engine:
+
+```bash
+uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml \
+  --runtime /secure/path/runtime.toml
+uv run cavada-eval perf run performance/plans/llm-serving-v1.toml \
+  /secure/path/runtime.toml
+```
+
+The versioned plan covers closed-loop users, open-loop offered load, concurrency
+1–64, input contexts through 128k/256k, and requested outputs through 8k. See
+[PERFORMANCE_PROTOCOL.md](PERFORMANCE_PROTOCOL.md) and
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md). Inference engines remain external.
 
 API keys are read from named environment variables only. Endpoint credentials
 and query values are never written to manifests. Official non-public data needs
@@ -99,6 +114,9 @@ bundle.json / checksums.txt   content-addressed bundle
 signature.json                optional HMAC signature
 verification.json             final integrity verification
 ```
+
+Performance campaigns use a separate generation-only artifact set documented
+in `docs/PERFORMANCE.md`; judge latency is never included in serving results.
 
 ## Security defaults
 

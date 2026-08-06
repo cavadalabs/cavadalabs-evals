@@ -23,3 +23,16 @@ When creating or running a benchmark:
 19. Never claim an unsupported modality or optional adapter was evaluated; fail closed and record the missing capability.
 
 `official` means conforming to this protocol. It does not mean legal certification or universal safety.
+
+## LLM serving performance runs
+
+1. Follow `PERFORMANCE_PROTOCOL.md`; validate the complete plan, workload, and runtime before starting or contacting an endpoint.
+2. Keep inference engines outside this repository. Never execute a stored launch command automatically.
+3. If explicitly asked to start an engine, use its documented command, record immutable revisions and a credential-free command, verify readiness, and stop only the process you started.
+4. Never modify an existing performance plan or workload for a run. Create a new version and preserve exact hashes.
+5. Require exact reported model identity and provider-reported prompt/output token usage. Do not estimate missing official evidence.
+6. Keep warm-up, closed-loop, open-loop, error, queueing, and measured observations distinct. Never retry a measured request silently.
+7. Use `iso-prompt` for identical text and `iso-token` only with tokenizer-calibrated fixtures; never hide tokenizer mismatch.
+8. Preserve raw streaming events and all failures. Enforce token, request, duration, timeout, context, output, and in-flight limits.
+9. Compare only verified runs with identical plan/workload hashes and exact shared cells. Report skipped cells and every block.
+10. Do not attribute results solely to a GPU or model, and do not claim quality, safety, compliance, utilization, or energy from client-side performance measurements.
