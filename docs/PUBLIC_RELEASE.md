@@ -41,6 +41,10 @@ Review the complete Git history for credentials, customer identifiers, internal
 hosts, personal data, private holdouts, licensed content, and restricted attack
 payloads. A current-tree scan does not clear historical commits.
 
+Resolve every blocked row in `docs/PUBLICATION_INVENTORY.md`. Do not make the
+repository public while a tracked suite lacks an affirmative redistribution
+decision or while unintended author-email disclosure remains unresolved.
+
 Publish the first release as a pre-1.0 developer preview. Do not tag a release
 until the package version, changelog, citation metadata, protocol status, and
 known limitations agree. Do not publish generated run directories from Git.
@@ -50,4 +54,3 @@ known limitations agree. Do not publish generated run directories from Git.
 Repository publication does not authorize benchmark-result publication. Follow
 `RESULTS_POLICY.md`; official public export additionally requires the exact
 engagement and post-run release approval required by `PROTOCOL.md`.
-

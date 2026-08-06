@@ -13,6 +13,7 @@ from cavada_eval.performance import (
     compare_performance_runs,
     load_performance_plan,
     load_performance_runtime,
+    performance_plan_summary,
     run_performance_campaign,
 )
 from cavada_eval.protocol import ProtocolError, sha256_file
@@ -180,3 +181,11 @@ def test_performance_plan_fails_closed_before_network(tmp_path: Path) -> None:
 def test_performance_preset_accepts_runtime_without_explicit_plan() -> None:
     args = parser().parse_args(["perf", "run", "runtime.toml", "--preset", "quick"])
     assert args.plan is None and args.runtime == "runtime.toml" and args.preset == "quick"
+
+
+def test_builtin_quick_and_standard_plans_keep_declared_request_budgets() -> None:
+    root = Path(__file__).parents[1] / "performance" / "plans"
+    quick = performance_plan_summary(load_performance_plan(root / "llm-serving-quick-v1.toml"))
+    standard = performance_plan_summary(load_performance_plan(root / "llm-serving-standard-v1.toml"))
+    assert (quick["planned_requests"], quick["cells_per_repetition"]) == (98, 12)
+    assert (standard["planned_requests"], standard["cells_per_repetition"]) == (825, 34)

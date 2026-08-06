@@ -60,6 +60,18 @@ uv run cavada-eval run suites/cavada-core-assistant-text-v1 \
 uses a separate generation-only workload and measures serving performance; it
 does not score response correctness or safety.
 
+| Preset | Behavior cases | Target / judge repetitions | Performance scope | Official eligibility |
+| --- | ---: | ---: | --- | --- |
+| `smoke` | up to 25 | 1 / 1 | endpoint check | no |
+| `quick` | up to 100 | 1 / 1 | 98 requests, 12 cells | no |
+| `standard` | up to 1,000 | 2 / 2 | 825 requests, 34 cells | no |
+| `reference` (`full`) | all | 3 / 3 | complete reference plan | only with every official gate |
+
+Reduced behavior subsets are selected deterministically across categories,
+risks, severities, languages, and splits without separating scenario groups.
+Explicit CLI parameters may make a development preset stricter, but never turn
+it into a reference or official result.
+
 Useful commands:
 
 ```text
@@ -170,7 +182,8 @@ before operating an official benchmark.
 Community participation is governed by [CONTRIBUTING.md](CONTRIBUTING.md),
 [GOVERNANCE.md](GOVERNANCE.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
 [RESULTS_POLICY.md](RESULTS_POLICY.md). Repository publication does not make a
-suite or result official.
+suite or result official. The first public push must also satisfy the
+[publication inventory](docs/PUBLICATION_INVENTORY.md).
 
 ## Development verification
 
