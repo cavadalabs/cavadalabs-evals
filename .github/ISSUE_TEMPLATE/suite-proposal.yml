@@ -1,0 +1,42 @@
+name: Benchmark suite proposal
+description: Propose a new or versioned evaluation suite and its bounded claims.
+title: "[Suite]: "
+body:
+  - type: textarea
+    id: construct
+    attributes:
+      label: Construct and intended use
+      description: Define exactly what is measured, for whom, and what the result must not claim.
+    validations:
+      required: true
+  - type: textarea
+    id: population
+    attributes:
+      label: Population and coverage
+      description: Describe tasks, languages, locales, risks, severities, modalities, splits, and sampling.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data rights and governance
+      description: State origin, license, consent, personal-data classification, retention, contamination, and holdout plan.
+    validations:
+      required: true
+  - type: textarea
+    id: methodology
+    attributes:
+      label: Metrics, calibration, statistics, and gates
+      description: Include gold-label review, judge qualification, uncertainty, power, and known threats to validity.
+    validations:
+      required: true
+  - type: checkboxes
+    id: protocol
+    attributes:
+      label: Protocol checks
+      options:
+        - label: I will create a new version and will not modify released benchmark artifacts.
+          required: true
+        - label: I understand that repository acceptance does not make a suite official or legally certified.
+          required: true
+

@@ -1,0 +1,12 @@
+{
+  "attestation_id": "replace-with-controlled-record-id",
+  "approver": "replace-with-accountable-security-owner",
+  "encryption_at_rest": true,
+  "immutability": true,
+  "access_policy_reference": "replace-with-rbac-policy-reference",
+  "audit_log_reference": "replace-with-audit-log-reference",
+  "retention_policy_reference": "replace-with-retention-policy-reference",
+  "backup_restore_reference": "replace-with-tested-backup-restore-reference",
+  "effective_at": "2026-08-03T00:00:00+02:00",
+  "expires_at": "2027-08-03T00:00:00+02:00"
+}

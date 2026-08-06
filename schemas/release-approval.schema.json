@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/release-approval/1.0.0",
+  "title": "CavadaLabs Public Result Release Approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["release_version", "release_id", "status", "run_id", "bundle_sha256", "manifest_sha256", "engagement_id", "engagement_sha256", "assurance_level", "permitted_claims", "limitations_acknowledged", "decisions", "approved_at", "expires_at"],
+  "properties": {
+    "release_version": {"const": "1.0.0"},
+    "release_id": {"type": "string", "minLength": 1},
+    "status": {"const": "approved"},
+    "run_id": {"type": "string", "minLength": 1},
+    "bundle_sha256": {"$ref": "#/$defs/hash"},
+    "manifest_sha256": {"$ref": "#/$defs/hash"},
+    "engagement_id": {"type": "string", "minLength": 1},
+    "engagement_sha256": {"$ref": "#/$defs/hash"},
+    "assurance_level": {"const": "approved"},
+    "permitted_claims": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "limitations_acknowledged": {"const": true},
+    "decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statistical", "security", "privacy_legal", "disclosure", "release"],
+      "properties": {
+        "statistical": {"$ref": "#/$defs/passedDecision"},
+        "security": {"$ref": "#/$defs/passedDecision"},
+        "privacy_legal": {"$ref": "#/$defs/decision"},
+        "disclosure": {"$ref": "#/$defs/passedDecision"},
+        "release": {"$ref": "#/$defs/passedDecision"}
+      }
+    },
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "passedDecision": {"allOf": [{"$ref": "#/$defs/decision"}, {"properties": {"status": {"const": "passed"}}}]},
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "independent", "reviewer_id", "review_evidence", "review_evidence_sha256", "qualification_evidence", "qualification_evidence_sha256", "conflicts", "conflict_mitigation", "rationale"],
+      "properties": {
+        "status": {"enum": ["passed", "not-applicable"]},
+        "independent": {"const": true},
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "review_evidence": {"type": "string", "minLength": 1},
+        "review_evidence_sha256": {"$ref": "#/$defs/hash"},
+        "qualification_evidence": {"type": "string", "minLength": 1},
+        "qualification_evidence_sha256": {"$ref": "#/$defs/hash"},
+        "conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "conflict_mitigation": {"type": "string"},
+        "rationale": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

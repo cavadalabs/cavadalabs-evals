@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-runtime/1.0.0",
+  "title": "CavadaLabs LLM Performance Runtime Descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runtime_version", "id", "endpoint", "request_model", "expected_model", "model_revision", "api_key_env", "engine", "engine_revision", "model_artifact_revision", "dtype", "quantization", "gpu_count", "gpu_model", "tensor_parallel", "max_context_tokens", "launch_command_sanitized"],
+  "properties": {
+    "runtime_version": {"const": "1.0.0"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+    "endpoint": {"type": "string", "pattern": "^https?://[^?#]+$"},
+    "request_model": {"type": "string", "minLength": 1},
+    "expected_model": {"type": "string", "minLength": 1},
+    "model_revision": {"type": "string", "minLength": 1},
+    "api_key_env": {"type": "string", "minLength": 1},
+    "engine": {"type": "string", "minLength": 1},
+    "engine_revision": {"type": "string", "minLength": 1},
+    "model_artifact_revision": {"type": "string", "minLength": 1},
+    "dtype": {"type": "string", "minLength": 1},
+    "quantization": {"type": "string", "minLength": 1},
+    "gpu_count": {"type": "integer", "minimum": 1},
+    "gpu_model": {"type": "string", "minLength": 1},
+    "tensor_parallel": {"type": "integer", "minimum": 1},
+    "max_context_tokens": {"type": "integer", "minimum": 1},
+    "container_image_digest": {"type": "string", "pattern": "^(|sha256:[a-fA-F0-9]{64})$"},
+    "launch_command_sanitized": {"type": "string", "minLength": 1},
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "source", "effective_at", "input_per_million", "output_per_million"],
+      "properties": {
+        "currency": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "effective_at": {"type": "string", "minLength": 1},
+        "input_per_million": {"type": "number", "minimum": 0},
+        "output_per_million": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible software or documentation defect without sensitive material.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Never include credentials, personal data, private holdouts, customer evidence, or vulnerability details. Use the private security channel for those."
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "0.3.0 or full commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed and expected behavior
+      description: Include the command, exit code, sanitized output, and what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use only public or synthetic data and remove endpoint credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, installation method, target adapter, and relevant runtime details.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Submission checks
+      options:
+        - label: I removed secrets and restricted data and searched for an existing issue.
+          required: true
+

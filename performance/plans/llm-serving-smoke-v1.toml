@@ -1,0 +1,68 @@
+plan_version = "1.0.0"
+revision = "1.0.0"
+name = "llm-serving-smoke-v1"
+description = "Short functional LLM serving campaign for endpoint readiness; not a substitute for the reference plan."
+profile = "llm-serving-v1"
+data_classification = "synthetic"
+
+[workload]
+id = "llm-serving-synthetic-v1"
+revision = "1.0.0"
+path = "../workloads/llm-serving-synthetic-v1.jsonl"
+sha256 = "5e3f2782a0ea26c3a697c4bbf43adef356514f78584689c0a71e2e3a98f78562"
+mode = "iso-prompt"
+input_token_tolerance_fraction = 0.05
+
+[generation]
+stream = true
+temperature = 0
+request_defaults = { top_p = 1 }
+
+[execution]
+repetitions = 1
+warmup_requests = 1
+measured_requests = 2
+open_loop_duration_seconds = 4
+bootstrap_samples = 100
+seed = 4345
+randomize_cells = false
+cooldown_seconds = 1
+max_in_flight = 4
+
+[limits]
+timeout_seconds = 120
+max_requests = 40
+max_total_tokens = 500000
+max_campaign_seconds = 900
+max_context_tokens = 2048
+max_output_tokens = 128
+
+[slo]
+ttft_p95_ms = 10000
+e2e_p99_ms = 60000
+goodput_ttft_ms = 10000
+goodput_e2e_ms = 60000
+maximum_error_rate = 0
+minimum_output_tokens_fraction = 0.5
+
+[[scenarios]]
+id = "single-user-smoke"
+arrival = "closed-loop"
+context_tokens = [128, 2048]
+output_tokens = [64, 128]
+concurrency = [1]
+
+[[scenarios]]
+id = "multi-user-smoke"
+arrival = "closed-loop"
+context_tokens = [2048]
+output_tokens = [64]
+concurrency = [1, 2]
+
+[[scenarios]]
+id = "open-loop-smoke"
+arrival = "open-loop"
+context_tokens = [128]
+output_tokens = [64]
+request_rates = [0.5, 1]
+duration_seconds = 4

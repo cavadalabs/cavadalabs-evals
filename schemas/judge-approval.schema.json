@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judge-approval/1.0.0",
+  "title": "CavadaLabs Independent Judge Qualification Approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_version",
+    "approval_id",
+    "scope",
+    "status",
+    "independent",
+    "qualification_sha256",
+    "approver_id",
+    "approver_qualification_evidence",
+    "conflicts",
+    "decision_rationale",
+    "approved_at",
+    "expires_at"
+  ],
+  "properties": {
+    "approval_version": {"const": "1.0.0"},
+    "approval_id": {"type": "string", "minLength": 1},
+    "scope": {"const": "judge-qualification"},
+    "status": {"enum": ["passed", "failed", "withdrawn"]},
+    "independent": {"type": "boolean"},
+    "qualification_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "approver_id": {"type": "string", "minLength": 1},
+    "approver_qualification_evidence": {"type": "string", "minLength": 1},
+    "conflicts": {"type": "string", "minLength": 1},
+    "decision_rationale": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

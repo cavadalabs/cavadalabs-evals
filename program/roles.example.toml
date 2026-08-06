@@ -1,0 +1,62 @@
+version = "1.0.0"
+note = "Copy to a restricted governance system and replace every placeholder with an accountable person or organization. Do not commit personal contact data here."
+
+[[roles]]
+id = "protocol-owner"
+assignee = "UNASSIGNED"
+independence = "operational"
+
+[[roles]]
+id = "suite-owner"
+assignee = "UNASSIGNED"
+independence = "operational"
+
+[[roles]]
+id = "data-steward"
+assignee = "UNASSIGNED"
+independence = "operational"
+
+[[roles]]
+id = "statistical-reviewer"
+assignee = "UNASSIGNED"
+independence = "independent-from-authorship"
+
+[[roles]]
+id = "security-owner"
+assignee = "UNASSIGNED"
+independence = "operational"
+
+[[roles]]
+id = "security-reviewer"
+assignee = "UNASSIGNED"
+independence = "independent-from-implementation"
+
+[[roles]]
+id = "privacy-legal-owner"
+assignee = "UNASSIGNED"
+independence = "accountable-authority"
+
+[[roles]]
+id = "adjudication-lead"
+assignee = "UNASSIGNED"
+independence = "independent-from-case-authorship"
+
+[[roles]]
+id = "release-approver"
+assignee = "UNASSIGNED"
+independence = "independent-from-commercial-owner"
+
+[[roles]]
+id = "signing-authority"
+assignee = "UNASSIGNED"
+independence = "organizational-authority"
+
+[[roles]]
+id = "incident-owner"
+assignee = "UNASSIGNED"
+independence = "operational"
+
+[[roles]]
+id = "appeals-owner"
+assignee = "UNASSIGNED"
+independence = "independent-from-original-decision"

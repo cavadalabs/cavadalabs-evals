@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-manifest/1.0.0",
+  "title": "CavadaLabs LLM Performance Campaign Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["performance_protocol_version", "plan_version", "report_version", "run_id", "status", "started_at", "plan", "workload", "runtime", "source", "environment", "planned_requests", "planned_cells"],
+  "properties": {
+    "performance_protocol_version": {"const": "1.0.0"},
+    "plan_version": {"const": "1.0.0"},
+    "report_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["running", "completed", "completed-with-errors", "cancelled"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "plan": {"type": "object"},
+    "workload": {"type": "object"},
+    "runtime": {"type": "object"},
+    "source": {"type": "object"},
+    "environment": {"type": "object"},
+    "planned_requests": {"type": "integer", "minimum": 0},
+    "planned_cells": {"type": "integer", "minimum": 1},
+    "requests": {"type": "integer", "minimum": 0},
+    "tokens": {"type": "number", "minimum": 0},
+    "token_usage": {"type": "object"},
+    "estimated_cost": {"type": ["object", "null"]},
+    "cells": {"type": "object"},
+    "warmups": {"type": "object"},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  }
+}

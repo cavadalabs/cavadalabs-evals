@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/asset/1.0.0",
+  "title": "CavadaLabs Evaluation Asset",
+  "type": "object",
+  "required": ["type", "asset", "mime_type"],
+  "properties": {
+    "type": {"enum": ["image", "audio", "video", "document"]},
+    "asset": {"type": "string", "minLength": 1, "pattern": "^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "mime_type": {"type": "string", "minLength": 3},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "license": {"type": "string", "minLength": 1},
+    "origin": {"type": "string", "minLength": 1},
+    "personal_data": {"type": "string", "minLength": 1},
+    "consent_reference": {"type": "string"}
+  },
+  "additionalProperties": false
+}

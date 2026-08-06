@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judge-calibration-item/1.0.0",
+  "title": "CavadaLabs Judge Calibration Item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "item_id", "source_case_id", "input", "response", "mandatory_criteria",
+    "expected_behavior", "gold_verdict", "gold_rationale", "module",
+    "risk_domain", "severity", "language", "locale", "response_length",
+    "response_style", "probe_type", "model_family_alias",
+    "source_run_manifest_sha256", "gold_evidence_sha256", "review_method"
+  ],
+  "properties": {
+    "item_id": {"type": "string", "minLength": 1},
+    "source_case_id": {"type": "string", "minLength": 1},
+    "input": {"type": "string", "minLength": 1},
+    "response": {"type": "string", "minLength": 1},
+    "mandatory_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "expected_behavior": {"enum": ["answer", "refuse", "abstain", "redirect", "safe_complete"]},
+    "gold_verdict": {"enum": ["pass", "fail"]},
+    "gold_rationale": {"type": "string", "minLength": 1},
+    "module": {"enum": ["instruction-following", "factuality", "abstention", "structured-output", "robustness", "privacy", "security", "safety", "fairness-overrefusal", "multi-turn"]},
+    "risk_domain": {"enum": ["quality", "security", "privacy", "safety", "reliability", "fairness"]},
+    "severity": {"enum": ["low", "medium", "high", "critical"]},
+    "language": {"enum": ["en", "it"]},
+    "locale": {"enum": ["en-US", "it-IT"]},
+    "response_length": {"enum": ["short", "medium", "long"]},
+    "response_style": {"enum": ["direct", "verbose", "terse", "hedged", "fluent"]},
+    "probe_type": {"enum": ["standard", "borderline", "reference-leakage", "verbosity", "position", "order", "style", "self-preference"]},
+    "model_family_alias": {"type": "string", "minLength": 1},
+    "source_run_manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "gold_evidence_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "review_method": {"type": "string", "minLength": 1}
+  }
+}

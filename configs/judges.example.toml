@@ -1,0 +1,8 @@
+[[judges]]
+label = "local-judge"
+endpoint = "http://127.0.0.1:8010/v1"
+request_model = "local-judge"
+expected_reported_model = "local-judge"
+revision = "replace-with-immutable-revision"
+api_key_env = "JUDGE_API_KEY"
+authorized_data_classes = ["public", "synthetic"]

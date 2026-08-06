@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/program-registry/1.0.0",
+  "title": "CavadaLabs Evaluation Program Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["program_version", "registry_version", "protocol_version", "compatibility_policy", "result_expiry_days", "assurance_levels", "source_register", "suites"],
+  "properties": {
+    "program_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "registry_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "protocol_version": {"const": "1.0.0"},
+    "compatibility_policy": {"const": "same-major-explicit-cross-version-mapping"},
+    "result_expiry_days": {"type": "integer", "minimum": 1},
+    "source_register": {"const": "program/source-register.toml"},
+    "assurance_levels": {"const": ["development", "candidate", "calibrated", "approved", "independently-reproduced"]},
+    "suites": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "family", "version", "status", "assurance", "modalities", "languages", "profiles", "execution_support", "official_capable", "claims", "exclusions", "external_prerequisites"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*-v[1-9][0-9]*$"},
+          "family": {"type": "string", "minLength": 1},
+          "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+          "status": {"enum": ["planned", "draft", "candidate", "calibrated", "approved", "deprecated", "retired"]},
+          "assurance": {"enum": ["development", "candidate", "calibrated", "approved", "independently-reproduced"]},
+          "modalities": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["text", "image", "audio", "video", "retrieval", "tools", "mcp", "code", "embedding"]}},
+          "languages": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "execution_support": {"enum": ["built-in", "adapter-required"]},
+          "official_capable": {"type": "boolean"},
+          "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+          "claims": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "exclusions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "external_prerequisites": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        },
+        "allOf": [{"if": {"properties": {"status": {"const": "planned"}}}, "then": {"not": {"required": ["path"]}}, "else": {"required": ["path"]}}]
+      }
+    }
+  }
+}

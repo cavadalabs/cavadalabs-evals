@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/semantic-contamination/1.0.0",
+  "title": "CavadaLabs Semantic Contamination Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidence_version", "dataset_sha256", "comparison_corpus_sha256", "detector", "detector_revision", "detector_license", "similarity_metric", "threshold", "cases", "candidate_pairs", "candidate_pairs_evidence_sha256", "confirmed_duplicates", "cross_split_reviewed", "cross_suite_reviewed", "reviewer_evidence", "reviewer_evidence_sha256", "independent_review_status", "performed_at", "passed"],
+  "properties": {
+    "evidence_version": {"const": "1.0.0"},
+    "dataset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "comparison_corpus_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "detector": {"type": "string", "minLength": 1},
+    "detector_revision": {"type": "string", "minLength": 1},
+    "detector_license": {"type": "string", "minLength": 1},
+    "similarity_metric": {"type": "string", "minLength": 1},
+    "threshold": {"type": "number", "minimum": -1, "maximum": 1},
+    "cases": {"type": "integer", "minimum": 1},
+    "candidate_pairs": {"type": "integer", "minimum": 0},
+    "candidate_pairs_evidence_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "confirmed_duplicates": {"type": "integer", "minimum": 0},
+    "cross_split_reviewed": {"const": true},
+    "cross_suite_reviewed": {"const": true},
+    "reviewer_evidence": {"type": "string", "minLength": 1},
+    "reviewer_evidence_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "independent_review_status": {"const": "passed"},
+    "performed_at": {"type": "string", "format": "date-time"},
+    "passed": {"type": "boolean"}
+  }
+}
