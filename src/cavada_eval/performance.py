@@ -35,7 +35,7 @@ from .reporting import _pdf
 from .runner import _completion_url, _manifest_endpoint, _post_openai_stream, _secure_endpoint
 from .statistics import distribution, percentile
 
-PERFORMANCE_PROTOCOL_VERSION = "1.0.0"
+PERFORMANCE_PROTOCOL_VERSION = "1.0.1"
 PERFORMANCE_PLAN_VERSION = "1.0.0"
 PERFORMANCE_RUNTIME_VERSION = "1.0.0"
 PERFORMANCE_REPORT_VERSION = "1.0.0"
@@ -538,6 +538,25 @@ def _messages(row: dict[str, Any], workload_root: Path) -> list[dict[str, str]]:
     return result
 
 
+def _decode_metrics(raw: dict[str, Any], transport: dict[str, Any], output_tokens: float) -> dict[str, Any]:
+    decode_ms = max(0.0, float(transport["total_ms"]) - float(transport["ttft_ms"]))
+    provider: dict[str, Any] = {}
+    for event in reversed(raw.get("stream_events", [])):
+        if isinstance(event, dict) and isinstance(event.get("timings"), dict):
+            provider = event["timings"]
+            break
+    value = provider.get("predicted_ms")
+    provider_ms = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0 else None
+    valid = provider_ms is None or decode_ms >= provider_ms * 0.5
+    return {
+        "tpot_ms": decode_ms / (output_tokens - 1) if valid and output_tokens > 1 else None,
+        "decode_tokens_per_second": (output_tokens - 1) / (decode_ms / 1000) if valid and output_tokens > 1 and decode_ms > 0 else None,
+        "stream_timing_valid": valid,
+        "provider_decode_ms": provider_ms,
+        "provider_decode_tokens_per_second": provider.get("predicted_per_second"),
+    }
+
+
 def _bootstrap_percentile(values: list[float], probability: float, samples: int, seed: int) -> dict[str, float | int]:
     if not values:
         return {"lower": 0.0, "upper": 0.0, "confidence": 0.95, "samples": samples, "seed": seed}
@@ -612,6 +631,10 @@ def _cell_metrics(
         "e2e_p99": bool(successes) and float(e2e["p99"]) <= float(slo["e2e_p99_ms"]),
         "error_rate": error_rate <= float(slo["maximum_error_rate"]),
     }
+    warnings = ["fewer than 1000 observations; p99 is weakly resolved"] if len(observations) < 1000 else []
+    invalid_stream_timings = sum(row.get("stream_timing_valid") is False for row in successes)
+    if invalid_stream_timings:
+        warnings.append(f"{invalid_stream_timings} client SSE decode timings conflicted with provider timing and were omitted")
     return {
         **{key: cell[key] for key in ("cell_key", "scenario_id", "arrival", "context_tokens", "output_tokens", "concurrency", "request_rate")},
         "status": "completed" if len(successes) == len(observations) else "completed-with-errors",
@@ -640,7 +663,7 @@ def _cell_metrics(
         "client_queue_ms": _metric_summary([float(row["client_queue_ms"]) for row in observations], bootstrap, seed + 8),
         "input_tokens": distribution(float(row["input_tokens"]) for row in successes),
         "actual_output_tokens": distribution(float(row["output_tokens"]) for row in successes),
-        "warnings": (["fewer than 1000 observations; p99 is weakly resolved"] if len(observations) < 1000 else []),
+        "warnings": warnings,
     }
 
 
@@ -828,9 +851,7 @@ def run_performance_campaign(
                 raise ProtocolError(f"input token mismatch: declared {row['context_tokens']}, observed {input_tokens:g}, tolerance {tolerance:g}")
             ttft = float(transport["ttft_ms"])
             e2e = float(transport["total_ms"])
-            decode_ms = max(0.0, e2e - ttft)
-            tpot = decode_ms / (output_tokens - 1) if output_tokens > 1 else None
-            decode_tps = (output_tokens - 1) / (decode_ms / 1000) if output_tokens > 1 and decode_ms > 0 else None
+            decode = _decode_metrics(raw, transport, output_tokens)
             observation = {
                 **base,
                 "status": "success",
@@ -841,8 +862,7 @@ def run_performance_campaign(
                 "input_token_match": input_match,
                 "ttft_ms": ttft,
                 "e2e_ms": e2e,
-                "tpot_ms": tpot,
-                "decode_tokens_per_second": decode_tps,
+                **decode,
                 "headers_ms": transport.get("headers_ms"),
                 "inter_chunk_ms": transport.get("inter_chunk_ms"),
                 "request_bytes": transport.get("request_bytes"),

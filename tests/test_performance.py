@@ -10,6 +10,7 @@ import pytest
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
+    _decode_metrics,
     compare_performance_runs,
     load_performance_plan,
     load_performance_runtime,
@@ -17,6 +18,15 @@ from cavada_eval.performance import (
     run_performance_campaign,
 )
 from cavada_eval.protocol import ProtocolError, sha256_file
+
+
+def test_collapsed_sse_decode_timing_is_omitted() -> None:
+    raw = {"stream_events": [{"timings": {"predicted_ms": 4000, "predicted_per_second": 32.0}}]}
+    collapsed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 69006}, 128)
+    streamed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 73000}, 128)
+
+    assert collapsed["stream_timing_valid"] is False and collapsed["decode_tokens_per_second"] is None
+    assert streamed["stream_timing_valid"] is True and streamed["decode_tokens_per_second"] == 31.75
 
 
 def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:
