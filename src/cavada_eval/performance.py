@@ -756,7 +756,7 @@ def run_performance_campaign(
     def one_request(cell: dict[str, Any], row: dict[str, Any], index: int, block: int, phase: str, scheduled: float) -> dict[str, Any]:
         nonlocal request_count, total_tokens, total_input_tokens, total_output_tokens, token_budget_exhausted
         started = time.perf_counter()
-        queue_ms = max(0.0, (started - scheduled) * 1000)
+        queue_ms = max(0.0, (started - scheduled) * 1000) if cell["arrival"] == "open-loop" else 0.0
         base = {
             "cell_key": cell["cell_key"],
             "scenario_id": cell["scenario_id"],
