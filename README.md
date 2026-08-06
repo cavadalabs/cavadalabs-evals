@@ -1,9 +1,48 @@
 # CavadaLabs Evals
 
-Local-first, auditable evaluation protocol for text, RAG, structured outputs,
-conversations, agents, tools, images, audio, video, and documents. The core uses
-Python's standard library; optional metric engines remain adapters so historical
-artifacts do not depend on a vendor database or framework.
+AI evaluation scores are often difficult to reproduce, inspect, or verify after
+the original tool or hosted service changes. CavadaLabs Evals runs locally and
+produces content-addressed evidence bundles that another person can audit.
+
+It is for AI engineers, security teams, independent evaluators, and regulated
+organizations that need more than a dashboard score. The standard-library core
+covers quality and safety evaluation; serving performance is a separate
+protocol so judge latency never contaminates model throughput.
+
+## Five-minute offline demo
+
+```bash
+uv sync
+uv run cavada-eval demo
+```
+
+No model, API key, container, or internet connection is required. The command
+uses three synthetic cases, recorded responses, and a deterministic loopback
+judge to exercise the real validation, scoring, reporting, and bundle
+verification path. It prints the immutable run directory:
+
+```text
+status: passed
+external_network_used: false
+runs/demo-v1/<run-id>/report_public.html
+runs/demo-v1/<run-id>/metrics.json
+runs/demo-v1/<run-id>/failures.jsonl
+```
+
+In under a minute you have evaluated a fixed AI-system fixture, generated a
+reproducible report, and verified the evidence bundle. The demo is onboarding
+material, not a benchmark or certification.
+
+![Pass rate by category from the offline demo](docs/images/demo-category-scores.svg)
+
+## Three common workflows
+
+- Evaluate model, RAG, agent, tool, or multimodal behavior against a versioned
+  suite and independent judge.
+- Measure serving TTFT, TPOT, latency, throughput, goodput, errors, and cost
+  against an externally managed OpenAI-compatible endpoint.
+- Preserve restricted evidence and export a separately approved, sanitized
+  public report with bounded claims.
 
 ## Status
 
@@ -12,7 +51,7 @@ synthetic templates and smoke tests, not representative or official benchmark
 suites. `official` means conformance to the versioned protocol, never universal
 safety, correctness, or legal certification.
 
-## Quick start
+## Create and validate a suite
 
 ```bash
 uv sync
@@ -21,6 +60,8 @@ uv run cavada-eval init customer-support-v1
 uv run cavada-eval validate suites/customer-support-v1
 uv run cavada-eval estimate suites/customer-support-v1 --repetitions 3 --judge-repetitions 3
 ```
+
+## Use a real endpoint
 
 Run a development benchmark:
 
@@ -181,7 +222,8 @@ before operating an official benchmark.
 
 Community participation is governed by [CONTRIBUTING.md](CONTRIBUTING.md),
 [GOVERNANCE.md](GOVERNANCE.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and
-[RESULTS_POLICY.md](RESULTS_POLICY.md). Repository publication does not make a
+[RESULTS_POLICY.md](RESULTS_POLICY.md). See [ROADMAP.md](ROADMAP.md) for the
+short Now / Next / Later plan. Repository publication does not make a
 suite or result official. The first public push must also satisfy the
 [publication inventory](docs/PUBLICATION_INVENTORY.md).
 

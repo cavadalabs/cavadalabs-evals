@@ -14,6 +14,7 @@ from .artifacts import verify_bundle
 from .calibration import qualify_judge_run
 from .comparison import compare_runs
 from .compliance import generate_control_report
+from .demo import run_demo
 from .external import import_external_results
 from .pairwise import pairwise_runs
 from .performance import (
@@ -84,12 +85,14 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="cavada-eval", description="CavadaLabs reproducible AI evaluation protocol")
-    root.add_argument("--version", action="version", version="cavadalabs-evals 0.3.0")
+    root.add_argument("--version", action="version", version="cavadalabs-evals 0.4.0")
     commands = root.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Create a new draft suite from the secure template")
     init.add_argument("name")
     init.add_argument("--suites-root", default="suites")
+
+    commands.add_parser("demo", help="Run the complete deterministic offline demo")
 
     commands.add_parser("doctor", help="Check the local repository and security-sensitive settings")
 
@@ -489,6 +492,9 @@ def main(argv: list[str] | None = None) -> int:
             result = _doctor(repo)
             print(json.dumps(result, indent=2, sort_keys=True))
             return EXIT_PASS if result["ready"] else EXIT_CONFIGURATION
+        if args.command == "demo":
+            print(json.dumps(run_demo(repo, artifact_root=Path.cwd()), indent=2, ensure_ascii=False))
+            return EXIT_PASS
         if args.command == "list":
             rows = []
             for path in sorted(Path(args.suites_root).resolve().iterdir()):

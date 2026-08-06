@@ -5,6 +5,13 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+## 0.4.0 - 2026-08-06
+
+- Added a complete offline `cavada-eval demo`, a deterministic synthetic demo
+  suite, a generated result visual, a contributor map, and a short roadmap.
+- Performance protocol 1.0.1 now omits misleading client decode timing when a
+  buffered SSE burst conflicts with provider-reported generation duration.
+
 ## 0.3.0 - 2026-08-06
 
 - Changed the source-code license from MIT to Apache License 2.0 before public

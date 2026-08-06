@@ -1,7 +1,7 @@
 # Repository readiness audit
 
 - Audit date: 2026-08-06
-- Release candidate: 0.3.0
+- Release candidate: 0.4.0
 - Scope: repository-implementable CavadaLabs Evaluation Protocol controls
 
 ## Conclusion
