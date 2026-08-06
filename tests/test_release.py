@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,17 @@ from cavada_eval.release import verified_engagement, verified_public_release
 from cavada_eval.runner import run
 
 NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
+
+
+def test_generated_sbom_has_github_attestation_identity_fields(tmp_path: Path) -> None:
+    output = tmp_path / "sbom.cdx.json"
+    subprocess.run(  # noqa: S603 -- fixed local script and interpreter.
+        [sys.executable, "scripts/generate_sbom.py", "--output", str(output)], check=True
+    )
+    sbom = json.loads(output.read_text(encoding="utf-8"))
+    assert sbom["bomFormat"] == "CycloneDX"
+    assert sbom["specVersion"] == "1.6"
+    assert sbom["serialNumber"].startswith("urn:uuid:")
 
 
 def _suite(root: Path) -> Suite:
