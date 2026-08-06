@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import _doctor
@@ -354,6 +355,9 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
         "figures/latency.svg",
     } <= set(manifest["artifacts"])
     assert verify_bundle(run_dir)["valid"] is True
+    report = PdfReader(run_dir / "report.pdf")
+    report_text = "".join(page.extract_text() or "" for page in report.pages)
+    assert len(report.pages) >= 2 and "Executive interpretation" in report_text and "Evidence metadata" in report_text
     control_report = generate_control_report(
         run_dir,
         Path("standards/control_catalog.toml"),
@@ -361,4 +365,3 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
     )
     ai_record = next(item for item in control_report["controls"] if item["control_id"] == "AI-ACT-12")
     assert ai_record["source_application"].startswith("Generally applicable since 2026-08-02")
-

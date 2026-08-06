@@ -26,7 +26,7 @@ from .profiles import TASK_PROFILES
 
 PROTOCOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0.0"
-REPORT_VERSION = "1.0.0"
+REPORT_VERSION = "1.1.0"
 BEHAVIORS = {"answer", "refuse", "abstain", "redirect", "safe_complete"}
 RISK_DOMAINS = {"quality", "security", "privacy", "safety", "reliability", "performance", "fairness"}
 SEVERITIES = {"low", "medium", "high", "critical"}

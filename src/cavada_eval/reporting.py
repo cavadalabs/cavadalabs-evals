@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import base64
 import html
-import os
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from .pdf_report import render_pdf, require_pdf_support
 from .protocol import REPORT_VERSION, atomic_json, atomic_text
 
 
@@ -29,43 +29,6 @@ def _bar_svg(title: str, rows: list[tuple[str, float]], path: Path, *, maximum: 
         parts.append(f'<text x="880" y="{y + 17}" text-anchor="end" font-family="system-ui" font-size="13">{value:.4f}</text>')
     parts.append("</svg>\n")
     atomic_text(path, "".join(parts))
-
-
-def _pdf(path: Path, title: str, lines: list[str]) -> None:
-    pages = [lines[index : index + 42] for index in range(0, len(lines), 42)] or [[]]
-    objects: list[bytes] = []
-    page_ids: list[int] = []
-
-    # Object 1 is catalog, object 2 is pages, object 3 is font.
-    objects.extend([b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"])
-    for page_lines in pages:
-        content = ["BT /F1 11 Tf 50 790 Td 14 TL"]
-        for index, line in enumerate([title, ""] + page_lines):
-            safe = line.encode("latin-1", errors="replace").decode("latin-1").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            content.append(f"({safe}) Tj" if index == 0 else f"T* ({safe}) Tj")
-        content.append("ET")
-        stream = "\n".join(content).encode("latin-1")
-        content_id = len(objects) + 1
-        objects.append(f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream")
-        page_id = len(objects) + 1
-        page_ids.append(page_id)
-        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>".encode())
-    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    kids = " ".join(f"{item} 0 R" for item in page_ids)
-    objects[1] = f"<< /Type /Pages /Count {len(page_ids)} /Kids [{kids}] >>".encode()
-
-    data = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets = [0]
-    for identifier, value in enumerate(objects, 1):
-        offsets.append(len(data))
-        data.extend(f"{identifier} 0 obj\n".encode() + value + b"\nendobj\n")
-    xref = len(data)
-    data.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
-    for offset in offsets[1:]:
-        data.extend(f"{offset:010d} 00000 n \n".encode())
-    data.extend(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
-    path.write_bytes(data)
-    os.chmod(path, 0o600)
 
 
 def _cdf_svg(title: str, values: list[float], path: Path) -> None:
@@ -167,6 +130,157 @@ def _data_uri(path: Path) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _evaluation_pdf(
+    path: Path,
+    manifest: dict[str, Any],
+    metrics: dict[str, Any],
+    categories: list[dict[str, Any]],
+    result_rows: list[dict[str, Any]],
+    *,
+    public: bool,
+) -> None:
+    interval = metrics.get("pass_rate_ci") or {}
+    performance = (metrics.get("performance") or {}).get("target_latency_ms") or {}
+    failures = [row for row in result_rows if row.get("status") != "pass"]
+    target = manifest.get("target") or {}
+    suite = manifest.get("suite") or {}
+    total = int(metrics.get("total", 0))
+    confidence = float(interval.get("confidence", 0.95))
+    status = str(manifest.get("status", "unknown"))
+    target_label = "system-under-test" if public else str(target.get("label", "redacted"))
+    gate_failures = metrics.get("gate_failures") or []
+    category_rows = [
+        [
+            row.get("category", ""),
+            row.get("total", 0),
+            row.get("pass", 0),
+            row.get("fail", 0),
+            row.get("invalid", 0),
+            row.get("error", 0),
+            f"{float(row.get('pass_rate', 0)):.1%}",
+            f"{float(row.get('ci95_lower', 0)):.1%} - {float(row.get('ci95_upper', 0)):.1%}",
+        ]
+        for row in categories
+    ]
+    slice_rows = [
+        [dimension, value, summary.get("total", 0), f"{float(summary.get('pass_rate', 0)):.1%}", summary.get("invalid", 0), summary.get("error", 0)]
+        for dimension, values in (metrics.get("slices") or {}).items()
+        for value, summary in values.items()
+    ]
+    sections: list[dict[str, Any]] = [
+        {
+            "title": "Executive interpretation",
+            "paragraphs": [
+                f"The evaluated system finished with status {status.upper()}. The pass rate is {float(metrics.get('pass_rate', 0)):.1%} across {total} independent {metrics.get('analysis_unit', 'case')} units.",
+                "A passing protocol gate is evidence only for the declared suite, model revision, configuration, and sampled cases. It is not universal correctness, safety, compliance, or legal certification.",
+            ],
+            "warning": f"Sample size: {total}. The {confidence:.0%} interval is {float(interval.get('lower', 0)):.1%} to {float(interval.get('upper', 0)):.1%}; conclusions outside the sampled scope require additional evidence.",
+            "key_values": [
+                ("System under test", target_label),
+                ("Suite", f"{suite.get('name', 'unknown')}@{suite.get('version', 'unknown')}"),
+                ("Analysis unit", metrics.get("analysis_unit", "case")),
+                ("Evaluation cases", metrics.get("evaluation_cases", total)),
+                ("Target observations", metrics.get("target_observations", metrics.get("observations", 0))),
+                ("Run mode", manifest.get("mode", "candidate")),
+            ],
+        },
+        {
+            "title": "Category results",
+            "table": {
+                "headers": ["Category", "N", "Pass", "Fail", "Invalid", "Error", "Rate", "95% interval"],
+                "rows": category_rows,
+                "widths": [47, 12, 14, 14, 15, 14, 18, 45],
+            },
+            "charts": [
+                {
+                    "title": "Pass rate by category",
+                    "rows": [(str(row.get("category", "unknown")), 100 * float(row.get("pass_rate", 0))) for row in categories],
+                    "unit": "%",
+                },
+                {
+                    "title": "Case status distribution",
+                    "rows": [(name.title(), float(metrics.get(name, 0))) for name in ("pass", "fail", "invalid", "error", "skipped")],
+                    "unit": "cases",
+                },
+            ],
+        },
+        {
+            "title": "Gates and slices",
+            "paragraphs": ["No declared gate failed." if not gate_failures else f"{len(gate_failures)} declared gate(s) failed."],
+            "table": {
+                "headers": ["Scope", "Metric", "Minimum", "Actual"],
+                "rows": [[row.get("category"), row.get("metric"), row.get("minimum"), row.get("actual")] for row in gate_failures] or [["All", "Declared gates", "-", "No failures"]],
+                "widths": [50, 50, 35, 44],
+            },
+        },
+    ]
+    if slice_rows:
+        sections.append(
+            {
+                "title": "Result slices",
+                "table": {"headers": ["Dimension", "Value", "Cases", "Pass rate", "Invalid", "Error"], "rows": slice_rows, "widths": [35, 55, 20, 29, 20, 20]},
+            }
+        )
+    sections.extend(
+        [
+            {
+                "title": "Methodology and limitations",
+                "paragraphs": [
+                    "The suite was validated before execution. Deterministic hard checks ran before LLM judges. Repetitions were aggregated at distinct-case level; invalid, error, and skipped evidence remains separate from pass-rate denominators.",
+                    "Finite datasets cannot cover future inputs. Judge models may be biased or wrong, public data may be contaminated, and confidence intervals characterize sampled cases rather than every deployment condition.",
+                ],
+                "key_values": [
+                    ("Protocol", manifest.get("protocol_version", "unknown")),
+                    ("Report version", REPORT_VERSION),
+                    ("Latency p50 / p95 / p99", f"{float(performance.get('p50', 0)):.1f} / {float(performance.get('p95', 0)):.1f} / {float(performance.get('p99', 0)):.1f} ms"),
+                    ("Reproduction", "Restricted in public report" if public else manifest.get("reproduction_command", "See manifest parameters")),
+                ],
+            }
+        ]
+    )
+    if failures and not public:
+        sections.append(
+            {
+                "title": "Failure and invalid evidence",
+                "page_break": True,
+                "warning": f"{len(failures)} non-pass result(s) are preserved. Review these rows before making any release decision.",
+                "table": {
+                    "headers": ["Case", "Status", "Severity", "Reason"],
+                    "rows": [[row.get("case_id", ""), row.get("status", ""), row.get("severity", "missing"), row.get("reason", "No reason recorded")] for row in failures[:200]],
+                    "widths": [38, 22, 24, 95],
+                },
+            }
+        )
+    metadata = {
+        "Run ID": str(manifest.get("run_id", "unknown")),
+        "Status": status,
+        "Protocol": str(manifest.get("protocol_version", "unknown")),
+        "Suite": f"{suite.get('name', 'unknown')}@{suite.get('version', 'unknown')}",
+        "Target revision": "restricted" if public else str(target.get("revision", "unknown")),
+        "Started": str(manifest.get("started_at", "unknown")),
+        "Finished": str(manifest.get("finished_at", "unknown")),
+    }
+    render_pdf(
+        path,
+        title="Public AI Evaluation Report" if public else "AI Evaluation Report",
+        subtitle=f"{suite.get('name', 'unknown')}@{suite.get('version', 'unknown')} / {target_label}",
+        status=status,
+        report_id=str(manifest.get("run_id", "unknown")),
+        classification="PUBLIC" if public else str(manifest.get("data_classification", "RESTRICTED")),
+        scope="Protocol evidence for the declared suite and system revision; not legal certification or a universal safety guarantee.",
+        kpis=[
+            ("Pass rate", f"{float(metrics.get('pass_rate', 0)):.1%}", f"{metrics.get('pass', 0)} pass / {metrics.get('fail', 0)} fail"),
+            (f"{confidence:.0%} interval", f"{float(interval.get('lower', 0)):.1%} - {float(interval.get('upper', 0)):.1%}", "Wilson interval"),
+            ("Independent units", f"{total:,}", str(metrics.get("analysis_unit", "case"))),
+            ("Invalid + errors", f"{int(metrics.get('invalid', 0)) + int(metrics.get('error', 0)):,}", "reported separately"),
+            ("Gate failures", f"{len(gate_failures):,}", "declared protocol gates"),
+            ("Latency p95", f"{float(performance.get('p95', 0)):,.1f} ms", "target response latency"),
+        ],
+        sections=sections,
+        metadata=metadata,
+    )
+
+
 def generate_reports(
     run_dir: Path,
     manifest: dict[str, Any],
@@ -174,6 +288,7 @@ def generate_reports(
     categories: list[dict[str, Any]],
     result_rows: list[dict[str, Any]],
 ) -> list[str]:
+    require_pdf_support()
     figures = run_dir / "figures"
     figures.mkdir(mode=0o700, exist_ok=True)
     _bar_svg("Overall pass rate", [("Pass rate", float(metrics.get("pass_rate", 0)))], figures / "overall_scores.svg")
@@ -245,33 +360,8 @@ def generate_reports(
     }
     atomic_json(run_dir / "summary.json", summary)
 
-    lines = (
-        [
-            f"Status: {manifest.get('status', 'unknown').upper()}",
-            f"Protocol: {manifest.get('protocol_version')}",
-            f"Suite: {manifest.get('suite', {}).get('name')}@{manifest.get('suite', {}).get('version')}",
-            f"Run: {manifest.get('run_id')}",
-            f"Analysis unit: {metrics.get('analysis_unit', 'case')}",
-            f"Independent units: {metrics.get('total', 0)}; evaluation cases: {metrics.get('evaluation_cases', metrics.get('total', 0))}; target observations: {metrics.get('target_observations', metrics.get('observations', 0))}",
-            f"Pass rate: {metrics.get('pass_rate', 0):.4f}",
-            f"Confidence interval: {metrics.get('pass_rate_ci', {}).get('lower', 0):.4f} - {metrics.get('pass_rate_ci', {}).get('upper', 0):.4f}",
-            "",
-            "Categories:",
-        ]
-        + [f"- {row['category']}: {row['pass_rate']:.4f} ({row['pass']}/{row['pass'] + row['fail']})" for row in categories]
-        + (
-            [
-                "",
-                f"Distribution-shift valid pairs: {metrics['distribution_shift']['valid_pairs']}/{metrics['distribution_shift']['declared_pairs']}",
-                f"Distribution-shift delta: {metrics['distribution_shift']['comparison']['absolute_delta']:.4f}",
-            ]
-            if (metrics.get("distribution_shift") or {}).get("comparison")
-            else []
-        )
-        + ["", "Not legal certification or a universal safety guarantee."]
-    )
-    _pdf(run_dir / "report.pdf", "CavadaLabs Evaluation Report", lines)
-    _pdf(run_dir / "report_public.pdf", "CavadaLabs Public Evaluation Report", lines)
+    _evaluation_pdf(run_dir / "report.pdf", manifest, metrics, categories, result_rows, public=False)
+    _evaluation_pdf(run_dir / "report_public.pdf", manifest, metrics, categories, result_rows, public=True)
 
     tests = []
     for row in result_rows:

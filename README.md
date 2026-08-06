@@ -22,6 +22,11 @@ uv run cavada-eval validate suites/customer-support-v1
 uv run cavada-eval estimate suites/customer-support-v1 --repetitions 3 --judge-repetitions 3
 ```
 
+Installed wheels keep the core dependency-free. Professional PDF generation is
+an explicit capability: install `cavadalabs-evals[reports]`. A run that requires
+PDF evidence fails before contacting an endpoint when that extra is unavailable;
+the framework never emits a placeholder PDF.
+
 Run a development benchmark:
 
 ```bash
