@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import uuid
 from pathlib import Path
 
 
@@ -23,13 +24,15 @@ def main() -> None:
     ]
     components.sort(key=lambda item: (item["name"].casefold(), item["version"]))
     lock = Path("uv.lock")
+    lock_sha256 = hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else "missing"
     document = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
+        "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, f'cavadalabs-evals:{lock_sha256}')}",
         "version": 1,
         "metadata": {
             "component": {"type": "application", "name": "cavadalabs-evals"},
-            "properties": [{"name": "cavadalabs:uv-lock-sha256", "value": hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else "missing"}],
+            "properties": [{"name": "cavadalabs:uv-lock-sha256", "value": lock_sha256}],
         },
         "components": components,
     }
