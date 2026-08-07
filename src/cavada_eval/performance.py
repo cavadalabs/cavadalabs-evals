@@ -1555,6 +1555,7 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
     ]
     runtime_ids = [str(run["runtime_id"]) for run in result.get("runs", [])]
     cell_keys = list(dict.fromkeys(str(row["cell_key"]) for row in rows))
+    keep_matrix_together = len(runtime_ids) <= 8
     cell_labels = {
         key: f"{int(row['context_tokens']):,}/{int(row['output_tokens'])}/"
         + (f"c{int(row['concurrency'])}" if row["concurrency"] else f"r{float(row['request_rate'] or 0):g}")
@@ -1565,9 +1566,16 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
 
     def matrix(field: str, digits: int, *, percent: bool = False) -> dict[str, Any]:
         values = {(str(row["runtime_id"]), str(row["cell_key"])): float(row[field]) for row in rows}
+
+        def label(runtime_id: str) -> str:
+            run = next(run for run in result.get("runs", []) if run["runtime_id"] == runtime_id)
+            model = str(run.get("model", runtime_id))
+            gpu = next((part for part in runtime_id.split("-") if part.startswith("gpu") and part[3:].isdigit()), "")
+            return f"{model} [{gpu}]" if gpu else model
+
         matrix_rows = [
             [
-                next(str(run.get("model", runtime_id)) for run in result.get("runs", []) if run["runtime_id"] == runtime_id),
+                label(runtime_id),
                 *(f"{values[(runtime_id, key)]:.{digits}%}" if percent else f"{values[(runtime_id, key)]:,.{digits}f}" for key in cell_keys),
             ]
             for runtime_id in runtime_ids
@@ -1613,10 +1621,10 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
                     {"title": "Time to first token p95 - lower is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("ttft_p95_ms", 0)) / 1000) for row in rows], "unit": "s"},
                 ],
             },
-            {"title": "TTFT p95 matrix - milliseconds - lower is better", "table": matrix("ttft_p95_ms", 1)},
-            {"title": "Decode p50 matrix - tokens/s - higher is better", "table": matrix("decode_tps_p50", 2)},
-            {"title": "Output throughput matrix - tokens/s - higher is better", "table": matrix("output_tokens_per_second", 3)},
-            {"title": "Error rate matrix - lower is better", "page_break": True, "table": matrix("error_rate", 2, percent=True)},
+            {"title": "TTFT p95 matrix - milliseconds - lower is better", "keep_together": keep_matrix_together, "table": matrix("ttft_p95_ms", 1)},
+            {"title": "Decode p50 matrix - tokens/s - higher is better", "keep_together": keep_matrix_together, "table": matrix("decode_tps_p50", 2)},
+            {"title": "Output throughput matrix - tokens/s - higher is better", "keep_together": keep_matrix_together, "table": matrix("output_tokens_per_second", 3)},
+            {"title": "Error rate matrix - lower is better", "keep_together": keep_matrix_together, "table": matrix("error_rate", 2, percent=True)},
             {
                 "title": "Methodology and limitations",
                 "paragraphs": [str(result.get("limitations", "Only exact shared cells are compared.")), "This comparison is observational, not causal. Repeat a reference campaign with sufficient observations before publishing model or hardware rankings."],
