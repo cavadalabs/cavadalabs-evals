@@ -1069,6 +1069,8 @@ def run(
         protocol_source = repo_root / "PROTOCOL.md"
         if not protocol_source.is_file():
             protocol_source = Path(__file__).resolve().parents[2] / "PROTOCOL.md"
+        if not protocol_source.is_file():
+            protocol_source = Path(__file__).with_name("PROTOCOL.md")
         (run_dir / "protocol_snapshot.md").write_text(protocol_source.read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(run_dir / "protocol_snapshot.md", 0o600)
         (run_dir / "suite_snapshot.toml").write_text((suite.root / "suite.toml").read_text(encoding="utf-8"), encoding="utf-8")

@@ -32,6 +32,11 @@ jobs:
       - run: uv run python scripts/check_secrets.py
       - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
       - run: uv build
+      - name: Verify the wheel demo outside the checkout
+        run: |
+          cd "$(mktemp -d)"
+          wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print | sort | tail -1)
+          uvx --from "${wheel}[reports]" cavada-eval demo
       - run: uv run python scripts/generate_provenance.py
       - name: Attest package provenance
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
@@ -50,4 +55,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz dist/sbom.cdx.json dist/build-provenance.json --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
-

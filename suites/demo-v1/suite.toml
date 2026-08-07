@@ -1,0 +1,66 @@
+protocol_version = "1.0.0"
+name = "demo-v1"
+version = "1.0.0"
+status = "candidate"
+description = "Small deterministic offline demo for the CavadaLabs evaluation workflow."
+profile = "text-generation"
+dataset = "dataset.jsonl"
+rubric = "rubric.md"
+data_classification = "synthetic"
+temperature = 0
+max_tokens = 128
+official_min_repetitions = 3
+official_min_judge_repetitions = 3
+
+[governance]
+owner = "CavadaLabs evaluation maintainers"
+purpose = "Demonstrate the local artifact and reporting workflow"
+intended_use = "Offline onboarding and installation verification"
+prohibited_use = "Model comparison, certification, compliance, safety, or production claims"
+license = "Apache-2.0; CavadaLabs-authored synthetic cases"
+origin = "CavadaLabs-authored deterministic demo"
+created_at = "2026-08-06"
+retention = "Maintain with the CLI and review annually"
+personal_data = "none"
+legal_basis_reference = "not-applicable-synthetic"
+rotation_due = "2027-08-06"
+contamination_status = "Public deterministic demo; unsuitable for model evaluation"
+canary_strategy = "None; this suite is intentionally public and deterministic"
+known_leaks = "All cases and responses are public by design"
+representativeness = "Three onboarding examples; no population claim"
+transfer_restrictions = "None; synthetic public data only"
+near_duplicate_threshold = 0.92
+minimum_category_cases = 1
+maximum_category_share = 1.0
+
+[assets]
+max_bytes = 26214400
+max_image_pixels = 100000000
+max_audio_seconds = 3600
+
+[network]
+allowed_hosts = ["127.0.0.1", "localhost", "::1"]
+
+[statistics]
+confidence = 0.95
+bootstrap_samples = 1000
+seed = 4345
+
+[target]
+kind = "recorded"
+responses = "recorded_responses.jsonl"
+response_field = "answer"
+reported_model_field = "model"
+capabilities = ["text", "structured-output"]
+
+[calibration]
+status = "pending"
+evidence = ""
+evidence_sha256 = ""
+independent_review = "pending"
+independent_review_evidence = ""
+independent_review_evidence_sha256 = ""
+
+[[gates]]
+metric = "pass_rate"
+min = 1.0
