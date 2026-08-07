@@ -590,9 +590,10 @@ def _line_svg(
     maximum = max(all_values + [1.0])
     longest = max([len(values) for _, values in series] + [1])
     left, right, bottom, plot_height = 120, 880, 350, 280
+    height = 410 + 22 * max(1, len(series))
     colors = ("#1769aa", "#c23b22", "#2e7d32", "#6a1b9a", "#8d6e00", "#455a64")
     elements = [
-        '<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" width="1000" height="420" viewBox="0 0 1000 420">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" width="1000" height="{height}" viewBox="0 0 1000 {height}">',
         f"<title id=\"title\">{html.escape(title)}</title><desc id=\"desc\">{html.escape(y_label)} by comparable performance cell; exact values are tabulated.</desc>",
         f'<rect width="100%" height="100%" fill="white"/><line x1="{left}" y1="{bottom}" x2="{right}" y2="{bottom}" stroke="#172033"/><line x1="{left}" y1="50" x2="{left}" y2="{bottom}" stroke="#172033"/>',
     ]
@@ -610,7 +611,7 @@ def _line_svg(
         ]
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in coordinates)
         color = colors[index % len(colors)]
-        elements.append(f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/><text x="{left + index * 150}" y="405" fill="{color}" font-family="system-ui">{html.escape(label)}</text>')
+        elements.append(f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/><text x="{left}" y="{410 + index * 22}" fill="{color}" font-family="system-ui">{html.escape(label)}</text>')
         elements.extend(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}"/>'
             f'<text x="{x:.1f}" y="{max(24, y - 10):.1f}" text-anchor="middle" font-family="system-ui" font-size="12">{value:.2f}</text>'
