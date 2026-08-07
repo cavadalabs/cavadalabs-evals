@@ -18,6 +18,7 @@ from cavada_eval.protocol import (
     ProtocolError,
     _calibration_evidence_errors,
     deterministic_checks,
+    environment_evidence,
     load_suite,
     new_run_dir,
     semantic_duplicate_candidates,
@@ -42,6 +43,33 @@ def test_benchmark_presets_are_canonical_and_group_safe() -> None:
     assert ({"a", "a-variant"} <= {case["id"] for case in selected}) or not ({"a", "a-variant"} & {case["id"] for case in selected})
     assert canonical_preset("full") == "reference"
     assert benchmark_preset("quick")["max_cases"] == 100
+
+
+def test_environment_evidence_records_amd_inventory_without_serials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "gpu_data": [
+            {
+                "gpu": 0,
+                "asic": {
+                    "market_name": "Radeon RX 7900 XTX",
+                    "target_graphics_version": "gfx1100",
+                    "subsystem_id": "0x7901",
+                    "asic_serial": "private-serial",
+                },
+                "vram": {"size": {"value": 24560, "unit": "MB"}},
+            }
+        ]
+    }
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "amd-smi" else None)
+    monkeypatch.setattr(
+        "cavada_eval.protocol.subprocess.run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": json.dumps(payload)})(),
+    )
+
+    hardware = environment_evidence(tmp_path)["hardware"]
+    assert hardware["gpu_inventory_source"] == "amd-smi"
+    assert hardware["gpus"] == ["Radeon RX 7900 XTX, gfx1100, 24560 MB, subsystem 0x7901"]
+    assert "private-serial" not in json.dumps(hardware)
 
 
 def make_suite(tmp_path: Path, *, status: str = "approved", review: str = "approved") -> Path:
