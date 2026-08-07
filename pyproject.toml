@@ -34,7 +34,7 @@ cavada-eval = "cavada_eval.cli:main"
 
 [dependency-groups]
 dev = ["pypdf>=6,<7", "pytest>=8.3", "reportlab>=4.4,<5", "ruff>=0.12,<1", "mypy>=1.15,<2"]
-deepeval = ["deepeval>=3,<4"]
+deepeval = ["deepeval>=3,<5"]
 
 [build-system]
 requires = ["hatchling"]
