@@ -173,12 +173,16 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     assert manifest["status"] == "completed" and len(cells) == 3
     assert all(cell["slo_passed"] for cell in cells)
     assert all(cell["ttft_ms"]["count"] > 0 and cell["output_tokens_per_second"] > 0 for cell in cells)
+    assert "<circle" in (left_run / "figures" / "ttft.svg").read_text(encoding="utf-8")
+    assert (left_run / "figures" / "decode.svg").is_file()
+    assert "How to read this run" in (left_run / "report.html").read_text(encoding="utf-8")
     observations = [json.loads(line) for line in (left_run / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
     assert all(row["client_queue_ms"] == 0 for row in observations if row["scenario_id"] == "closed")
     assert not (left_run / "judgments.jsonl").exists()
     output = tmp_path / "comparison"
     comparison = compare_performance_runs([left_run, right_run], output)
     assert comparison["shared_cells"] == 3 and verify_bundle(output)["valid"]
+    assert "Highest output rate" in (output / "report.html").read_text(encoding="utf-8")
     run_pdf = PdfReader(left_run / "report.pdf")
     comparison_pdf = PdfReader(output / "report.pdf")
     assert len(run_pdf.pages) >= 2 and "Measured performance cells" in "".join(page.extract_text() or "" for page in run_pdf.pages)

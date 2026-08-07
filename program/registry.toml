@@ -1,5 +1,5 @@
 program_version = "1.1.0"
-registry_version = "1.1.0"
+registry_version = "1.1.1"
 protocol_version = "1.0.0"
 compatibility_policy = "same-major-explicit-cross-version-mapping"
 result_expiry_days = 365
@@ -10,7 +10,7 @@ evidence_crosswalk = "standards/evidence_crosswalk.toml"
 [[suites]]
 id = "security-privacy-smoke-v1"
 family = "safety-security-smoke"
-version = "0.1.1"
+version = "0.1.2"
 status = "candidate"
 assurance = "candidate"
 modalities = ["text"]
