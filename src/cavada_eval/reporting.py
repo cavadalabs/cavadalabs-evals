@@ -102,13 +102,11 @@ def _html_document(
             f'invalid pairs: {shift.get("invalid_pairs", 0)}.</p>'
         )
     reproduction = html.escape(str(manifest.get("reproduction_command", "Unavailable; see manifest parameters.")))
+    critical = ((metrics.get("slices") or {}).get("severity") or {}).get("critical") or {}
+    critical_non_pass = sum(int(critical.get(name, 0)) for name in ("fail", "invalid", "error"))
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CavadaLabs Evaluation Report</title><style>body{{font:15px system-ui;max-width:1180px;margin:40px auto;padding:0 20px;color:#172033;line-height:1.45}}table{{border-collapse:collapse;width:100%;display:block;overflow:auto}}th,td{{border:1px solid #ccd3df;padding:8px;text-align:left}}th{{background:#eef3f8}}.pass{{color:#08752c}}.fail{{color:#a11616}}code{{background:#eef1f6;padding:2px 5px}}img{{max-width:100%;height:auto}}.notice{{border-left:5px solid #b26a00;padding:10px;background:#fff6df}}@media print{{body{{margin:10mm}}}}</style></head><body>
-<h1>CavadaLabs Evaluation Report</h1><p>Report {REPORT_VERSION} · Protocol {html.escape(str(manifest.get("protocol_version")))} · Suite {html.escape(str(manifest.get("suite", {}).get("name")))}@{html.escape(str(manifest.get("suite", {}).get("version")))}</p>
-<h2 class="{"pass" if manifest.get("status") == "passed" else "fail"}">{status}</h2>
-<p>System under test: <code>{sut}</code>. Independent {analysis_unit}s: {metrics.get("total", 0)}. Evaluation cases: {metrics.get("evaluation_cases", metrics.get("total", 0))}. Target observations: {metrics.get("target_observations", metrics.get("observations", 0))}.</p>
-<p>Pass rate: {metrics.get("pass_rate", 0):.3%}; {confidence:.1%} Wilson interval: {interval.get("lower", 0):.3%}–{interval.get("upper", 0):.3%}. Invalid: {metrics.get("invalid", 0)}; errors: {metrics.get("error", 0)}; skipped: {metrics.get("skipped", 0)}.</p>
-<p>Target latency p50/p95/p99: {performance.get("p50", 0):.1f}/{performance.get("p95", 0):.1f}/{performance.get("p99", 0):.1f} ms.</p>
+<title>CavadaLabs Evaluation Report</title><style>body{{font:15px system-ui;max-width:1180px;margin:0 auto;padding:40px 24px;color:#172033;background:#f4f7fb;line-height:1.5}}header,section{{background:white;border:1px solid #dce3ec;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 6px 22px #1720330a}}h1{{margin:6px 0 4px;font-size:30px}}h2{{margin-top:26px}}header h2{{margin:0}}table{{border-collapse:collapse;width:100%;display:block;overflow:auto;font-variant-numeric:tabular-nums}}th,td{{border-bottom:1px solid #ccd3df;padding:8px;text-align:left;white-space:nowrap}}th{{background:#eef3f8}}.pass{{color:#08752c}}.fail{{color:#a11616}}.status{{display:inline-block;border-radius:999px;padding:5px 10px;background:#eef3f8;font-weight:700}}.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;margin-top:22px}}.kpi{{border:1px solid #dce3ec;border-radius:10px;padding:14px}}.kpi strong{{display:block;font-size:23px}}.muted{{color:#5d697b}}code{{background:#eef1f6;padding:2px 5px;overflow-wrap:anywhere}}img{{max-width:100%;height:auto;display:block}}.notice{{border-left:5px solid #b26a00;padding:12px 16px;background:#fff6df}}@media(max-width:700px){{body{{padding:16px 10px}}}}@media print{{body{{background:white;padding:0}}header,section{{box-shadow:none}}}}</style></head><body>
+<header><span class="status {"pass" if manifest.get("status") == "passed" else "fail"}">{status}</span><h1>AI evaluation result</h1><p class="muted">Suite {html.escape(str(manifest.get("suite", {}).get("name")))}@{html.escape(str(manifest.get("suite", {}).get("version")))} · Protocol {html.escape(str(manifest.get("protocol_version")))} · Report {REPORT_VERSION}</p><p>System under test: <code>{sut}</code></p><div class="kpis"><div class="kpi"><span>Pass rate</span><strong>{metrics.get("pass_rate", 0):.1%}</strong><small>{metrics.get("pass", 0)} pass / {metrics.get("fail", 0)} fail</small></div><div class="kpi"><span>{confidence:.0%} interval</span><strong>{interval.get("lower", 0):.1%}–{interval.get("upper", 0):.1%}</strong><small>Wilson interval</small></div><div class="kpi"><span>Independent units</span><strong>{metrics.get("total", 0)}</strong><small>{analysis_unit}</small></div><div class="kpi"><span>Critical non-pass</span><strong>{critical_non_pass}</strong><small>fail + invalid + error</small></div><div class="kpi"><span>Gate failures</span><strong>{len(metrics.get("gate_failures", []))}</strong><small>declared gates</small></div><div class="kpi"><span>Latency p95</span><strong>{performance.get("p95", 0):.1f} ms</strong><small>target response</small></div></div></header><section>
 <div class="notice"><strong>Scope:</strong> This report is protocol evidence, not legal certification, universal correctness, or a universal safety guarantee.</div>
 <h2>Overall and category results</h2><img src="{figures["overall"]}" alt="Overall pass-rate bar chart"><img src="{figures["category"]}" alt="Pass rate by category bar chart">
 <table><thead><tr><th>Category</th><th>Total</th><th>Pass</th><th>Fail</th><th>Invalid</th><th>Error</th><th>Pass rate</th><th>CI95 lower</th><th>CI95 upper</th></tr></thead><tbody>{category_rows}</tbody></table>
@@ -123,7 +121,7 @@ def _html_document(
 <h2>Methodology</h2><p>Cases were validated before execution. Deterministic hard checks ran before LLM judges. Repetitions were aggregated at distinct-case level. Invalid, error, and skipped cases were excluded from pass-rate denominators and remain visible.</p>
 <h2>Limitations</h2><p>Finite test data cannot cover future inputs. Judge models may be biased or wrong. Public datasets may be contaminated. Confidence intervals characterize the sampled cases, not every possible use.</p>
 <h2>Reproduction</h2><pre><code>{reproduction}</code></pre>
-{failure_section}</body></html>"""
+{failure_section}</section></body></html>"""
 
 
 def _data_uri(path: Path) -> str:
@@ -149,6 +147,8 @@ def _evaluation_pdf(
     status = str(manifest.get("status", "unknown"))
     target_label = "system-under-test" if public else str(target.get("label", "redacted"))
     gate_failures = metrics.get("gate_failures") or []
+    critical = ((metrics.get("slices") or {}).get("severity") or {}).get("critical") or {}
+    critical_non_pass = sum(int(critical.get(name, 0)) for name in ("fail", "invalid", "error"))
     category_rows = [
         [
             row.get("category", ""),
@@ -274,7 +274,7 @@ def _evaluation_pdf(
             ("Independent units", f"{total:,}", str(metrics.get("analysis_unit", "case"))),
             ("Invalid + errors", f"{int(metrics.get('invalid', 0)) + int(metrics.get('error', 0)):,}", "reported separately"),
             ("Gate failures", f"{len(gate_failures):,}", "declared protocol gates"),
-            ("Latency p95", f"{float(performance.get('p95', 0)):,.1f} ms", "target response latency"),
+            ("Critical non-pass", f"{critical_non_pass:,}", "fail + invalid + error"),
         ],
         sections=sections,
         metadata=metadata,

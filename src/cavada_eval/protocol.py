@@ -1179,14 +1179,24 @@ def apply_gates(suite: Suite, metrics: dict[str, Any], categories: list[dict[str
     by_category = {row["category"]: row for row in categories}
     for gate in suite.config.get("gates", []):
         category = gate.get("category")
-        source = by_category.get(category, {}) if category else metrics
+        slice_name = gate.get("slice")
+        slice_value = gate.get("value")
+        if category and slice_name:
+            source: Any = {}
+            scope = "invalid:category-and-slice"
+        elif slice_name:
+            source = ((metrics.get("slices") or {}).get(str(slice_name)) or {}).get(str(slice_value), {})
+            scope = f"{slice_name}:{slice_value}"
+        else:
+            source = by_category.get(category, {}) if category else metrics
+            scope = str(category or "overall")
         metric = str(gate.get("metric", "pass_rate_ci95.lower"))
         value: Any = source
         for part in metric.split("."):
             value = value.get(part) if isinstance(value, dict) else None
         minimum = float(gate.get("min", 0))
         if not isinstance(value, (int, float)) or float(value) < minimum:
-            failures.append({"category": category or "overall", "metric": metric, "minimum": minimum, "actual": value})
+            failures.append({"category": scope, "metric": metric, "minimum": minimum, "actual": value})
     return failures
 
 

@@ -578,23 +578,50 @@ def _metric_summary(values: list[float], bootstrap_samples: int, seed: int) -> d
     return summary
 
 
-def _line_svg(title: str, series: list[tuple[str, list[float]]], path: Path, y_label: str) -> None:
+def _line_svg(
+    title: str,
+    series: list[tuple[str, list[float]]],
+    path: Path,
+    y_label: str,
+    *,
+    x_labels: tuple[str, ...] = (),
+) -> None:
     all_values = [value for _, values in series for value in values]
     maximum = max(all_values + [1.0])
     longest = max([len(values) for _, values in series] + [1])
+    left, right, bottom, plot_height = 120, 880, 350, 280
     colors = ("#1769aa", "#c23b22", "#2e7d32", "#6a1b9a", "#8d6e00", "#455a64")
     elements = [
         '<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" width="1000" height="420" viewBox="0 0 1000 420">',
         f"<title id=\"title\">{html.escape(title)}</title><desc id=\"desc\">{html.escape(y_label)} by comparable performance cell; exact values are tabulated.</desc>",
-        '<rect width="100%" height="100%" fill="white"/><line x1="60" y1="360" x2="940" y2="360" stroke="#172033"/><line x1="60" y1="40" x2="60" y2="360" stroke="#172033"/>',
+        f'<rect width="100%" height="100%" fill="white"/><line x1="{left}" y1="{bottom}" x2="{right}" y2="{bottom}" stroke="#172033"/><line x1="{left}" y1="50" x2="{left}" y2="{bottom}" stroke="#172033"/>',
     ]
-    for index, (label, values) in enumerate(series):
-        points = " ".join(
-            f"{60 + (position * 880 / max(1, longest - 1)):.1f},{360 - value * 300 / maximum:.1f}" for position, value in enumerate(values)
+    for tick in range(5):
+        y = bottom - tick * 70
+        value = maximum * tick / 4
+        elements.append(
+            f'<line x1="{left}" y1="{y}" x2="{right}" y2="{y}" stroke="#dce3ec"/>'
+            f'<text x="{left - 8}" y="{y + 4}" text-anchor="end" font-family="system-ui" font-size="12">{value:.2f}</text>'
         )
+    for index, (label, values) in enumerate(series):
+        coordinates = [
+            (500.0 if longest == 1 else left + position * (right - left) / (longest - 1), bottom - value * plot_height / maximum, value)
+            for position, value in enumerate(values)
+        ]
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in coordinates)
         color = colors[index % len(colors)]
-        elements.append(f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/><text x="{70 + index * 150}" y="400" fill="{color}" font-family="system-ui">{html.escape(label)}</text>')
-    elements.append(f'<text x="20" y="210" transform="rotate(-90 20 210)" text-anchor="middle" font-family="system-ui">{html.escape(y_label)}</text></svg>')
+        elements.append(f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/><text x="{left + index * 150}" y="405" fill="{color}" font-family="system-ui">{html.escape(label)}</text>')
+        elements.extend(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}"/>'
+            f'<text x="{x:.1f}" y="{max(24, y - 10):.1f}" text-anchor="middle" font-family="system-ui" font-size="12">{value:.2f}</text>'
+            for x, y, value in coordinates
+        )
+    if x_labels:
+        elements.extend(
+            f'<text x="{500 if len(x_labels) == 1 else left + position * (right - left) / (len(x_labels) - 1):.1f}" y="375" text-anchor="middle" font-family="system-ui" font-size="12">{html.escape(label)}</text>'
+            for position, label in enumerate(x_labels)
+        )
+    elements.append(f'<text x="22" y="200" transform="rotate(-90 22 200)" text-anchor="middle" font-family="system-ui">{html.escape(y_label)}</text></svg>')
     atomic_text(path, "".join(elements) + "\n")
 
 
@@ -1073,12 +1100,32 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
     figures = run_dir / "figures"
     pricing = manifest["runtime"].get("pricing")
     cost_heading = f"Cost ({pricing['currency']})" if isinstance(pricing, dict) else "Cost"
+    observations = sum(int(row.get("observations", 0)) for row in ordered)
+    errors = sum(int(row.get("errors", 0)) for row in ordered)
+    best = max(ordered, key=lambda row: float(row.get("goodput_requests_per_second", 0)), default={})
+    distribution_keys = ("min", "p50", "p90", "p95", "max")
     for filename, title, key, label in (
         ("ttft.svg", "TTFT p95 by performance cell", "ttft_ms", "TTFT p95 (ms)"),
         ("e2e.svg", "End-to-end p99 by performance cell", "e2e_ms", "E2E p99 (ms)"),
     ):
-        percentile_key = "p95" if key == "ttft_ms" else "p99"
-        _line_svg(title, [(manifest["runtime"]["id"], [float(row[key][percentile_key]) for row in ordered])], figures / filename, label)
+        if len(ordered) == 1:
+            values = [float((ordered[0].get(key) or {}).get(name, 0)) for name in distribution_keys]
+            _line_svg(title.replace("p95 by performance cell", "distribution").replace("p99 by performance cell", "distribution"), [(manifest["runtime"]["id"], values)], figures / filename, label.replace("p95 ", "").replace("p99 ", ""), x_labels=distribution_keys)
+        else:
+            percentile_key = "p95" if key == "ttft_ms" else "p99"
+            _line_svg(title, [(manifest["runtime"]["id"], [float(row[key][percentile_key]) for row in ordered])], figures / filename, label)
+    decode_values = (
+        [float((ordered[0].get("decode_tokens_per_second") or {}).get(name, 0)) for name in distribution_keys]
+        if len(ordered) == 1
+        else [float((row.get("decode_tokens_per_second") or {}).get("p50", 0)) for row in ordered]
+    )
+    _line_svg(
+        "Decode rate distribution" if len(ordered) == 1 else "Decode rate p50 by performance cell",
+        [(manifest["runtime"]["id"], decode_values)],
+        figures / "decode.svg",
+        "Decode tokens/s",
+        x_labels=distribution_keys if len(ordered) == 1 else (),
+    )
     _line_svg(
         "Output token throughput by performance cell",
         [(manifest["runtime"]["id"], [float(row["output_tokens_per_second"]) for row in ordered])],
@@ -1113,7 +1160,7 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
         + "</tr>"
         for row in ordered
     )
-    document = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs LLM Performance Report</title><style>body{{font:15px system-ui;max-width:1400px;margin:36px auto;color:#172033}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #bbc3ce;padding:6px;text-align:right}}th:nth-child(2),td:nth-child(2){{text-align:left}}img{{width:100%;height:auto}}code{{background:#eef2f6;padding:2px 4px}}</style><h1>CavadaLabs LLM Performance Report</h1><p>Run <code>{html.escape(manifest['run_id'])}</code>; runtime <code>{html.escape(str(manifest['runtime']['id']))}</code>; execution status <strong>{html.escape(manifest['status'])}</strong>. SLO-passing cells: {manifest['cells']['slo_passed']} of {manifest['cells']['slo_passed'] + manifest['cells']['slo_failed']} evaluated. Warm-up errors: {manifest['warmups']['errors']} of {manifest['warmups']['total']}.</p><p>Plan SHA-256: <code>{manifest['plan']['sha256']}</code>. Workload SHA-256: <code>{manifest['workload']['sha256']}</code>.</p><h2>Charts</h2><img src="figures/ttft.svg" alt="TTFT p95 chart"><img src="figures/e2e.svg" alt="End-to-end p99 chart"><img src="figures/throughput.svg" alt="Output token throughput chart"><img src="figures/goodput.svg" alt="SLO goodput chart"><h2>Comparable cells</h2><table><thead><tr><th>Block</th><th>Cell</th><th>Status</th><th>SLO</th><th>N</th><th>TTFT p95 ms</th><th>E2E p99 ms</th><th>TPOT p50 ms</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>{html.escape(cost_heading)}</th></tr></thead><tbody>{table_rows}</tbody></table><h2>Limitations</h2><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in summary['limitations'])}</ul></html>\n'''
+    document = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs LLM Performance Report</title><style>body{{font:15px system-ui;max-width:1400px;margin:0 auto;padding:40px 24px;color:#172033;background:#f4f7fb;line-height:1.5}}header,.panel{{background:white;border:1px solid #dce3ec;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 6px 22px #1720330a}}h1{{margin:0 0 8px;font-size:30px}}h2{{margin-top:0}}.muted{{color:#5d697b}}.status{{display:inline-block;border-radius:999px;padding:5px 10px;background:#e8f5eb;color:#176b35;font-weight:700}}.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:22px}}.kpi{{border:1px solid #dce3ec;border-radius:10px;padding:14px}}.kpi strong{{display:block;font-size:24px}}.charts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px}}figure{{margin:0;border:1px solid #e1e6ee;border-radius:10px;padding:10px}}figcaption{{font-weight:700;padding:4px 8px}}img{{width:100%;height:auto;display:block}}table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}.table-wrap{{overflow:auto}}th,td{{border-bottom:1px solid #dce3ec;padding:9px;text-align:right;white-space:nowrap}}th{{background:#eef3f8}}th:nth-child(2),td:nth-child(2){{text-align:left}}code{{background:#eef2f6;padding:2px 4px;overflow-wrap:anywhere}}.notice{{border-left:5px solid #1769aa;background:#eef6ff;padding:12px 16px}}@media(max-width:700px){{body{{padding:16px 10px}}.charts{{grid-template-columns:1fr}}}}@media print{{body{{background:white;padding:0}}header,.panel{{box-shadow:none}}}}</style></head><body><header><span class="status">{html.escape(manifest['status']).upper()}</span><h1>LLM serving performance</h1><p class="muted">{html.escape(str(manifest['runtime']['id']))}<br>Run <code>{html.escape(manifest['run_id'])}</code></p><div class="kpis"><div class="kpi"><span>Measured requests</span><strong>{observations}</strong><small>{errors} errors</small></div><div class="kpi"><span>TTFT p95</span><strong>{float((best.get('ttft_ms') or {}).get('p95', 0)) / 1000:.2f} s</strong><small>lower is better</small></div><div class="kpi"><span>Decode p50</span><strong>{float((best.get('decode_tokens_per_second') or {}).get('p50', 0)):.2f}</strong><small>tokens/s · higher is better</small></div><div class="kpi"><span>Output throughput</span><strong>{float(best.get('output_tokens_per_second', 0)):.3f}</strong><small>tokens/s · prefill included</small></div><div class="kpi"><span>SLO cells</span><strong>{manifest['cells']['slo_passed']}/{manifest['cells']['slo_passed'] + manifest['cells']['slo_failed']}</strong><small>passing / evaluated</small></div></div></header><section class="panel"><h2>How to read this run</h2><p class="notice"><strong>Decode tokens/s</strong> measures generation after the first token. <strong>Output throughput</strong> includes prompt processing and is the campaign-level rate. Compare only runs with identical plan, workload and host mode.</p></section><section class="panel"><h2>Measured distributions</h2><div class="charts"><figure><figcaption>Time to first token · lower is better</figcaption><img src="figures/ttft.svg" alt="Time to first token chart"></figure><figure><figcaption>End-to-end latency · lower is better</figcaption><img src="figures/e2e.svg" alt="End-to-end latency chart"></figure><figure><figcaption>Decode rate · higher is better</figcaption><img src="figures/decode.svg" alt="Decode rate chart"></figure><figure><figcaption>Campaign output throughput · higher is better</figcaption><img src="figures/throughput.svg" alt="Output token throughput chart"></figure><figure><figcaption>SLO goodput · higher is better</figcaption><img src="figures/goodput.svg" alt="SLO goodput chart"></figure></div></section><section class="panel"><h2>Comparable cells</h2><div class="table-wrap"><table><thead><tr><th>Block</th><th>Cell</th><th>Status</th><th>SLO</th><th>N</th><th>TTFT p95 ms</th><th>E2E p99 ms</th><th>TPOT p50 ms</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>{html.escape(cost_heading)}</th></tr></thead><tbody>{table_rows}</tbody></table></div></section><section class="panel"><h2>Reproducibility and limits</h2><p>Plan SHA-256: <code>{manifest['plan']['sha256']}</code><br>Workload SHA-256: <code>{manifest['workload']['sha256']}</code><br>Warm-up errors: {manifest['warmups']['errors']} of {manifest['warmups']['total']}.</p><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in summary['limitations'])}</ul><p class="muted">Performance evidence does not establish response quality, safety, compliance, energy use or universal deployment capacity.</p></section></body></html>\n'''
     atomic_text(run_dir / "report.html", document)
     _performance_pdf(run_dir / "report.pdf", manifest, summary, cells)
 
@@ -1362,9 +1409,11 @@ def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_
         f"<tr><td>{row['block']}</td><td>{html.escape(row['cell_key'])}</td><td>{html.escape(row['runtime_id'])}</td><td>{row['ttft_p95_ms']:.2f}</td><td>{row['e2e_p99_ms']:.2f}</td><td>{row['output_tokens_per_second']:.2f}</td><td>{row['goodput_requests_per_second']:.3f}</td><td>{row['error_rate']:.4f}</td><td>{row['slo_passed']}</td><td>{format(row['estimated_cost'], '.6f') if row['estimated_cost'] is not None else 'n/a'}</td><td>{html.escape(str(row['cost_currency']))}</td><td>{html.escape(str(row['throughput_speedup_vs_baseline']))}</td></tr>"
         for row in comparison_rows
     )
+    fastest = max(comparison_rows, key=lambda row: float(row.get("output_tokens_per_second", 0)))
+    error_free = sum(float(row.get("error_rate", 0)) == 0 for row in comparison_rows)
     atomic_text(
         output / "report.html",
-        f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs Performance Comparison</title><style>body{{font:15px system-ui;max-width:1400px;margin:36px auto}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #bbb;padding:6px;text-align:right}}td:nth-child(2),td:nth-child(3){{text-align:left}}img{{width:100%}}</style><h1>CavadaLabs Performance Comparison</h1><p>Baseline: <strong>{html.escape(labels[0])}</strong>. Shared cells: {len(shared)}.</p><img src="throughput_comparison.svg" alt="Output token throughput comparison"><table><thead><tr><th>Block</th><th>Cell</th><th>Runtime</th><th>TTFT p95</th><th>E2E p99</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>SLO</th><th>Cost</th><th>Currency</th><th>Speedup</th></tr></thead><tbody>{table}</tbody></table><p>{html.escape(str(result['limitations']))}</p></html>\n''',
+        f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs Performance Comparison</title><style>body{{font:15px system-ui;max-width:1400px;margin:0 auto;padding:40px 24px;color:#172033;background:#f4f7fb;line-height:1.5}}header,.panel{{background:white;border:1px solid #dce3ec;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 6px 22px #1720330a}}h1{{margin:0 0 8px;font-size:30px}}h2{{margin-top:0}}.muted{{color:#5d697b}}.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:22px}}.kpi{{border:1px solid #dce3ec;border-radius:10px;padding:14px}}.kpi strong{{display:block;font-size:23px;overflow-wrap:anywhere}}figure{{margin:0;border:1px solid #e1e6ee;border-radius:10px;padding:10px}}img{{width:100%;height:auto;display:block}}table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}.table-wrap{{overflow:auto}}th,td{{border-bottom:1px solid #dce3ec;padding:9px;text-align:right;white-space:nowrap}}th{{background:#eef3f8}}td:nth-child(2),td:nth-child(3){{text-align:left}}.notice{{border-left:5px solid #b26a00;background:#fff6df;padding:12px 16px}}@media(max-width:700px){{body{{padding:16px 10px}}}}@media print{{body{{background:white;padding:0}}header,.panel{{box-shadow:none}}}}</style></head><body><header><h1>LLM serving comparison</h1><p class="muted">Exact shared cells from verified evidence bundles</p><div class="kpis"><div class="kpi"><span>Runtimes</span><strong>{len(labels)}</strong><small>verified bundles</small></div><div class="kpi"><span>Shared cells</span><strong>{len(shared)}</strong><small>same plan and workload</small></div><div class="kpi"><span>Highest output rate</span><strong>{float(fastest['output_tokens_per_second']):.3f} tok/s</strong><small>{html.escape(str(fastest['runtime_id']))}</small></div><div class="kpi"><span>Observed speedup</span><strong>{float(fastest.get('throughput_speedup_vs_baseline') or 0):.2f}x</strong><small>versus baseline</small></div><div class="kpi"><span>Error-free rows</span><strong>{error_free}/{len(comparison_rows)}</strong><small>zero measured errors</small></div></div></header><section class="panel"><h2>Throughput comparison</h2><figure><img src="throughput_comparison.svg" alt="Output token throughput comparison"></figure><p class="notice"><strong>Baseline:</strong> {html.escape(labels[0])}. Output tokens/s includes prompt prefill; use each run report for decode-only speed and latency distributions.</p></section><section class="panel"><h2>Exact results</h2><div class="table-wrap"><table><thead><tr><th>Block</th><th>Cell</th><th>Runtime</th><th>TTFT p95</th><th>E2E p99</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>SLO</th><th>Cost</th><th>Currency</th><th>Speedup</th></tr></thead><tbody>{table}</tbody></table></div></section><section class="panel"><h2>Limits</h2><p>{html.escape(str(result['limitations']))}</p><p class="muted">Observed differences are not causal and do not establish response quality, safety or universal capacity.</p></section></body></html>\n''',
     )
     _comparison_pdf(output / "report.pdf", result, comparison_rows)
     write_bundle(output, signing_key_env=signing_key_env)

@@ -13,7 +13,7 @@ protocol so judge latency never contaminates model throughput.
 
 ```bash
 uv sync
-uv run cavada-eval demo
+uv run cavada-eval demo --open
 ```
 
 No model, API key, container, or internet connection is required. The command
@@ -107,6 +107,12 @@ uv run cavada-eval run /path/to/versioned-suite \
 `run` evaluates response behavior with suite metrics and judges. `perf run`
 uses a separate generation-only workload and measures serving performance; it
 does not score response correctness or safety.
+
+For security work, start with the candidate smoke suite above and follow the
+[security evaluation guide](docs/SECURITY_EVALUATION.md). The guide separates
+prompt-observable behavior from supply-chain, access-control, deployment, and
+operational evidence so a passing model response is never reported as complete
+system security.
 
 | Preset | Behavior cases | Target / judge repetitions | Performance scope | Official eligibility |
 | --- | ---: | ---: | --- | --- |

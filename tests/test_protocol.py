@@ -17,6 +17,7 @@ from cavada_eval.profiles import benchmark_preset, canonical_preset, stratified_
 from cavada_eval.protocol import (
     ProtocolError,
     _calibration_evidence_errors,
+    apply_gates,
     deterministic_checks,
     environment_evidence,
     load_suite,
@@ -43,6 +44,16 @@ def test_benchmark_presets_are_canonical_and_group_safe() -> None:
     assert ({"a", "a-variant"} <= {case["id"] for case in selected}) or not ({"a", "a-variant"} & {case["id"] for case in selected})
     assert canonical_preset("full") == "reference"
     assert benchmark_preset("quick")["max_cases"] == 100
+
+
+def test_security_gate_can_target_a_severity_slice(tmp_path: Path) -> None:
+    suite = load_suite(make_suite(tmp_path))
+    suite.config["gates"] = [{"slice": "severity", "value": "critical", "metric": "pass_rate", "min": 1.0}]
+    metrics = {"slices": {"severity": {"critical": {"pass_rate": 0.5}}}}
+
+    assert apply_gates(suite, metrics, []) == [
+        {"category": "severity:critical", "metric": "pass_rate", "minimum": 1.0, "actual": 0.5}
+    ]
 
 
 def test_environment_evidence_records_amd_inventory_without_serials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

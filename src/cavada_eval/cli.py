@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tarfile
+import webbrowser
 from pathlib import Path
 
 from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
@@ -92,7 +93,8 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("name")
     init.add_argument("--suites-root", default="suites")
 
-    commands.add_parser("demo", help="Run the complete deterministic offline demo")
+    demo = commands.add_parser("demo", help="Run the complete deterministic offline demo")
+    demo.add_argument("--open", action="store_true", help="Open the generated public report in the default browser")
 
     commands.add_parser("doctor", help="Check the local repository and security-sensitive settings")
 
@@ -493,7 +495,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True))
             return EXIT_PASS if result["ready"] else EXIT_CONFIGURATION
         if args.command == "demo":
-            print(json.dumps(run_demo(repo, artifact_root=Path.cwd()), indent=2, ensure_ascii=False))
+            result = run_demo(repo, artifact_root=Path.cwd())
+            if args.open:
+                webbrowser.open(Path(str(result["report"])).resolve().as_uri())
+            print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "list":
             rows = []
