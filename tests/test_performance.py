@@ -182,11 +182,16 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     output = tmp_path / "comparison"
     comparison = compare_performance_runs([left_run, right_run], output)
     assert comparison["shared_cells"] == 3 and verify_bundle(output)["valid"]
-    assert "Highest output rate" in (output / "report.html").read_text(encoding="utf-8")
+    assert {"model", "context_tokens", "ttft_p50_ms", "decode_tps_p50", "input_tokens_per_second"} <= set(comparison["rows"][0])
+    comparison_html = (output / "report.html").read_text(encoding="utf-8")
+    assert "Metric matrices" in comparison_html and "Complete results grid" in comparison_html
+    assert "Decode p50" in comparison_html and "position:sticky" in comparison_html
     run_pdf = PdfReader(left_run / "report.pdf")
     comparison_pdf = PdfReader(output / "report.pdf")
     assert len(run_pdf.pages) >= 2 and "Measured performance cells" in "".join(page.extract_text() or "" for page in run_pdf.pages)
-    assert len(comparison_pdf.pages) >= 2 and "Observed comparison" in "".join(page.extract_text() or "" for page in comparison_pdf.pages)
+    comparison_text = "".join(page.extract_text() or "" for page in comparison_pdf.pages)
+    assert len(comparison_pdf.pages) >= 2 and "Observed comparison" in comparison_text
+    assert "TTFT p95 matrix" in comparison_text and "Output throughput matrix" in comparison_text
 
 
 def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> None:

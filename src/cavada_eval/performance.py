@@ -1368,17 +1368,44 @@ def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_
         baseline = cells_by_run[0][key]
         for index, cell_map in enumerate(cells_by_run):
             row = cell_map[key]
+            runtime = manifests[index]["runtime"]
             throughput = float(row.get("output_tokens_per_second", 0))
             baseline_throughput = float(baseline.get("output_tokens_per_second", 0))
-            runtime_pricing = manifests[index]["runtime"].get("pricing")
+            runtime_pricing = runtime.get("pricing")
+            ttft = row.get("ttft_ms") or {}
+            e2e = row.get("e2e_ms") or {}
+            tpot = row.get("tpot_ms") or {}
+            decode = row.get("decode_tokens_per_second") or {}
+
             comparison_rows.append(
                 {
                     "block": key[0],
                     "cell_key": key[1],
                     "runtime_id": labels[index],
-                    "ttft_p95_ms": float((row.get("ttft_ms") or {}).get("p95", 0)),
-                    "e2e_p99_ms": float((row.get("e2e_ms") or {}).get("p99", 0)),
-                    "tpot_p50_ms": float((row.get("tpot_ms") or {}).get("p50", 0)),
+                    "model": str(runtime["expected_model"]),
+                    "quantization": str(runtime["quantization"]),
+                    "gpu_count": int(runtime["gpu_count"]),
+                    "gpu_model": str(runtime["gpu_model"]),
+                    "tensor_parallel": int(runtime["tensor_parallel"]),
+                    "arrival": str(row.get("arrival", "unknown")),
+                    "context_tokens": int(row.get("context_tokens", 0)),
+                    "output_tokens": int(row.get("output_tokens", 0)),
+                    "concurrency": int(row.get("concurrency") or 0),
+                    "request_rate": float(row["request_rate"]) if row.get("request_rate") is not None else None,
+                    "observations": int(row.get("observations", 0)),
+                    "successes": int(row.get("successes", 0)),
+                    "errors": int(row.get("errors", 0)),
+                    "ttft_p50_ms": float(ttft.get("p50", 0)),
+                    "ttft_p95_ms": float(ttft.get("p95", 0)),
+                    "e2e_p50_ms": float(e2e.get("p50", 0)),
+                    "e2e_p95_ms": float(e2e.get("p95", 0)),
+                    "e2e_p99_ms": float(e2e.get("p99", 0)),
+                    "tpot_p50_ms": float(tpot.get("p50", 0)),
+                    "decode_tps_mean": float(decode.get("mean", 0)),
+                    "decode_tps_p50": float(decode.get("p50", 0)),
+                    "decode_tps_p95": float(decode.get("p95", 0)),
+                    "requests_per_second": float(row.get("requests_per_second", 0)),
+                    "input_tokens_per_second": float(row.get("input_tokens_per_second", 0)),
                     "output_tokens_per_second": throughput,
                     "goodput_requests_per_second": float(row.get("goodput_requests_per_second", 0)),
                     "error_rate": float(row.get("error_rate", 0)),
@@ -1391,7 +1418,18 @@ def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_
     result: dict[str, Any] = {
         "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
         "baseline": labels[0],
-        "runs": [{"run_id": manifest["run_id"], "runtime_id": manifest["runtime"]["id"], "bundle_sha256": sha256_file(run_dirs[index] / "bundle.json")} for index, manifest in enumerate(manifests)],
+        "runs": [
+            {
+                "run_id": manifest["run_id"],
+                "runtime_id": manifest["runtime"]["id"],
+                "model": manifest["runtime"]["expected_model"],
+                "quantization": manifest["runtime"]["quantization"],
+                "gpu_count": manifest["runtime"]["gpu_count"],
+                "gpu_model": manifest["runtime"]["gpu_model"],
+                "bundle_sha256": sha256_file(run_dirs[index] / "bundle.json"),
+            }
+            for index, manifest in enumerate(manifests)
+        ],
         "shared_cells": len(shared),
         "rows": comparison_rows,
         "limitations": "Only exact shared cells from identical plan and workload hashes are compared; differences are observational, not causal.",
@@ -1406,15 +1444,86 @@ def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_
         for label in labels
     ]
     _line_svg("Output token throughput comparison", series, output / "throughput_comparison.svg", "Output tokens/s")
-    table = "".join(
-        f"<tr><td>{row['block']}</td><td>{html.escape(row['cell_key'])}</td><td>{html.escape(row['runtime_id'])}</td><td>{row['ttft_p95_ms']:.2f}</td><td>{row['e2e_p99_ms']:.2f}</td><td>{row['output_tokens_per_second']:.2f}</td><td>{row['goodput_requests_per_second']:.3f}</td><td>{row['error_rate']:.4f}</td><td>{row['slo_passed']}</td><td>{format(row['estimated_cost'], '.6f') if row['estimated_cost'] is not None else 'n/a'}</td><td>{html.escape(str(row['cost_currency']))}</td><td>{html.escape(str(row['throughput_speedup_vs_baseline']))}</td></tr>"
+
+    def format_value(value: float, digits: int, percent: bool = False) -> str:
+        return f"{value:.{digits}%}" if percent else f"{value:,.{digits}f}"
+
+    matrix_specs = (
+        ("TTFT p50", "ttft_p50_ms", "ms", 1, False, False),
+        ("TTFT p95", "ttft_p95_ms", "ms", 1, False, False),
+        ("End-to-end p95", "e2e_p95_ms", "ms", 1, False, False),
+        ("Decode p50", "decode_tps_p50", "tok/s", 2, False, True),
+        ("Decode p95", "decode_tps_p95", "tok/s", 2, False, True),
+        ("Output throughput", "output_tokens_per_second", "tok/s", 3, False, True),
+        ("Input throughput", "input_tokens_per_second", "tok/s", 2, False, True),
+        ("Error rate", "error_rate", "%", 2, True, False),
+    )
+    row_lookup = {(str(row["runtime_id"]), int(row["block"]), str(row["cell_key"])): row for row in comparison_rows}
+    cell_labels = {
+        key: f"{int(cells_by_run[0][key].get('context_tokens', 0)):,} ctx · {int(cells_by_run[0][key].get('output_tokens', 0))} out · "
+        + (f"c{int(cells_by_run[0][key]['concurrency'])}" if cells_by_run[0][key].get("concurrency") is not None else f"r{float(cells_by_run[0][key]['request_rate']):g}")
+        for key in shared
+    }
+    matrices: list[str] = []
+    for title, field, unit, digits, percent, higher_is_better in matrix_specs:
+        best_by_cell = {
+            key: (max if higher_is_better else min)(float(row_lookup[(label, key[0], key[1])][field]) for label in labels)
+            for key in shared
+        }
+        matrix_rows = "".join(
+            "<tr><th scope=\"row\"><strong>"
+            + html.escape(str(row_lookup[(label, shared[0][0], shared[0][1])]["model"]))
+            + "</strong><small>"
+            + html.escape(label)
+            + "</small></th>"
+            + "".join(
+                f'<td class="{"best" if float(row_lookup[(label, key[0], key[1])][field]) == best_by_cell[key] else ""}">{format_value(float(row_lookup[(label, key[0], key[1])][field]), digits, percent)}</td>'
+                for key in shared
+            )
+            + "</tr>"
+            for label in labels
+        )
+        matrices.append(
+            f'<article class="matrix"><h3>{html.escape(title)} <small>{html.escape(unit)} · {"higher" if higher_is_better else "lower"} is better</small></h3><div class="table-wrap"><table><thead><tr><th>Model / runtime</th>{"".join(f"<th>{html.escape(cell_labels[key])}</th>" for key in shared)}</tr></thead><tbody>{matrix_rows}</tbody></table></div></article>'
+        )
+
+    exact_rows = "".join(
+        "<tr>"
+        + "".join(
+            f"<td>{html.escape(str(value))}</td>"
+            for value in (
+                row["model"],
+                f"{row['context_tokens']:,}",
+                row["output_tokens"],
+                f"c{row['concurrency']}" if row["concurrency"] else f"r{float(row['request_rate'] or 0):g}",
+                f"{row['gpu_count']} / tp{row['tensor_parallel']}",
+                row["observations"],
+                f"{row['ttft_p50_ms']:,.1f}",
+                f"{row['ttft_p95_ms']:,.1f}",
+                f"{row['e2e_p95_ms']:,.1f}",
+                f"{row['e2e_p99_ms']:,.1f}",
+                f"{row['decode_tps_p50']:,.2f}",
+                f"{row['decode_tps_p95']:,.2f}",
+                f"{row['input_tokens_per_second']:,.2f}",
+                f"{row['output_tokens_per_second']:,.3f}",
+                f"{row['requests_per_second']:,.4f}",
+                f"{row['goodput_requests_per_second']:,.4f}",
+                f"{row['error_rate']:.2%}",
+                row["slo_passed"],
+                f"{float(row['throughput_speedup_vs_baseline'] or 0):.2f}x",
+                row["quantization"],
+                row["runtime_id"],
+                row["gpu_model"],
+            )
+        )
+        + "</tr>"
         for row in comparison_rows
     )
     fastest = max(comparison_rows, key=lambda row: float(row.get("output_tokens_per_second", 0)))
     error_free = sum(float(row.get("error_rate", 0)) == 0 for row in comparison_rows)
     atomic_text(
         output / "report.html",
-        f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs Performance Comparison</title><style>body{{font:15px system-ui;max-width:1400px;margin:0 auto;padding:40px 24px;color:#172033;background:#f4f7fb;line-height:1.5}}header,.panel{{background:white;border:1px solid #dce3ec;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 6px 22px #1720330a}}h1{{margin:0 0 8px;font-size:30px}}h2{{margin-top:0}}.muted{{color:#5d697b}}.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:22px}}.kpi{{border:1px solid #dce3ec;border-radius:10px;padding:14px}}.kpi strong{{display:block;font-size:23px;overflow-wrap:anywhere}}figure{{margin:0;border:1px solid #e1e6ee;border-radius:10px;padding:10px}}img{{width:100%;height:auto;display:block}}table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}}.table-wrap{{overflow:auto}}th,td{{border-bottom:1px solid #dce3ec;padding:9px;text-align:right;white-space:nowrap}}th{{background:#eef3f8}}td:nth-child(2),td:nth-child(3){{text-align:left}}.notice{{border-left:5px solid #b26a00;background:#fff6df;padding:12px 16px}}@media(max-width:700px){{body{{padding:16px 10px}}}}@media print{{body{{background:white;padding:0}}header,.panel{{box-shadow:none}}}}</style></head><body><header><h1>LLM serving comparison</h1><p class="muted">Exact shared cells from verified evidence bundles</p><div class="kpis"><div class="kpi"><span>Runtimes</span><strong>{len(labels)}</strong><small>verified bundles</small></div><div class="kpi"><span>Shared cells</span><strong>{len(shared)}</strong><small>same plan and workload</small></div><div class="kpi"><span>Highest output rate</span><strong>{float(fastest['output_tokens_per_second']):.3f} tok/s</strong><small>{html.escape(str(fastest['runtime_id']))}</small></div><div class="kpi"><span>Observed speedup</span><strong>{float(fastest.get('throughput_speedup_vs_baseline') or 0):.2f}x</strong><small>versus baseline</small></div><div class="kpi"><span>Error-free rows</span><strong>{error_free}/{len(comparison_rows)}</strong><small>zero measured errors</small></div></div></header><section class="panel"><h2>Throughput comparison</h2><figure><img src="throughput_comparison.svg" alt="Output token throughput comparison"></figure><p class="notice"><strong>Baseline:</strong> {html.escape(labels[0])}. Output tokens/s includes prompt prefill; use each run report for decode-only speed and latency distributions.</p></section><section class="panel"><h2>Exact results</h2><div class="table-wrap"><table><thead><tr><th>Block</th><th>Cell</th><th>Runtime</th><th>TTFT p95</th><th>E2E p99</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>SLO</th><th>Cost</th><th>Currency</th><th>Speedup</th></tr></thead><tbody>{table}</tbody></table></div></section><section class="panel"><h2>Limits</h2><p>{html.escape(str(result['limitations']))}</p><p class="muted">Observed differences are not causal and do not establish response quality, safety or universal capacity.</p></section></body></html>\n''',
+        f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs Performance Comparison</title><style>body{{font:15px system-ui;max-width:1600px;margin:0 auto;padding:40px 24px;color:#172033;background:#f4f7fb;line-height:1.5}}header,.panel{{background:white;border:1px solid #dce3ec;border-radius:14px;padding:24px;margin-bottom:20px;box-shadow:0 6px 22px #1720330a}}h1{{margin:0 0 8px;font-size:30px}}h2{{margin-top:0}}h3{{margin:0 0 10px;font-size:16px}}h3 small,.matrix th small{{display:block;color:#5d697b;font-weight:400}}.muted{{color:#5d697b}}.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:22px}}.kpi{{border:1px solid #dce3ec;border-radius:10px;padding:14px}}.kpi strong{{display:block;font-size:23px;overflow-wrap:anywhere}}figure{{margin:0;border:1px solid #e1e6ee;border-radius:10px;padding:10px}}img{{width:100%;height:auto;display:block}}.table-wrap{{overflow:auto;max-height:72vh;border:1px solid #dce3ec;border-radius:8px}}table{{border-collapse:separate;border-spacing:0;width:100%;font-variant-numeric:tabular-nums}}th,td{{border-bottom:1px solid #dce3ec;padding:8px 10px;text-align:right;white-space:nowrap}}thead th{{position:sticky;top:0;z-index:2;background:#eef3f8}}tbody tr:nth-child(even){{background:#f8fafc}}tbody tr:hover{{background:#eef6ff}}th:first-child,td:first-child{{position:sticky;left:0;z-index:1;background:inherit;text-align:left}}thead th:first-child{{z-index:3;background:#eef3f8}}.matrices{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:16px}}.matrix{{min-width:0;border:1px solid #dce3ec;border-radius:10px;padding:14px}}.matrix .table-wrap{{max-height:none}}.matrix th:first-child{{min-width:240px}}.best{{background:#e4f5e9!important;color:#0d5f2a;font-weight:750}}.notice{{border-left:5px solid #b26a00;background:#fff6df;padding:12px 16px}}@media(max-width:700px){{body{{padding:16px 10px}}.matrix th:first-child{{min-width:190px}}}}@media print{{body{{background:white;padding:0}}header,.panel{{box-shadow:none}}.table-wrap{{overflow:visible;max-height:none}}}}</style></head><body><header><h1>LLM serving comparison</h1><p class="muted">Dense, exact shared-cell comparison from verified evidence bundles</p><div class="kpis"><div class="kpi"><span>Runtimes</span><strong>{len(labels)}</strong><small>verified bundles</small></div><div class="kpi"><span>Shared cells</span><strong>{len(shared)}</strong><small>same plan and workload</small></div><div class="kpi"><span>Highest output rate</span><strong>{float(fastest['output_tokens_per_second']):.3f} tok/s</strong><small>{html.escape(str(fastest['runtime_id']))}</small></div><div class="kpi"><span>Observed speedup</span><strong>{float(fastest.get('throughput_speedup_vs_baseline') or 0):.2f}x</strong><small>versus baseline</small></div><div class="kpi"><span>Error-free rows</span><strong>{error_free}/{len(comparison_rows)}</strong><small>zero measured errors</small></div></div></header><section class="panel"><h2>Metric matrices</h2><p class="muted">Models are rows; exact context, requested output and concurrency cells are columns. Green marks the best observed value in each column.</p><div class="matrices">{"".join(matrices)}</div></section><section class="panel"><h2>Complete results grid</h2><p class="muted">Performance columns come first; full runtime and hardware identity remain available at the right. All values are preserved in comparison.csv and comparison.json.</p><div class="table-wrap"><table><thead><tr><th>Model</th><th>Context</th><th>Output</th><th>Load</th><th>GPUs / TP</th><th>N</th><th>TTFT p50 ms</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>E2E p99 ms</th><th>Decode p50</th><th>Decode p95</th><th>Input tok/s</th><th>Output tok/s</th><th>Req/s</th><th>Good req/s</th><th>Error rate</th><th>SLO</th><th>Speedup</th><th>Quant</th><th>Runtime</th><th>GPU model</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section><section class="panel"><h2>Throughput chart</h2><figure><img src="throughput_comparison.svg" alt="Output token throughput comparison"></figure><p class="notice"><strong>Baseline:</strong> {html.escape(labels[0])}. Output tokens/s includes prompt prefill; decode rate starts after the first token.</p></section><section class="panel"><h2>Limits</h2><p>{html.escape(str(result['limitations']))}</p><p class="muted">Observed differences are not causal and do not establish response quality, safety or universal capacity.</p></section></body></html>\n''',
     )
     _comparison_pdf(output / "report.pdf", result, comparison_rows)
     write_bundle(output, signing_key_env=signing_key_env)
@@ -1429,17 +1538,51 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
     error_free = sum(float(row.get("error_rate", 0)) == 0 for row in rows)
     table_rows = [
         [
-            row.get("runtime_id", ""),
-            row.get("cell_key", ""),
+            f"{row.get('model', '')}\n{row.get('runtime_id', '')}",
+            f"{int(row.get('context_tokens', 0)):,}",
+            row.get("observations", 0),
+            f"{float(row.get('ttft_p50_ms', 0)) / 1000:,.2f}",
             f"{float(row.get('ttft_p95_ms', 0)) / 1000:,.2f}",
+            f"{float(row.get('e2e_p95_ms', 0)) / 1000:,.2f}",
             f"{float(row.get('e2e_p99_ms', 0)) / 1000:,.2f}",
-            f"{float(row.get('tpot_p50_ms', 0)):,.2f}",
+            f"{float(row.get('decode_tps_p50', 0)):,.2f}",
+            f"{float(row.get('decode_tps_p95', 0)):,.2f}",
+            f"{float(row.get('input_tokens_per_second', 0)):,.2f}",
             f"{float(row.get('output_tokens_per_second', 0)):,.3f}",
             f"{float(row.get('error_rate', 0)):.1%}",
-            f"{float(row.get('throughput_speedup_vs_baseline') or 0):,.2f}x",
         ]
         for row in rows
     ]
+    runtime_ids = [str(run["runtime_id"]) for run in result.get("runs", [])]
+    cell_keys = list(dict.fromkeys(str(row["cell_key"]) for row in rows))
+    keep_matrix_together = len(runtime_ids) <= 8
+    cell_labels = {
+        key: f"{int(row['context_tokens']):,}/{int(row['output_tokens'])}/"
+        + (f"c{int(row['concurrency'])}" if row["concurrency"] else f"r{float(row['request_rate'] or 0):g}")
+        for key in cell_keys
+        for row in rows
+        if row["cell_key"] == key
+    }
+
+    def matrix(field: str, digits: int, *, percent: bool = False) -> dict[str, Any]:
+        values = {(str(row["runtime_id"]), str(row["cell_key"])): float(row[field]) for row in rows}
+
+        def label(runtime_id: str) -> str:
+            run = next(run for run in result.get("runs", []) if run["runtime_id"] == runtime_id)
+            model = str(run.get("model", runtime_id))
+            gpu = next((part for part in runtime_id.split("-") if part.startswith("gpu") and part[3:].isdigit()), "")
+            return f"{model} [{gpu}]" if gpu else model
+
+        matrix_rows = [
+            [
+                label(runtime_id),
+                *(f"{values[(runtime_id, key)]:.{digits}%}" if percent else f"{values[(runtime_id, key)]:,.{digits}f}" for key in cell_keys),
+            ]
+            for runtime_id in runtime_ids
+        ]
+        cell_width = 134 / len(cell_keys)
+        return {"headers": ["Model", *(cell_labels[key] for key in cell_keys)], "rows": matrix_rows, "widths": [45, *(cell_width for _ in cell_keys)]}
+
     run_rows = [[run.get("runtime_id", "unknown"), run.get("run_id", "unknown"), run.get("bundle_sha256", "unknown")] for run in result.get("runs", [])]
     render_pdf(
         path,
@@ -1469,15 +1612,19 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
             {
                 "title": "Observed comparison",
                 "table": {
-                    "headers": ["Runtime", "Cell", "TTFT p95 s", "E2E p99 s", "TPOT p50 ms", "Output tok/s", "Errors", "Speedup"],
+                    "headers": ["Model / runtime", "Context", "N", "TTFT p50 s", "TTFT p95 s", "E2E p95 s", "E2E p99 s", "Decode p50", "Decode p95", "Input tok/s", "Output tok/s", "Errors"],
                     "rows": table_rows,
-                    "widths": [44, 35, 18, 18, 17, 17, 14, 16],
+                    "widths": [32, 13, 8, 14, 14, 14, 14, 14, 14, 14, 14, 14],
                 },
                 "charts": [
                     {"title": "Campaign output throughput - higher is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("output_tokens_per_second", 0))) for row in rows], "unit": "tok/s"},
                     {"title": "Time to first token p95 - lower is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("ttft_p95_ms", 0)) / 1000) for row in rows], "unit": "s"},
                 ],
             },
+            {"title": "TTFT p95 matrix - milliseconds - lower is better", "keep_together": keep_matrix_together, "table": matrix("ttft_p95_ms", 1)},
+            {"title": "Decode p50 matrix - tokens/s - higher is better", "keep_together": keep_matrix_together, "table": matrix("decode_tps_p50", 2)},
+            {"title": "Output throughput matrix - tokens/s - higher is better", "keep_together": keep_matrix_together, "table": matrix("output_tokens_per_second", 3)},
+            {"title": "Error rate matrix - lower is better", "keep_together": keep_matrix_together, "table": matrix("error_rate", 2, percent=True)},
             {
                 "title": "Methodology and limitations",
                 "paragraphs": [str(result.get("limitations", "Only exact shared cells are compared.")), "This comparison is observational, not causal. Repeat a reference campaign with sufficient observations before publishing model or hardware rankings."],
