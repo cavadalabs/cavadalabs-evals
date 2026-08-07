@@ -1147,6 +1147,31 @@ def _performance_pdf(path: Path, manifest: dict[str, Any], summary: dict[str, An
         ]
         for cell in cells
     ]
+    if len(completed) == 1:
+        cell = completed[0]
+        performance_charts = [
+            {
+                "title": "Time to first token distribution - lower is better",
+                "rows": [(label, percentile(cell, "ttft_ms", key) / 1000) for label, key in (("minimum", "min"), ("p50", "p50"), ("p90", "p90"), ("p95", "p95"), ("maximum", "max"))],
+                "unit": "s",
+            },
+            {
+                "title": "End-to-end latency distribution - lower is better",
+                "rows": [(label, percentile(cell, "e2e_ms", key) / 1000) for label, key in (("minimum", "min"), ("p50", "p50"), ("p90", "p90"), ("p95", "p95"), ("maximum", "max"))],
+                "unit": "s",
+            },
+            {
+                "title": "Decode rate distribution - higher is better",
+                "rows": [(label, percentile(cell, "decode_tokens_per_second", key)) for label, key in (("minimum", "min"), ("p50", "p50"), ("p90", "p90"), ("p95", "p95"), ("maximum", "max"))],
+                "unit": "tok/s",
+            },
+        ]
+    else:
+        performance_charts = [
+            {"title": "Campaign output throughput - higher is better", "rows": [(str(cell.get("cell_key", "cell")), float(cell.get("output_tokens_per_second", 0))) for cell in completed], "unit": "tok/s"},
+            {"title": "Decode rate after first token - higher is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "decode_tokens_per_second", "p50")) for cell in completed], "unit": "tok/s"},
+            {"title": "Time to first token p95 - lower is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "ttft_ms", "p95") / 1000) for cell in completed], "unit": "s"},
+        ]
     warnings = [str(item) for cell in cells for item in cell.get("warnings", [])]
     error_rows = [
         [cell.get("cell_key", ""), cell.get("status", ""), f"{float(cell.get('error_rate', 0)):.1%}", json.dumps(cell.get("error_types") or {}, sort_keys=True)]
@@ -1182,11 +1207,7 @@ def _performance_pdf(path: Path, manifest: dict[str, Any], summary: dict[str, An
                 "rows": cell_rows,
                 "widths": [34, 17, 14, 10, 10, 29, 15, 20, 15, 15],
             },
-            "charts": [
-                {"title": "Campaign output throughput - higher is better", "rows": [(str(cell.get("cell_key", "cell")), float(cell.get("output_tokens_per_second", 0))) for cell in completed], "unit": "tok/s"},
-                {"title": "Decode rate after first token - higher is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "decode_tokens_per_second", "p50")) for cell in completed], "unit": "tok/s"},
-                {"title": "Time to first token p95 - lower is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "ttft_ms", "p95") / 1000) for cell in completed], "unit": "s"},
-            ],
+            "charts": performance_charts,
         },
         {
             "title": "System under test",
