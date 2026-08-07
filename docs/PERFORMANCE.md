@@ -93,6 +93,11 @@ Comparison rejects modified plans/workloads, invalid bundles, duplicate runtime
 IDs, and campaigns with no shared completed cells. Use distinct runtime IDs for
 every model, engine, GPU topology, or material configuration.
 
+The comparison report places models on rows and exact context/output/load cells
+on columns for each primary metric. Its complete grid keeps performance columns
+before long runtime and GPU identity fields; the same exact values remain
+available in `comparison.csv` and `comparison.json`.
+
 ## Artifacts
 
 Each immutable run contains plan/runtime/workload snapshots, `requests.jsonl`,
