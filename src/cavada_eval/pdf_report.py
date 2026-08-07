@@ -189,7 +189,8 @@ def render_pdf(
         if section.get("table"):
             elements.extend([data_table(section["table"]), Spacer(1, 7)])
         for chart in section.get("charts", []):
-            elements.extend([paragraph(chart["title"], ParagraphStyle("ChartTitle", parent=body, fontName="Helvetica-Bold", textColor=navy, spaceBefore=5, spaceAfter=3)), bars(chart), Spacer(1, 6)])
+            chart_title = paragraph(chart["title"], ParagraphStyle("ChartTitle", parent=body, fontName="Helvetica-Bold", textColor=navy, spaceBefore=5, spaceAfter=3))
+            elements.extend([KeepTogether([chart_title, bars(chart)]), Spacer(1, 6)])
         story.append(KeepTogether(elements) if section.get("keep_together", False) else elements[0])
         if not section.get("keep_together", False):
             story.extend(elements[1:])
