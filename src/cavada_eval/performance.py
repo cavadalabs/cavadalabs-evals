@@ -1183,9 +1183,9 @@ def _performance_pdf(path: Path, manifest: dict[str, Any], summary: dict[str, An
                 "widths": [34, 17, 14, 10, 10, 29, 15, 20, 15, 15],
             },
             "charts": [
-                {"title": "Campaign output throughput", "rows": [(str(cell.get("cell_key", "cell")), float(cell.get("output_tokens_per_second", 0))) for cell in completed], "unit": "tok/s"},
-                {"title": "Decode rate after first token", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "decode_tokens_per_second", "p50")) for cell in completed], "unit": "tok/s"},
-                {"title": "Time to first token p95", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "ttft_ms", "p95") / 1000) for cell in completed], "unit": "s"},
+                {"title": "Campaign output throughput - higher is better", "rows": [(str(cell.get("cell_key", "cell")), float(cell.get("output_tokens_per_second", 0))) for cell in completed], "unit": "tok/s"},
+                {"title": "Decode rate after first token - higher is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "decode_tokens_per_second", "p50")) for cell in completed], "unit": "tok/s"},
+                {"title": "Time to first token p95 - lower is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "ttft_ms", "p95") / 1000) for cell in completed], "unit": "s"},
             ],
         },
         {
@@ -1403,8 +1403,8 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
                     "widths": [44, 35, 18, 18, 17, 17, 14, 16],
                 },
                 "charts": [
-                    {"title": "Campaign output throughput", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("output_tokens_per_second", 0))) for row in rows], "unit": "tok/s"},
-                    {"title": "Time to first token p95", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("ttft_p95_ms", 0)) / 1000) for row in rows], "unit": "s"},
+                    {"title": "Campaign output throughput - higher is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("output_tokens_per_second", 0))) for row in rows], "unit": "tok/s"},
+                    {"title": "Time to first token p95 - lower is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("ttft_p95_ms", 0)) / 1000) for row in rows], "unit": "s"},
                 ],
             },
             {
