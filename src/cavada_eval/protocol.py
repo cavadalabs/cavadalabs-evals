@@ -26,7 +26,7 @@ from .profiles import TASK_PROFILES
 
 PROTOCOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "1.0.0"
-REPORT_VERSION = "1.0.0"
+REPORT_VERSION = "1.1.0"
 BEHAVIORS = {"answer", "refuse", "abstain", "redirect", "safe_complete"}
 RISK_DOMAINS = {"quality", "security", "privacy", "safety", "reliability", "performance", "fairness"}
 SEVERITIES = {"low", "medium", "high", "critical"}
@@ -1063,6 +1063,35 @@ def environment_evidence(root: Path) -> dict[str, Any]:
             hardware["gpus"] = [line.strip() for line in gpu.stdout.splitlines() if line.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
+    if "gpus" not in hardware:
+        try:
+            executable = shutil.which("amd-smi")
+            if not executable:
+                raise FileNotFoundError
+            gpu = subprocess.run(  # noqa: S603 -- fixed arguments and a resolved local executable.
+                [executable, "static", "--asic", "--vram", "--json"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+            payload = json.loads(gpu.stdout) if gpu.returncode == 0 else {}
+            rows = payload.get("gpu_data", []) if isinstance(payload, dict) else []
+            inventory = []
+            for row in rows if isinstance(rows, list) else []:
+                asic = row.get("asic", {}) if isinstance(row, dict) else {}
+                vram = row.get("vram", {}) if isinstance(row, dict) else {}
+                size = vram.get("size", {}) if isinstance(vram, dict) else {}
+                if isinstance(asic, dict) and isinstance(size, dict):
+                    inventory.append(
+                        f"{asic.get('market_name', 'AMD GPU')}, {asic.get('target_graphics_version', 'unknown')}, "
+                        f"{size.get('value', 'unknown')} {size.get('unit', '')}, subsystem {asic.get('subsystem_id', 'unknown')}"
+                    )
+            if inventory:
+                hardware["gpus"] = inventory
+                hardware["gpu_inventory_source"] = "amd-smi"
+        except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            pass
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),

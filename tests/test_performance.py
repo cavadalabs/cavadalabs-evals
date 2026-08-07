@@ -6,11 +6,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     _decode_metrics,
+    _performance_pdf,
     compare_performance_runs,
     load_performance_plan,
     load_performance_runtime,
@@ -177,6 +179,68 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     output = tmp_path / "comparison"
     comparison = compare_performance_runs([left_run, right_run], output)
     assert comparison["shared_cells"] == 3 and verify_bundle(output)["valid"]
+    run_pdf = PdfReader(left_run / "report.pdf")
+    comparison_pdf = PdfReader(output / "report.pdf")
+    assert len(run_pdf.pages) >= 2 and "Measured performance cells" in "".join(page.extract_text() or "" for page in run_pdf.pages)
+    assert len(comparison_pdf.pages) >= 2 and "Observed comparison" in "".join(page.extract_text() or "" for page in comparison_pdf.pages)
+
+
+def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> None:
+    cell = {
+        "cell_key": "capacity-128k__ctx129024__out128__c1",
+        "context_tokens": 129024,
+        "output_tokens": 128,
+        "concurrency": 1,
+        "observations": 3,
+        "status": "completed-with-errors",
+        "error_rate": 1.0,
+        "error_types": {"ProtocolError": 3},
+        "warnings": ["no successful observations"],
+        "ttft_ms": {"p95": 0},
+        "decode_tokens_per_second": {"p50": 0},
+        "output_tokens_per_second": 0,
+    }
+    manifest = {
+        "run_id": "failure-run-with-a-long-auditable-identifier",
+        "status": "completed-with-errors",
+        "started_at": "2026-08-06T10:00:00+00:00",
+        "finished_at": "2026-08-06T10:01:00+00:00",
+        "performance_protocol_version": "1.0.1",
+        "plan": {"name": "capacity-128k", "revision": "1.0.0", "sha256": "a" * 64, "data_classification": "synthetic"},
+        "workload": {"id": "long-context", "revision": "1.0.0", "sha256": "b" * 64, "asset_set_sha256": "c" * 64},
+        "runtime": {
+            "id": "model-gpu0-128k",
+            "expected_model": "model",
+            "model_revision": "d" * 64,
+            "model_artifact_revision": "e" * 64,
+            "engine": "engine",
+            "engine_revision": "f" * 64,
+            "quantization": "Q4",
+            "dtype": "f16",
+            "gpu_count": 1,
+            "gpu_model": "test GPU",
+            "tensor_parallel": 1,
+            "max_context_tokens": 131072,
+            "endpoint": "http://127.0.0.1:8000/v1",
+            "launch_command_sanitized": "engine --api-key REDACTED",
+        },
+        "cells": {"slo_passed": 0, "slo_failed": 1},
+        "warmups": {"successes": 0, "errors": 1},
+        "source": {"commit": "1" * 40, "dirty": False},
+    }
+    summary = {
+        "observations": 3,
+        "successes": 0,
+        "errors": 3,
+        "best_goodput_cell": cell,
+        "campaign_token_usage": {"input": 0},
+        "limitations": ["Small sample."],
+    }
+    output = tmp_path / "failure.pdf"
+    _performance_pdf(output, manifest, summary, [cell])
+    reader = PdfReader(output)
+    text = "".join(page.extract_text() or "" for page in reader.pages)
+    assert len(reader.pages) >= 2 and "RUN CONTAINS ERRORS" in text and "ProtocolError" in text
 
 
 def test_performance_plan_fails_closed_before_network(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle, write_bundle
+from .pdf_report import render_pdf, require_pdf_support
 from .protocol import (
     ProtocolError,
     append_jsonl,
@@ -31,14 +32,13 @@ from .protocol import (
     sha256_bytes,
     sha256_file,
 )
-from .reporting import _pdf
 from .runner import _completion_url, _manifest_endpoint, _post_openai_stream, _secure_endpoint
 from .statistics import distribution, percentile
 
 PERFORMANCE_PROTOCOL_VERSION = "1.0.1"
 PERFORMANCE_PLAN_VERSION = "1.0.0"
 PERFORMANCE_RUNTIME_VERSION = "1.0.0"
-PERFORMANCE_REPORT_VERSION = "1.0.0"
+PERFORMANCE_REPORT_VERSION = "1.1.0"
 MAX_WORKLOAD_BYTES = 32 * 1024 * 1024
 MAX_PROMPT_BYTES = 16 * 1024 * 1024
 
@@ -676,6 +676,7 @@ def run_performance_campaign(
     signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY",
     signing_key_id: str = "",
 ) -> Path:
+    require_pdf_support()
     config = plan.config
     runtime_config = runtime.config
     api_key = os.getenv(str(runtime_config["api_key_env"]), "")
@@ -1114,21 +1115,159 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
     )
     document = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs LLM Performance Report</title><style>body{{font:15px system-ui;max-width:1400px;margin:36px auto;color:#172033}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #bbc3ce;padding:6px;text-align:right}}th:nth-child(2),td:nth-child(2){{text-align:left}}img{{width:100%;height:auto}}code{{background:#eef2f6;padding:2px 4px}}</style><h1>CavadaLabs LLM Performance Report</h1><p>Run <code>{html.escape(manifest['run_id'])}</code>; runtime <code>{html.escape(str(manifest['runtime']['id']))}</code>; execution status <strong>{html.escape(manifest['status'])}</strong>. SLO-passing cells: {manifest['cells']['slo_passed']} of {manifest['cells']['slo_passed'] + manifest['cells']['slo_failed']} evaluated. Warm-up errors: {manifest['warmups']['errors']} of {manifest['warmups']['total']}.</p><p>Plan SHA-256: <code>{manifest['plan']['sha256']}</code>. Workload SHA-256: <code>{manifest['workload']['sha256']}</code>.</p><h2>Charts</h2><img src="figures/ttft.svg" alt="TTFT p95 chart"><img src="figures/e2e.svg" alt="End-to-end p99 chart"><img src="figures/throughput.svg" alt="Output token throughput chart"><img src="figures/goodput.svg" alt="SLO goodput chart"><h2>Comparable cells</h2><table><thead><tr><th>Block</th><th>Cell</th><th>Status</th><th>SLO</th><th>N</th><th>TTFT p95 ms</th><th>E2E p99 ms</th><th>TPOT p50 ms</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>{html.escape(cost_heading)}</th></tr></thead><tbody>{table_rows}</tbody></table><h2>Limitations</h2><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in summary['limitations'])}</ul></html>\n'''
     atomic_text(run_dir / "report.html", document)
-    _pdf(
-        run_dir / "report.pdf",
-        "CavadaLabs LLM Performance Report",
+    _performance_pdf(run_dir / "report.pdf", manifest, summary, cells)
+
+
+def _performance_pdf(path: Path, manifest: dict[str, Any], summary: dict[str, Any], cells: list[dict[str, Any]]) -> None:
+    runtime = manifest.get("runtime") or {}
+    plan = manifest.get("plan") or {}
+    workload = manifest.get("workload") or {}
+    completed = [cell for cell in cells if cell.get("status") in {"completed", "completed-with-errors"}]
+    observations = int(summary.get("observations", 0))
+    errors = int(summary.get("errors", 0))
+    evaluated = int((manifest.get("cells") or {}).get("slo_passed", 0)) + int((manifest.get("cells") or {}).get("slo_failed", 0))
+    best = summary.get("best_goodput_cell") or {}
+
+    def percentile(row: dict[str, Any], metric: str, name: str) -> float:
+        value = (row.get(metric) or {}).get(name, 0)
+        return float(value) if isinstance(value, (int, float)) else 0.0
+
+    cell_rows = [
         [
-            f"Run: {manifest['run_id']}",
-            f"Runtime: {manifest['runtime']['id']}",
-            f"Status: {manifest['status']}",
-            f"Cells: {manifest['cells']}",
-            f"Observations: {summary['observations']}",
-            "See cells.csv, summary.json, and report.html for complete measurements and limitations.",
+            cell.get("cell_key", ""),
+            f"{int(cell.get('context_tokens', 0)):,}",
+            cell.get("output_tokens", 0),
+            cell.get("concurrency", "-"),
+            cell.get("observations", 0),
+            cell.get("status", "unknown"),
+            f"{float(cell.get('error_rate', 0)):.1%}",
+            f"{percentile(cell, 'ttft_ms', 'p95') / 1000:,.2f}",
+            f"{percentile(cell, 'decode_tokens_per_second', 'p50'):,.2f}",
+            f"{float(cell.get('output_tokens_per_second', 0)):,.3f}",
+        ]
+        for cell in cells
+    ]
+    warnings = [str(item) for cell in cells for item in cell.get("warnings", [])]
+    error_rows = [
+        [cell.get("cell_key", ""), cell.get("status", ""), f"{float(cell.get('error_rate', 0)):.1%}", json.dumps(cell.get("error_types") or {}, sort_keys=True)]
+        for cell in cells
+        if cell.get("status") == "completed-with-errors" or cell.get("error_types")
+    ]
+    if errors:
+        interpretation = "RUN CONTAINS ERRORS. Treat this bundle as failure evidence; do not include it in successful model averages or rankings."
+    elif observations < 30:
+        interpretation = f"Small measured sample: {observations} observations. This is a smoke or capacity check, not statistically strong reference evidence."
+    else:
+        interpretation = "The run completed without measured request errors. Interpret every result within the exact plan, workload, runtime, and hardware scope recorded below."
+    cost = manifest.get("estimated_cost") or {}
+    cost_text = f"{float(cost.get('amount', 0)):,.4f} {cost.get('currency', '')}" if isinstance(cost, dict) else "not configured"
+    sections: list[dict[str, Any]] = [
+        {
+            "title": "Executive interpretation",
+            "paragraphs": [interpretation],
+            "warning": "Performance evidence does not establish response quality, safety, compliance, energy use, or universal deployment capacity.",
+            "key_values": [
+                ("Plan", f"{plan.get('name', 'unknown')}@{plan.get('revision', 'unknown')}"),
+                ("Workload", f"{workload.get('id', 'unknown')}@{workload.get('revision', 'unknown')}"),
+                ("Arrival", best.get("arrival", "mixed")),
+                ("Warm-up", f"{(manifest.get('warmups') or {}).get('successes', 0)} success / {(manifest.get('warmups') or {}).get('errors', 0)} errors"),
+                ("Measured requests", observations),
+                ("Estimated cost", cost_text),
+            ],
+        },
+        {
+            "title": "Measured performance cells",
+            "table": {
+                "headers": ["Cell", "Context", "Output", "C", "N", "Status", "Errors", "TTFT p95 s", "Decode tok/s", "Output tok/s"],
+                "rows": cell_rows,
+                "widths": [34, 17, 14, 10, 10, 29, 15, 20, 15, 15],
+            },
+            "charts": [
+                {"title": "Campaign output throughput - higher is better", "rows": [(str(cell.get("cell_key", "cell")), float(cell.get("output_tokens_per_second", 0))) for cell in completed], "unit": "tok/s"},
+                {"title": "Decode rate after first token - higher is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "decode_tokens_per_second", "p50")) for cell in completed], "unit": "tok/s"},
+                {"title": "Time to first token p95 - lower is better", "rows": [(str(cell.get("cell_key", "cell")), percentile(cell, "ttft_ms", "p95") / 1000) for cell in completed], "unit": "s"},
+            ],
+        },
+        {
+            "title": "System under test",
+            "key_values": [
+                ("Runtime ID", runtime.get("id", "unknown")),
+                ("Expected model", runtime.get("expected_model", "unknown")),
+                ("Model revision", runtime.get("model_revision", "unknown")),
+                ("Model artifact", runtime.get("model_artifact_revision", "unknown")),
+                ("Engine", f"{runtime.get('engine', 'unknown')} / {runtime.get('engine_revision', 'unknown')}"),
+                ("Quantization / dtype", f"{runtime.get('quantization', 'unknown')} / {runtime.get('dtype', 'unknown')}"),
+                ("GPU", f"{runtime.get('gpu_count', 'unknown')} x {runtime.get('gpu_model', 'unknown')}"),
+                ("Tensor parallel", runtime.get("tensor_parallel", "unknown")),
+                ("Maximum context", f"{int(runtime.get('max_context_tokens', 0)):,} tokens"),
+                ("Endpoint", runtime.get("endpoint", "redacted")),
+                ("Launch command", runtime.get("launch_command_sanitized", "not recorded")),
+            ],
+        },
+        {
+            "title": "Protocol and reproducibility",
+            "paragraphs": [
+                "Warm-up observations are separate from measured observations. Measured requests are not silently retried. Provider-reported token usage is used for official performance evidence.",
+                "Only runs with identical plan, workload, and asset-set hashes have exact comparable cells. Differences remain observational and cannot be attributed to one component without controlled experiments.",
+            ],
+            "key_values": [
+                ("Performance protocol", manifest.get("performance_protocol_version", "unknown")),
+                ("Plan SHA-256", plan.get("sha256", "unknown")),
+                ("Workload SHA-256", workload.get("sha256", "unknown")),
+                ("Asset-set SHA-256", workload.get("asset_set_sha256", "unknown")),
+                ("Source commit", (manifest.get("source") or {}).get("commit", "unknown")),
+                ("Source dirty", (manifest.get("source") or {}).get("dirty", "unknown")),
+            ],
+        },
+    ]
+    if error_rows or warnings:
+        sections.append(
+            {
+                "title": "Errors and warnings",
+                "keep_together": True,
+                "warning": interpretation if errors else "Warnings affect interpretation and remain part of the evidence bundle.",
+                "paragraphs": warnings or ["No cell warning was recorded."],
+                "table": {"headers": ["Cell", "Status", "Error rate", "Error types"], "rows": error_rows or [["All", "completed", "0.0%", "none"]], "widths": [60, 35, 25, 59]},
+            }
+        )
+    sections.append(
+        {
+            "title": "Limitations",
+            "paragraphs": [str(item) for item in summary.get("limitations", [])]
+            + ["High-percentile estimates are weakly resolved when observation counts are small. Repeat reference campaigns with sufficient duration and observations before publishing rankings."],
+        }
+    )
+    render_pdf(
+        path,
+        title="LLM Serving Performance Report",
+        subtitle=f"{runtime.get('expected_model', 'unknown')} / {int(best.get('context_tokens', runtime.get('max_context_tokens', 0))):,} measured context / {runtime.get('gpu_count', 'unknown')} GPU",
+        status=str(manifest.get("status", "unknown")),
+        report_id=str(manifest.get("run_id", "unknown")),
+        classification=str(plan.get("data_classification", "restricted")),
+        scope="Client-side serving performance for the exact runtime and workload; response quality and universal capacity are outside scope.",
+        kpis=[
+            ("Observations", f"{observations:,}", f"{summary.get('successes', 0)} success / {errors} errors"),
+            ("SLO cells", f"{(manifest.get('cells') or {}).get('slo_passed', 0)}/{evaluated}", "evaluated cells"),
+            ("Input tokens", f"{float((summary.get('campaign_token_usage') or {}).get('input', 0)):,.0f}", "warm-up included"),
+            ("Decode p50", f"{percentile(best, 'decode_tokens_per_second', 'p50'):,.2f} tok/s", "best-goodput cell"),
+            ("TTFT p95", f"{percentile(best, 'ttft_ms', 'p95') / 1000:,.2f} s", "best-goodput cell"),
+            ("Output throughput", f"{float(best.get('output_tokens_per_second', 0)):,.3f} tok/s", "prefill included"),
         ],
+        sections=sections,
+        metadata={
+            "Run ID": str(manifest.get("run_id", "unknown")),
+            "Status": str(manifest.get("status", "unknown")),
+            "Started": str(manifest.get("started_at", "unknown")),
+            "Finished": str(manifest.get("finished_at", "unknown")),
+            "Runtime": str(runtime.get("id", "unknown")),
+            "Plan SHA-256": str(plan.get("sha256", "unknown")),
+            "Workload SHA-256": str(workload.get("sha256", "unknown")),
+        },
     )
 
 
 def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY") -> dict[str, Any]:
+    require_pdf_support()
     if len(run_dirs) < 2:
         raise ProtocolError("performance comparison requires at least two runs")
     if output.exists():
@@ -1206,8 +1345,82 @@ def compare_performance_runs(run_dirs: list[Path], output: Path, *, signing_key_
         output / "report.html",
         f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'"><title>CavadaLabs Performance Comparison</title><style>body{{font:15px system-ui;max-width:1400px;margin:36px auto}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #bbb;padding:6px;text-align:right}}td:nth-child(2),td:nth-child(3){{text-align:left}}img{{width:100%}}</style><h1>CavadaLabs Performance Comparison</h1><p>Baseline: <strong>{html.escape(labels[0])}</strong>. Shared cells: {len(shared)}.</p><img src="throughput_comparison.svg" alt="Output token throughput comparison"><table><thead><tr><th>Block</th><th>Cell</th><th>Runtime</th><th>TTFT p95</th><th>E2E p99</th><th>Output tok/s</th><th>Good req/s</th><th>Error rate</th><th>SLO</th><th>Cost</th><th>Currency</th><th>Speedup</th></tr></thead><tbody>{table}</tbody></table><p>{html.escape(str(result['limitations']))}</p></html>\n''',
     )
-    _pdf(output / "report.pdf", "CavadaLabs Performance Comparison", [f"Baseline: {labels[0]}", f"Runs: {', '.join(labels)}", f"Shared cells: {len(shared)}", str(result["limitations"])])
+    _comparison_pdf(output / "report.pdf", result, comparison_rows)
     write_bundle(output, signing_key_env=signing_key_env)
     if not verify_bundle(output, signing_key_env=signing_key_env)["valid"]:
         raise ProtocolError("performance comparison bundle verification failed")
     return result
+
+
+def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    baseline = str(result["baseline"])
+    best = max(rows, key=lambda row: float(row.get("output_tokens_per_second", 0)))
+    error_free = sum(float(row.get("error_rate", 0)) == 0 for row in rows)
+    table_rows = [
+        [
+            row.get("runtime_id", ""),
+            row.get("cell_key", ""),
+            f"{float(row.get('ttft_p95_ms', 0)) / 1000:,.2f}",
+            f"{float(row.get('e2e_p99_ms', 0)) / 1000:,.2f}",
+            f"{float(row.get('tpot_p50_ms', 0)):,.2f}",
+            f"{float(row.get('output_tokens_per_second', 0)):,.3f}",
+            f"{float(row.get('error_rate', 0)):.1%}",
+            f"{float(row.get('throughput_speedup_vs_baseline') or 0):,.2f}x",
+        ]
+        for row in rows
+    ]
+    run_rows = [[run.get("runtime_id", "unknown"), run.get("run_id", "unknown"), run.get("bundle_sha256", "unknown")] for run in result.get("runs", [])]
+    render_pdf(
+        path,
+        title="LLM Serving Performance Comparison",
+        subtitle=f"{len(result.get('runs', []))} runtimes / {result.get('shared_cells', 0)} exact shared cells",
+        status="observational comparison",
+        report_id=f"comparison / {baseline}",
+        classification="RESTRICTED",
+        scope="Exact shared-cell comparison of verified bundles. Observed differences are not causal and do not establish quality, safety, or universal capacity.",
+        kpis=[
+            ("Runtimes", f"{len(result.get('runs', [])):,}", "verified bundles"),
+            ("Shared cells", f"{int(result.get('shared_cells', 0)):,}", "identical plan and workload"),
+            ("Error-free rows", f"{error_free}/{len(rows)}", "zero measured errors"),
+            ("Highest output rate", f"{float(best.get('output_tokens_per_second', 0)):,.3f} tok/s", str(best.get("runtime_id", "unknown"))),
+            ("Observed speedup", f"{float(best.get('throughput_speedup_vs_baseline') or 0):,.2f}x", "versus declared baseline"),
+            ("Baseline", "1.00x", baseline),
+        ],
+        sections=[
+            {
+                "title": "Executive interpretation",
+                "paragraphs": [
+                    f"The highest observed campaign output rate is {float(best.get('output_tokens_per_second', 0)):,.3f} tok/s for {best.get('runtime_id', 'unknown')}, or {float(best.get('throughput_speedup_vs_baseline') or 0):,.2f}x the declared baseline.",
+                    "Campaign output tokens/s includes prompt prefill and differs from decode tokens/s measured after the first token. Use the detailed run reports when interpreting model generation speed.",
+                ],
+                "warning": "Only exact shared cells are shown. Hardware, runtime, model, engine, and host differences remain confounded unless the experiment controls them independently.",
+            },
+            {
+                "title": "Observed comparison",
+                "table": {
+                    "headers": ["Runtime", "Cell", "TTFT p95 s", "E2E p99 s", "TPOT p50 ms", "Output tok/s", "Errors", "Speedup"],
+                    "rows": table_rows,
+                    "widths": [44, 35, 18, 18, 17, 17, 14, 16],
+                },
+                "charts": [
+                    {"title": "Campaign output throughput - higher is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("output_tokens_per_second", 0))) for row in rows], "unit": "tok/s"},
+                    {"title": "Time to first token p95 - lower is better", "rows": [(str(row.get("runtime_id", "runtime")), float(row.get("ttft_p95_ms", 0)) / 1000) for row in rows], "unit": "s"},
+                ],
+            },
+            {
+                "title": "Methodology and limitations",
+                "paragraphs": [str(result.get("limitations", "Only exact shared cells are compared.")), "This comparison is observational, not causal. Repeat a reference campaign with sufficient observations before publishing model or hardware rankings."],
+                "key_values": [("Baseline", baseline), ("Performance protocol", result.get("performance_protocol_version", "unknown")), ("Shared cells", result.get("shared_cells", 0))],
+            },
+            {
+                "title": "Source bundles",
+                "table": {"headers": ["Runtime", "Run ID", "Bundle SHA-256"], "rows": run_rows, "widths": [50, 70, 59]},
+            },
+        ],
+        metadata={
+            "Baseline": baseline,
+            "Runtimes": str(len(result.get("runs", []))),
+            "Shared cells": str(result.get("shared_cells", 0)),
+            "Protocol": str(result.get("performance_protocol_version", "unknown")),
+        },
+    )
