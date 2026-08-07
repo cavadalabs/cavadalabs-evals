@@ -20,6 +20,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+reports = ["reportlab>=4.4,<5"]
+
 [project.urls]
 Homepage = "https://github.com/cavadalabs/cavadalabs-evals"
 Documentation = "https://github.com/cavadalabs/cavadalabs-evals#readme"
@@ -30,7 +33,7 @@ Issues = "https://github.com/cavadalabs/cavadalabs-evals/issues"
 cavada-eval = "cavada_eval.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.12,<1", "mypy>=1.15,<2"]
+dev = ["pypdf>=6,<7", "pytest>=8.3", "reportlab>=4.4,<5", "ruff>=0.12,<1", "mypy>=1.15,<2"]
 deepeval = ["deepeval>=3,<4"]
 
 [build-system]

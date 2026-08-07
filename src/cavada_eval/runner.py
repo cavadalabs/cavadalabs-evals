@@ -21,6 +21,7 @@ from .assets import asset_inventory, content_text, encoded_content, encoded_mess
 from .calibration import judge_evidence_errors
 from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
 from .metrics import METRIC_VERSION, deterministic_evaluation
+from .pdf_report import require_pdf_support
 from .profiles import ADAPTER_CONTRACT_VERSION, BENCHMARK_PRESET_VERSION, canonical_preset, stratified_cases
 from .protocol import (
     PROTOCOL_VERSION,
@@ -673,6 +674,7 @@ def run(
     engagement: str = "",
     preset: str = "",
 ) -> Path:
+    require_pdf_support()
     try:
         preset = canonical_preset(preset)
     except ValueError as exc:

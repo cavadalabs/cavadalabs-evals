@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 
 from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import _doctor
@@ -17,6 +18,7 @@ from cavada_eval.protocol import (
     ProtocolError,
     _calibration_evidence_errors,
     deterministic_checks,
+    environment_evidence,
     load_suite,
     new_run_dir,
     semantic_duplicate_candidates,
@@ -41,6 +43,33 @@ def test_benchmark_presets_are_canonical_and_group_safe() -> None:
     assert ({"a", "a-variant"} <= {case["id"] for case in selected}) or not ({"a", "a-variant"} & {case["id"] for case in selected})
     assert canonical_preset("full") == "reference"
     assert benchmark_preset("quick")["max_cases"] == 100
+
+
+def test_environment_evidence_records_amd_inventory_without_serials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "gpu_data": [
+            {
+                "gpu": 0,
+                "asic": {
+                    "market_name": "Radeon RX 7900 XTX",
+                    "target_graphics_version": "gfx1100",
+                    "subsystem_id": "0x7901",
+                    "asic_serial": "private-serial",
+                },
+                "vram": {"size": {"value": 24560, "unit": "MB"}},
+            }
+        ]
+    }
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "amd-smi" else None)
+    monkeypatch.setattr(
+        "cavada_eval.protocol.subprocess.run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": json.dumps(payload)})(),
+    )
+
+    hardware = environment_evidence(tmp_path)["hardware"]
+    assert hardware["gpu_inventory_source"] == "amd-smi"
+    assert hardware["gpus"] == ["Radeon RX 7900 XTX, gfx1100, 24560 MB, subsystem 0x7901"]
+    assert "private-serial" not in json.dumps(hardware)
 
 
 def make_suite(tmp_path: Path, *, status: str = "approved", review: str = "approved") -> Path:
@@ -354,6 +383,9 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
         "figures/latency.svg",
     } <= set(manifest["artifacts"])
     assert verify_bundle(run_dir)["valid"] is True
+    report = PdfReader(run_dir / "report.pdf")
+    report_text = "".join(page.extract_text() or "" for page in report.pages)
+    assert len(report.pages) >= 2 and "Executive interpretation" in report_text and "Evidence metadata" in report_text
     control_report = generate_control_report(
         run_dir,
         Path("standards/control_catalog.toml"),
@@ -361,4 +393,3 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
     )
     ai_record = next(item for item in control_report["controls"] if item["control_id"] == "AI-ACT-12")
     assert ai_record["source_application"].startswith("Generally applicable since 2026-08-02")
-
