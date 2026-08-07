@@ -392,6 +392,22 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         errors.append(f"suite.status must be one of {sorted(SUITE_STATUSES)}")
     if config.get("data_classification") not in DATA_CLASSES:
         errors.append(f"suite.data_classification must be one of {sorted(DATA_CLASSES)}")
+    for index, gate in enumerate(config.get("gates", [])):
+        if not isinstance(gate, dict):
+            errors.append(f"gates[{index}] must be a table")
+            continue
+        category, slice_name, slice_value = gate.get("category"), gate.get("slice"), gate.get("value")
+        if category and slice_name:
+            errors.append(f"gates[{index}] cannot target both category and slice")
+        if slice_name not in {None, "risk_domain", "severity", "language", "locale", "split", "operating_condition"}:
+            errors.append(f"gates[{index}].slice is unsupported")
+        if bool(slice_name) != bool(isinstance(slice_value, str) and slice_value):
+            errors.append(f"gates[{index}] slice gates require both slice and value")
+        if not isinstance(gate.get("metric"), str) or not gate["metric"]:
+            errors.append(f"gates[{index}].metric must be a non-empty string")
+        minimum = gate.get("min")
+        if not isinstance(minimum, (int, float)) or isinstance(minimum, bool) or not math.isfinite(float(minimum)):
+            errors.append(f"gates[{index}].min must be a finite number")
     profile = config.get("profile", "text-generation")
     if profile not in TASK_PROFILES:
         errors.append(f"suite.profile must be one of {sorted(TASK_PROFILES)}")

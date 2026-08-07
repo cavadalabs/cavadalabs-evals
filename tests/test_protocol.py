@@ -25,6 +25,7 @@ from cavada_eval.protocol import (
     semantic_duplicate_candidates,
     sha256_file,
     summarize,
+    validate_suite,
     wilson_interval,
 )
 from cavada_eval.runner import _judge_result, _manifest_endpoint, run
@@ -54,6 +55,8 @@ def test_security_gate_can_target_a_severity_slice(tmp_path: Path) -> None:
     assert apply_gates(suite, metrics, []) == [
         {"category": "severity:critical", "metric": "pass_rate", "minimum": 1.0, "actual": 0.5}
     ]
+    suite.config["gates"] = [{"slice": "severity", "metric": "pass_rate", "min": 1.0}]
+    assert "gates[0] slice gates require both slice and value" in validate_suite(suite)
 
 
 def test_environment_evidence_records_amd_inventory_without_serials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,6 +75,7 @@ def test_environment_evidence_records_amd_inventory_without_serials(tmp_path: Pa
         ]
     }
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}" if name == "amd-smi" else None)
+    monkeypatch.setattr("cavada_eval.protocol.platform.platform", lambda: "test-platform")
     monkeypatch.setattr(
         "cavada_eval.protocol.subprocess.run",
         lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": json.dumps(payload)})(),
