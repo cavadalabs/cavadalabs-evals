@@ -38,7 +38,7 @@ from .statistics import distribution, percentile
 PERFORMANCE_PROTOCOL_VERSION = "1.1.0"
 PERFORMANCE_PLAN_VERSION = "1.0.0"
 PERFORMANCE_RUNTIME_VERSION = "1.0.0"
-PERFORMANCE_REPORT_VERSION = "1.3.0"
+PERFORMANCE_REPORT_VERSION = "1.3.1"
 MAX_WORKLOAD_BYTES = 32 * 1024 * 1024
 MAX_PROMPT_BYTES = 16 * 1024 * 1024
 
@@ -2066,6 +2066,8 @@ def build_performance_matrix(
             client_generation = cell.get("decode_tokens_per_second") or {}
             ttft = cell.get("ttft_ms") or {}
             e2e = cell.get("e2e_ms") or {}
+            input_tokens = cell.get("input_tokens") or {}
+            actual_output_tokens = cell.get("actual_output_tokens") or {}
             agreement = cell.get("decode_rate_relative_difference") or {}
             load = f"c{int(cell['concurrency'])}" if cell.get("concurrency") is not None else f"r{float(cell.get('request_rate') or 0):g}"
             identity = (
@@ -2111,6 +2113,12 @@ def build_performance_matrix(
                 "server_context_tokens": int(runtime["max_context_tokens"]),
                 "context_tokens": int(cell["context_tokens"]),
                 "output_tokens": int(cell["output_tokens"]),
+                "actual_input_tokens_p50": float(input_tokens.get("p50", 0)),
+                "actual_input_tokens_min": float(input_tokens.get("min", 0)),
+                "actual_input_tokens_max": float(input_tokens.get("max", 0)),
+                "actual_output_tokens_p50": float(actual_output_tokens.get("p50", 0)),
+                "actual_output_tokens_min": float(actual_output_tokens.get("min", 0)),
+                "actual_output_tokens_max": float(actual_output_tokens.get("max", 0)),
                 "arrival": str(cell["arrival"]),
                 "load": load,
                 "observations": int(cell.get("observations", 0)),
@@ -2261,7 +2269,7 @@ def build_performance_matrix(
         return f"{identity[0]} · {identity[2]} · {identity[3]} GPU / tp{identity[4]}"
 
     def cell_label(cell: tuple[int, int, int, str, str]) -> str:
-        return f"{cell[0]:,} server · {cell[1]:,} prompt · {cell[2]} out · {cell[4]}"
+        return f"{cell[0]:,} server · {cell[1]:,} target · {cell[2]} out · {cell[4]}"
 
     def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, int, str, str]) -> dict[str, Any] | None:
         return lookup.get((*identity, *cell))
@@ -2319,6 +2327,43 @@ def build_performance_matrix(
 
     matrix_articles: list[str] = []
     pdf_sections: list[dict[str, Any]] = []
+    token_html_rows: list[str] = []
+    token_pdf_rows: list[list[str]] = []
+    for identity in identities:
+        html_values: list[str] = []
+        pdf_values: list[str] = []
+        for cell in cells:
+            candidate = matrix_value(identity, cell)
+            if candidate is None:
+                display = "—"
+                css = "missing"
+            elif not candidate["eligible"]:
+                display = "INVALID"
+                css = "invalid"
+            else:
+                display = f"{candidate['actual_input_tokens_p50']:,.0f} / {candidate['actual_output_tokens_p50']:,.0f}"
+                css = ""
+            html_values.append(f'<td class="{css}">{html.escape(display)}</td>')
+            pdf_values.append(display)
+        label = identity_label(identity)
+        token_html_rows.append(f"<tr><th>{html.escape(label)}</th>{''.join(html_values)}</tr>")
+        token_pdf_rows.append([label, *pdf_values])
+    matrix_articles.append(
+        '<article class="matrix"><h3>Actual token accounting <small>input p50 / output p50 · provider counts</small></h3>'
+        f'<div class="table-wrap"><table><thead><tr><th>Model / topology</th>{"".join(f"<th>{html.escape(cell_label(cell))}</th>" for cell in cells)}</tr></thead>'
+        f"<tbody>{''.join(token_html_rows)}</tbody></table></div></article>"
+    )
+    token_cell_width = 124 / max(1, len(cells))
+    pdf_sections.append(
+        {
+            "title": "Actual token accounting · input p50 / output p50 · provider counts",
+            "table": {
+                "headers": ["Model / topology", *(cell_label(cell) for cell in cells)],
+                "rows": token_pdf_rows,
+                "widths": [55, *(token_cell_width for _ in cells)],
+            },
+        }
+    )
     for title, field, unit, digits, higher_is_better in specs:
         best_by_cell: dict[tuple[int, int, int, str, str], float] = {}
         for cell in cells:
@@ -2378,6 +2423,8 @@ def build_performance_matrix(
                 f"{row['server_context_tokens']:,}",
                 f"{row['context_tokens']:,}",
                 row["output_tokens"],
+                f"{row['actual_input_tokens_p50']:,.0f}",
+                f"{row['actual_output_tokens_p50']:,.0f}",
                 row["observations"],
                 row["eligible"],
                 f"{row['server_generation_tps_p50']:.2f}",
@@ -2430,7 +2477,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
 <section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Hardware energy spans the recorded benchmark lifecycle and is not a wall-plug measurement. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
 <section class="panel"><h2>Performance curves</h2><div class="charts">{"".join(figure_cards)}</div></section>
 <section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
-<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Server context</th><th>Prompt input</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
+<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Server context</th><th>Prompt target</th><th>Output request</th><th>Actual input p50</th><th>Actual output p50</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
 <section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
 </body></html>\n"""
     atomic_text(output / "report.html", matrix_html)

@@ -250,15 +250,18 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     matrix_result = build_performance_matrix([left_run, right_run], matrix_output)
     assert matrix_result["status"] == "completed" and matrix_result["eligible_cells"] == 6
     assert all(row["server_context_tokens"] == 10 for row in matrix_result["rows"])
+    assert all(row["actual_input_tokens_p50"] == 8 and row["actual_output_tokens_p50"] == 2 for row in matrix_result["rows"])
     assert verify_bundle(matrix_output)["valid"]
     matrix_html = (matrix_output / "report.html").read_text(encoding="utf-8")
     assert "Server generation p50" in matrix_html and "Complete exact results" in matrix_html
-    assert "Server context" in matrix_html and "Prompt input" in matrix_html
+    assert "Server context" in matrix_html and "Prompt target" in matrix_html
+    assert "Actual token accounting" in matrix_html and "Actual input p50" in matrix_html
     assert "Performance curves" in matrix_html and (matrix_output / "figures" / "generation-1gpu.svg").is_file()
     assert "<circle" in (matrix_output / "figures" / "generation-1gpu.svg").read_text(encoding="utf-8")
     matrix_pdf = PdfReader(matrix_output / "report.pdf")
     matrix_text = "".join(page.extract_text() or "" for page in matrix_pdf.pages)
     assert "LLM Serving Campaign Matrix" in matrix_text and "Server generation p50 matrix" in matrix_text
+    assert "Actual token accounting" in matrix_text
     assert "Server generation p50 charts" in matrix_text and "Time to first token p95 charts" in matrix_text
 
 
