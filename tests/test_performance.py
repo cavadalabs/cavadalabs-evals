@@ -75,6 +75,25 @@ def test_hardware_telemetry_is_validated_summarized_and_copied(tmp_path: Path) -
     assert len(list((tmp_path / "output" / "telemetry").iterdir())) == 1
 
 
+def test_hardware_telemetry_sums_power_and_energy_across_devices(tmp_path: Path) -> None:
+    telemetry = tmp_path / "dual-gpu.csv"
+    telemetry.write_text(
+        "timestamp,device,edge_c,junction_c,memory_c,power_w,gpu_use_percent,vram_allocated_percent,vram_activity_percent,memory_activity,average_memory_bandwidth\n"
+        "2026-08-08T10:00:00+02:00,card0,40,50,60,100,90,70,20,N/A,0\n"
+        "2026-08-08T10:00:00+02:00,card1,41,51,61,200,80,60,30,N/A,0\n"
+        "2026-08-08T10:00:05+02:00,card0,42,53,62,110,100,72,30,N/A,0\n"
+        "2026-08-08T10:00:05+02:00,card1,43,54,63,220,90,62,40,N/A,0\n",
+        encoding="utf-8",
+    )
+    links = tmp_path / "links.tsv"
+    links.write_text("run-dual\tdual-gpu.csv\t5\trocm-smi\n", encoding="utf-8")
+    result = _performance_telemetry(links, {"run-dual"}, tmp_path / "output")
+
+    assert result["run-dual"]["devices"] == ["card0", "card1"]
+    assert result["run-dual"]["average_board_power_w"] == 315
+    assert result["run-dual"]["lifecycle_energy_wh"] == pytest.approx(315 * 5 / 3600)
+
+
 def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:
     workload = root / "workload.jsonl"
     workload.write_text(
