@@ -111,6 +111,24 @@ available. `Client generation p50` is derived from the interval after the first
 received token. `E2E output tok/s` divides completed output by the whole
 measurement window and is useful for serving capacity, not decode speed.
 
+## 5. Build a cross-context campaign matrix
+
+Use `compare` for controlled runs that share one exact plan hash. Use `matrix`
+to assemble verified runs from versioned context-specific plans that share one
+workload, generation configuration, measurement contract, and execution
+protocol:
+
+```bash
+uv run cavada-eval perf matrix runs/performance/*/* \
+  --output runs/performance/matrices/MATRIX_ID
+```
+
+The report puts each model/topology configuration on a row and each exact
+context/output/load cell in a column. It is `completed` only when the Cartesian
+matrix is complete and every cell is error-free, passes its preregistered gates,
+and has full server generation and prompt-timing coverage. Missing and invalid
+cells remain visible and make the command return a gate-failure exit code.
+
 ## Artifacts
 
 Each immutable run contains plan/runtime/workload snapshots, `requests.jsonl`,
