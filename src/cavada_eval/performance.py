@@ -2260,11 +2260,17 @@ def build_performance_matrix(
 
     specs: tuple[tuple[str, str, str, int, bool | None, bool], ...] = (
         ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True, False),
+        ("Server generation p95", "server_generation_tps_p95", "tok/s", 2, True, False),
         ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True, False),
+        ("TTFT p50", "ttft_p50_ms", "ms", 1, False, False),
         ("TTFT p95", "ttft_p95_ms", "ms", 1, False, False),
+        ("End-to-end p50", "e2e_p50_ms", "ms", 1, False, False),
         ("End-to-end p95", "e2e_p95_ms", "ms", 1, False, False),
+        ("End-to-end p99", "e2e_p99_ms", "ms", 1, False, False),
         ("Client generation p50", "client_generation_tps_p50", "tok/s", 2, True, False),
         ("End-to-end output throughput", "e2e_output_tps", "tok/s", 3, True, False),
+        ("Completed request rate", "requests_per_second", "req/s", 4, True, False),
+        ("Goodput", "goodput_requests_per_second", "req/s", 4, True, False),
         ("Error rate", "error_rate", "%", 2, False, True),
     )
     if telemetry:
@@ -2272,7 +2278,10 @@ def build_performance_matrix(
             ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False, False),
             ("Total average GPU board power", "average_board_power_w", "W", 1, None, False),
             ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, None, False),
+            ("GPU utilization p95", "gpu_use_p95_percent", "%", 1, None, False),
             ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, None, False),
+            ("Maximum GPU junction temperature", "junction_max_c", "°C", 1, None, False),
+            ("Maximum GPU memory temperature", "memory_max_c", "°C", 1, None, False),
         )
 
     def identity_label(identity: tuple[Any, ...]) -> str:
