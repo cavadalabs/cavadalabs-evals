@@ -252,9 +252,12 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     assert verify_bundle(matrix_output)["valid"]
     matrix_html = (matrix_output / "report.html").read_text(encoding="utf-8")
     assert "Server generation p50" in matrix_html and "Complete exact results" in matrix_html
+    assert "Performance curves" in matrix_html and (matrix_output / "figures" / "generation-1gpu.svg").is_file()
+    assert "<circle" in (matrix_output / "figures" / "generation-1gpu.svg").read_text(encoding="utf-8")
     matrix_pdf = PdfReader(matrix_output / "report.pdf")
     matrix_text = "".join(page.extract_text() or "" for page in matrix_pdf.pages)
     assert "LLM Serving Campaign Matrix" in matrix_text and "Server generation p50 matrix" in matrix_text
+    assert "Server generation p50 charts" in matrix_text and "Time to first token p95 charts" in matrix_text
 
 
 def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> None:

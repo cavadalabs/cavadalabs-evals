@@ -2252,6 +2252,56 @@ def build_performance_matrix(
     def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, str, str]) -> dict[str, Any] | None:
         return lookup.get((*identity, *cell))
 
+    figures = output / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+    figure_specs = (
+        ("generation", "Server generation p50", "server_generation_tps_p50", "tokens/s"),
+        ("prefill", "Server prefill p50", "server_prefill_tps_p50", "tokens/s"),
+        ("ttft", "Time to first token p95", "ttft_p95_ms", "milliseconds"),
+        ("e2e", "End-to-end latency p95", "e2e_p95_ms", "milliseconds"),
+    )
+    topology_counts = sorted({int(identity[3]) for identity in identities})
+    figure_cards: list[str] = []
+    pdf_chart_sections: list[dict[str, Any]] = []
+    for slug, title, field, unit in figure_specs:
+        for gpu_count in topology_counts:
+            topology_identities = [identity for identity in identities if int(identity[3]) == gpu_count]
+            series: list[tuple[str, list[float]]] = []
+            for identity in topology_identities:
+                candidates = [matrix_value(identity, cell) for cell in cells]
+                if all(candidate is not None and bool(candidate["eligible"]) for candidate in candidates):
+                    series.append((f"{identity[0]} · {identity[2]}", [float(candidate[field]) for candidate in candidates if candidate is not None]))
+            figure_name = f"{slug}-{gpu_count}gpu.svg"
+            _line_svg(
+                f"{title} · {gpu_count} GPU",
+                series,
+                figures / figure_name,
+                unit,
+                x_labels=tuple(cell_label(cell) for cell in cells),
+            )
+            figure_cards.append(
+                f"<figure><figcaption>{html.escape(title)} · {gpu_count} GPU</figcaption>"
+                f'<img src="figures/{html.escape(figure_name)}" alt="{html.escape(title)} for {gpu_count} GPU topology"></figure>'
+            )
+            if slug in {"generation", "ttft"}:
+                charts: list[dict[str, Any]] = []
+                for cell in cells:
+                    chart_rows = []
+                    for identity in topology_identities:
+                        candidate = matrix_value(identity, cell)
+                        if candidate is not None and candidate["eligible"]:
+                            chart_rows.append((f"{identity[0]} · {identity[2]}", float(candidate[field])))
+                    if chart_rows:
+                        charts.append({"title": cell_label(cell), "unit": unit, "rows": chart_rows})
+                if charts:
+                    pdf_chart_sections.append(
+                        {
+                            "title": f"{title} charts · {gpu_count} GPU",
+                            "paragraphs": ["Exact values and confidence intervals remain authoritative in the corresponding matrices."],
+                            "charts": charts,
+                        }
+                    )
+
     matrix_articles: list[str] = []
     pdf_sections: list[dict[str, Any]] = []
     for title, field, unit, digits, higher_is_better in specs:
@@ -2340,7 +2390,7 @@ def build_performance_matrix(
     )
     matrix_html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'">
 <title>CavadaLabs Performance Campaign Matrix</title>
 <style>
 body{{font:15px system-ui;max-width:1800px;margin:0 auto;padding:36px 22px;color:#172033;background:#f4f7fb;line-height:1.45}}
@@ -2348,6 +2398,7 @@ header,.panel{{background:#fff;border:1px solid #dce3ec;border-radius:14px;paddi
 h1{{margin:0 0 6px}} h2{{margin-top:0}} h3{{margin:0 0 10px}} h3 small{{display:block;color:#5d697b;font-weight:400}}
 .kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:18px}} .kpi{{border:1px solid #dce3ec;border-radius:10px;padding:12px}}
 .kpi strong{{display:block;font-size:24px}} .matrices{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,650px),1fr));gap:14px}}
+.charts{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,680px),1fr));gap:14px}} figure{{margin:0;border:1px solid #dce3ec;border-radius:10px;padding:12px}} figcaption{{font-weight:700;margin-bottom:8px}} img{{display:block;width:100%;height:auto}}
 .matrix{{border:1px solid #dce3ec;border-radius:10px;padding:13px;min-width:0}} .table-wrap{{overflow:auto;max-height:72vh}}
 table{{border-collapse:separate;border-spacing:0;width:100%;font-variant-numeric:tabular-nums}} th,td{{padding:8px 10px;border-bottom:1px solid #dce3ec;text-align:right;white-space:nowrap}}
 thead th{{position:sticky;top:0;background:#eef3f8;z-index:2}} th:first-child,td:first-child{{position:sticky;left:0;text-align:left;background:inherit;z-index:1}} thead th:first-child{{z-index:3;background:#eef3f8}}
@@ -2361,6 +2412,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
 <div class="kpi"><span>Source bundles</span><strong>{len(sources)}</strong><small>cryptographically verified</small></div>
 <div class="kpi"><span>Hardware telemetry</span><strong>{"ATTACHED" if telemetry else "NOT ATTACHED"}</strong><small>{sum(int(item["samples"]) for item in telemetry.values()) if telemetry else 0} samples</small></div></div></header>
 <section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Hardware energy spans the recorded benchmark lifecycle and is not a wall-plug measurement. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
+<section class="panel"><h2>Performance curves</h2><div class="charts">{"".join(figure_cards)}</div></section>
 <section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
 <section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Context</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
 <section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
@@ -2397,6 +2449,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
                 ],
                 "warning": "This is an observational comparison of complete runtime configurations, not a universal GPU or model ranking.",
             },
+            *pdf_chart_sections,
             *pdf_sections,
             {
                 "title": "Source bundles",
