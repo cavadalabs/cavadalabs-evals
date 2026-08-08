@@ -2249,6 +2249,7 @@ def build_performance_matrix(
             "Rows with missing server timing, errors, or failed preregistered gates are retained but excluded from best-value highlighting.",
             "Differences are observational and remain attributable to the complete model, engine, topology, launch configuration, and host environment.",
             "Hardware telemetry, when attached, spans the benchmark process lifecycle after endpoint readiness and includes warm-up, measured requests, and report finalization.",
+            "Reported average GPU board power is the sum of the per-device time means; it is not wall-plug power.",
         ],
     }
     atomic_json(output / "matrix.json", result)
@@ -2269,7 +2270,7 @@ def build_performance_matrix(
     if telemetry:
         specs += (
             ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False, False),
-            ("Average board power", "average_board_power_w", "W", 1, None, False),
+            ("Total average GPU board power", "average_board_power_w", "W", 1, None, False),
             ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, None, False),
             ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, None, False),
         )
@@ -2493,7 +2494,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
 <section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Hardware energy spans the recorded benchmark lifecycle and is not a wall-plug measurement. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
 <section class="panel"><h2>Performance curves</h2><div class="charts">{"".join(figure_cards)}</div></section>
 <section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
-<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Server context</th><th>Prompt target</th><th>Output request</th><th>Actual input p50</th><th>Actual output p50</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
+<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Server context</th><th>Prompt target</th><th>Output request</th><th>Actual input p50</th><th>Actual output p50</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Total avg GPU board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
 <section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
 </body></html>\n"""
     atomic_text(output / "report.html", matrix_html)
@@ -2524,7 +2525,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
                 "paragraphs": [
                     "Server generation p50 is the primary generation-speed measure and includes a bootstrap 95% interval in the exact results. Server prefill, client-derived generation, and end-to-end throughput are separate metrics.",
                     "A complete status requires every row configuration to contain every observed matrix column and every cell to pass its preregistered integrity and SLO gates.",
-                    "Attached board telemetry is sampled with the recorded collector and covers the benchmark lifecycle after endpoint readiness. Energy is integrated from board-power samples and is not wall-plug energy.",
+                    "Attached board telemetry is sampled with the recorded collector and covers the benchmark lifecycle after endpoint readiness. Energy is integrated from board-power samples; average GPU board power sums the per-device time means. Neither value is wall-plug energy.",
                 ],
                 "warning": "This is an observational comparison of complete runtime configurations, not a universal GPU or model ranking.",
             },
