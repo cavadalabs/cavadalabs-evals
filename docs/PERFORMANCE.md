@@ -124,7 +124,10 @@ uv run cavada-eval perf matrix runs/performance/*/* \
 ```
 
 The report puts each model/topology configuration on a row and each exact
-context/output/load cell in a column. It is `completed` only when the Cartesian
+server-capacity/prompt-target/output/load cell in a column. The token-accounting
+matrix separately reports actual provider-counted input and output, so tokenizer
+differences are visible rather than mislabeled as identical token loads. It is
+`completed` only when the Cartesian
 matrix is complete and every cell is error-free, passes its preregistered gates,
 and has full server generation and prompt-timing coverage. Missing and invalid
 cells remain visible and make the command return a gate-failure exit code.

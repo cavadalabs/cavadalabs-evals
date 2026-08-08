@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- Distinguish configured server context capacity from measured prompt input in
-  cross-context performance matrices and report schema 1.3.0.
+- Distinguish configured server context capacity, prompt target, actual provider
+  input, requested output, and actual output in cross-context performance
+  matrices and report schema 1.3.1.
 
 All notable changes follow semantic versioning. Protocol, engine, schema,
 report, and suite versions are released independently.
