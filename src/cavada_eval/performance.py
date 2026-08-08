@@ -695,16 +695,19 @@ def _line_svg(
         elements.append(
             f'<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/><text x="{left}" y="{410 + index * 22}" fill="{color}" font-family="system-ui">{html.escape(label)}</text>'
         )
-        elements.extend(
-            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="{color}"/>'
-            f'<text x="{x:.1f}" y="{max(24, y - 10):.1f}" text-anchor="middle" font-family="system-ui" font-size="12">{value:.2f}</text>'
-            for x, y, value in coordinates
-        )
+        for position, (point_x, point_y, point_value) in enumerate(coordinates):
+            elements.append(f'<circle cx="{point_x:.1f}" cy="{point_y:.1f}" r="5" fill="{color}"/>')
+            if len(series) <= 2:
+                label_x = point_x + 16 if position == 0 else point_x - 16 if position == len(coordinates) - 1 else point_x
+                elements.append(
+                    f'<text x="{label_x:.1f}" y="{max(24, point_y - 10):.1f}" text-anchor="middle" font-family="system-ui" font-size="12">{point_value:.2f}</text>'
+                )
     if x_labels:
-        elements.extend(
-            f'<text x="{500 if len(x_labels) == 1 else left + position * (right - left) / (len(x_labels) - 1):.1f}" y="375" text-anchor="middle" font-family="system-ui" font-size="12">{html.escape(label)}</text>'
-            for position, label in enumerate(x_labels)
-        )
+        for position, label in enumerate(x_labels):
+            x = 500 if len(x_labels) == 1 else left + position * (right - left) / (len(x_labels) - 1)
+            parts = label.split("\n")
+            tspans = "".join(f'<tspan x="{x:.1f}" y="{375 + line * 15}">{html.escape(part)}</tspan>' for line, part in enumerate(parts))
+            elements.append(f'<text text-anchor="middle" font-family="system-ui" font-size="12">{tspans}</text>')
     elements.append(f'<text x="22" y="200" transform="rotate(-90 22 200)" text-anchor="middle" font-family="system-ui">{html.escape(y_label)}</text></svg>')
     atomic_text(path, "".join(elements) + "\n")
 
@@ -2271,6 +2274,12 @@ def build_performance_matrix(
     def cell_label(cell: tuple[int, int, int, str, str]) -> str:
         return f"{cell[0]:,} server · {cell[1]:,} target · {cell[2]} out · {cell[4]}"
 
+    def chart_cell_label(cell: tuple[int, int, int, str, str]) -> str:
+        def compact(value: int) -> str:
+            return f"{value // 1024}K" if value % 1024 == 0 else f"{value / 1024:.1f}K"
+
+        return f"{compact(cell[0])} server\n{compact(cell[1])} target · {compact(cell[2])} out · {cell[4]}"
+
     def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, int, str, str]) -> dict[str, Any] | None:
         return lookup.get((*identity, *cell))
 
@@ -2299,7 +2308,7 @@ def build_performance_matrix(
                 series,
                 figures / figure_name,
                 unit,
-                x_labels=tuple(cell_label(cell) for cell in cells),
+                x_labels=tuple(chart_cell_label(cell) for cell in cells),
             )
             figure_cards.append(
                 f"<figure><figcaption>{html.escape(title)} · {gpu_count} GPU</figcaption>"

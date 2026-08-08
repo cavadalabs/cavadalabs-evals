@@ -257,7 +257,8 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     assert "Server context" in matrix_html and "Prompt target" in matrix_html
     assert "Actual token accounting" in matrix_html and "Actual input p50" in matrix_html
     assert "Performance curves" in matrix_html and (matrix_output / "figures" / "generation-1gpu.svg").is_file()
-    assert "<circle" in (matrix_output / "figures" / "generation-1gpu.svg").read_text(encoding="utf-8")
+    matrix_figure = (matrix_output / "figures" / "generation-1gpu.svg").read_text(encoding="utf-8")
+    assert "<circle" in matrix_figure and "<tspan" in matrix_figure and "server" in matrix_figure and "target" in matrix_figure
     matrix_pdf = PdfReader(matrix_output / "report.pdf")
     matrix_text = "".join(page.extract_text() or "" for page in matrix_pdf.pages)
     assert "LLM Serving Campaign Matrix" in matrix_text and "Server generation p50 matrix" in matrix_text
