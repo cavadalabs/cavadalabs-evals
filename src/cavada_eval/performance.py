@@ -2257,7 +2257,7 @@ def build_performance_matrix(
         writer.writeheader()
         writer.writerows(rows)
 
-    specs: tuple[tuple[str, str, str, int, bool, bool], ...] = (
+    specs: tuple[tuple[str, str, str, int, bool | None, bool], ...] = (
         ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True, False),
         ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True, False),
         ("TTFT p95", "ttft_p95_ms", "ms", 1, False, False),
@@ -2269,9 +2269,9 @@ def build_performance_matrix(
     if telemetry:
         specs += (
             ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False, False),
-            ("Average board power", "average_board_power_w", "W", 1, False, False),
-            ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, True, False),
-            ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, False, False),
+            ("Average board power", "average_board_power_w", "W", 1, None, False),
+            ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, None, False),
+            ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, None, False),
         )
 
     def identity_label(identity: tuple[Any, ...]) -> str:
@@ -2387,7 +2387,7 @@ def build_performance_matrix(
                 candidate = matrix_value(identity, cell)
                 if candidate is not None and candidate["eligible"]:
                     values.append(float(candidate[field]))
-            if values:
+            if values and higher_is_better is not None:
                 best_by_cell[cell] = (max if higher_is_better else min)(values)
         html_rows: list[str] = []
         pdf_rows: list[list[str]] = []
@@ -2405,21 +2405,22 @@ def build_performance_matrix(
                 else:
                     value = float(candidate[field])
                     display = _matrix_display(value, unit, digits, fraction=fraction)
-                    css = "best" if value == best_by_cell.get(cell) else ""
+                    css = "best" if higher_is_better is not None and value == best_by_cell.get(cell) else ""
                 values_html.append(f'<td class="{css}">{html.escape(display)}</td>')
                 values_pdf.append(display)
             label = identity_label(identity)
             html_rows.append(f"<tr><th>{html.escape(label)}</th>{''.join(values_html)}</tr>")
             pdf_rows.append([label, *values_pdf])
+        direction = f"{'higher' if higher_is_better else 'lower'} is better" if higher_is_better is not None else "observed value"
         matrix_articles.append(
-            f'<article class="matrix"><h3>{html.escape(title)} <small>{html.escape(unit)} · {"higher" if higher_is_better else "lower"} is better</small></h3>'
+            f'<article class="matrix"><h3>{html.escape(title)} <small>{html.escape(unit)} · {direction}</small></h3>'
             f'<div class="table-wrap"><table><thead><tr><th>Model / topology</th>{"".join(f"<th>{html.escape(cell_label(cell))}</th>" for cell in cells)}</tr></thead>'
             f"<tbody>{''.join(html_rows)}</tbody></table></div></article>"
         )
         cell_width = 124 / max(1, len(cells))
         pdf_sections.append(
             {
-                "title": f"{title} matrix · {unit} · {'higher' if higher_is_better else 'lower'} is better",
+                "title": f"{title} matrix · {unit} · {direction}",
                 "table": {
                     "headers": ["Model / topology", *(cell_label(cell) for cell in cells)],
                     "rows": pdf_rows,
