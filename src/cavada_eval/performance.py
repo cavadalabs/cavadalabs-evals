@@ -2297,6 +2297,7 @@ def build_performance_matrix(
                     pdf_chart_sections.append(
                         {
                             "title": f"{title} charts · {gpu_count} GPU",
+                            "page_break": True,
                             "paragraphs": ["Exact values and confidence intervals remain authoritative in the corresponding matrices."],
                             "charts": charts,
                         }
