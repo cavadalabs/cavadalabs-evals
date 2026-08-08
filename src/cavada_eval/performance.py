@@ -38,7 +38,7 @@ from .statistics import distribution, percentile
 PERFORMANCE_PROTOCOL_VERSION = "1.1.0"
 PERFORMANCE_PLAN_VERSION = "1.0.0"
 PERFORMANCE_RUNTIME_VERSION = "1.0.0"
-PERFORMANCE_REPORT_VERSION = "1.2.0"
+PERFORMANCE_REPORT_VERSION = "1.3.0"
 MAX_WORKLOAD_BYTES = 32 * 1024 * 1024
 MAX_PROMPT_BYTES = 16 * 1024 * 1024
 
@@ -2078,6 +2078,7 @@ def build_performance_matrix(
             )
             coordinate = (
                 *identity,
+                int(runtime["max_context_tokens"]),
                 int(cell["context_tokens"]),
                 int(cell["output_tokens"]),
                 str(cell["arrival"]),
@@ -2107,6 +2108,7 @@ def build_performance_matrix(
                 "runtime_id": runtime["id"],
                 "run_id": manifest["run_id"],
                 "bundle_sha256": bundle_hash,
+                "server_context_tokens": int(runtime["max_context_tokens"]),
                 "context_tokens": int(cell["context_tokens"]),
                 "output_tokens": int(cell["output_tokens"]),
                 "arrival": str(cell["arrival"]),
@@ -2177,7 +2179,18 @@ def build_performance_matrix(
         },
         key=lambda item: (item[0], item[3], item[5]),
     )
-    cells = sorted({(int(row["context_tokens"]), int(row["output_tokens"]), str(row["arrival"]), str(row["load"])) for row in rows})
+    cells = sorted(
+        {
+            (
+                int(row["server_context_tokens"]),
+                int(row["context_tokens"]),
+                int(row["output_tokens"]),
+                str(row["arrival"]),
+                str(row["load"]),
+            )
+            for row in rows
+        }
+    )
     lookup = {
         (
             str(row["model"]),
@@ -2186,6 +2199,7 @@ def build_performance_matrix(
             int(row["gpu_count"]),
             int(row["tensor_parallel"]),
             str(row["gpu_model"]),
+            int(row["server_context_tokens"]),
             int(row["context_tokens"]),
             int(row["output_tokens"]),
             str(row["arrival"]),
@@ -2246,10 +2260,10 @@ def build_performance_matrix(
     def identity_label(identity: tuple[Any, ...]) -> str:
         return f"{identity[0]} · {identity[2]} · {identity[3]} GPU / tp{identity[4]}"
 
-    def cell_label(cell: tuple[int, int, str, str]) -> str:
-        return f"{cell[0]:,} ctx · {cell[1]} out · {cell[3]}"
+    def cell_label(cell: tuple[int, int, int, str, str]) -> str:
+        return f"{cell[0]:,} server · {cell[1]:,} prompt · {cell[2]} out · {cell[4]}"
 
-    def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, str, str]) -> dict[str, Any] | None:
+    def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, int, str, str]) -> dict[str, Any] | None:
         return lookup.get((*identity, *cell))
 
     figures = output / "figures"
@@ -2306,7 +2320,7 @@ def build_performance_matrix(
     matrix_articles: list[str] = []
     pdf_sections: list[dict[str, Any]] = []
     for title, field, unit, digits, higher_is_better in specs:
-        best_by_cell: dict[tuple[int, int, str, str], float] = {}
+        best_by_cell: dict[tuple[int, int, int, str, str], float] = {}
         for cell in cells:
             values: list[float] = []
             for identity in identities:
@@ -2361,6 +2375,7 @@ def build_performance_matrix(
             for value in (
                 row["model"],
                 row["gpu_count"],
+                f"{row['server_context_tokens']:,}",
                 f"{row['context_tokens']:,}",
                 row["output_tokens"],
                 row["observations"],
@@ -2415,7 +2430,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
 <section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Hardware energy spans the recorded benchmark lifecycle and is not a wall-plug measurement. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
 <section class="panel"><h2>Performance curves</h2><div class="charts">{"".join(figure_cards)}</div></section>
 <section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
-<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Context</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
+<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Server context</th><th>Prompt input</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
 <section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
 </body></html>\n"""
     atomic_text(output / "report.html", matrix_html)
@@ -2438,7 +2453,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
                 "attached" if telemetry else "not attached",
                 f"{sum(int(item['samples']) for item in telemetry.values()) if telemetry else 0} samples",
             ),
-            ("Output request", f"{cells[0][1]:,}" if len({cell[1] for cell in cells}) == 1 else "mixed", "tokens per request"),
+            ("Output request", f"{cells[0][2]:,}" if len({cell[2] for cell in cells}) == 1 else "mixed", "tokens per request"),
         ],
         sections=[
             {
