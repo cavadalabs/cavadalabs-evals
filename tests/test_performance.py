@@ -249,9 +249,11 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     matrix_output = tmp_path / "matrix"
     matrix_result = build_performance_matrix([left_run, right_run], matrix_output)
     assert matrix_result["status"] == "completed" and matrix_result["eligible_cells"] == 6
+    assert all(row["server_context_tokens"] == 10 for row in matrix_result["rows"])
     assert verify_bundle(matrix_output)["valid"]
     matrix_html = (matrix_output / "report.html").read_text(encoding="utf-8")
     assert "Server generation p50" in matrix_html and "Complete exact results" in matrix_html
+    assert "Server context" in matrix_html and "Prompt input" in matrix_html
     assert "Performance curves" in matrix_html and (matrix_output / "figures" / "generation-1gpu.svg").is_file()
     assert "<circle" in (matrix_output / "figures" / "generation-1gpu.svg").read_text(encoding="utf-8")
     matrix_pdf = PdfReader(matrix_output / "report.pdf")
