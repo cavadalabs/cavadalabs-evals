@@ -1890,7 +1890,127 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
     )
 
 
-def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY") -> dict[str, Any]:
+def _performance_telemetry(links_path: Path, run_ids: set[str], output: Path) -> dict[str, dict[str, Any]]:
+    if links_path.is_symlink() or not links_path.is_file():
+        raise ProtocolError("telemetry links must be a regular file")
+    root = links_path.parent.resolve()
+    expected_headers = {
+        "timestamp",
+        "device",
+        "edge_c",
+        "junction_c",
+        "memory_c",
+        "power_w",
+        "gpu_use_percent",
+        "vram_allocated_percent",
+        "vram_activity_percent",
+        "memory_activity",
+        "average_memory_bandwidth",
+    }
+    telemetry: dict[str, dict[str, Any]] = {}
+    raw_output = output / "telemetry"
+    copies: list[tuple[Path, Path, str]] = []
+    for line_number, raw_line in enumerate(links_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw_line.strip():
+            continue
+        fields = raw_line.split("\t")
+        if len(fields) != 4:
+            raise ProtocolError(f"telemetry link line {line_number} must contain four tab-separated fields")
+        run_id, relative, interval_text, collector = fields
+        if run_id not in run_ids or run_id in telemetry:
+            raise ProtocolError(f"telemetry link line {line_number} has an unknown or duplicate run id")
+        relative_path = Path(relative)
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ProtocolError(f"telemetry link line {line_number} has an unsafe path")
+        source = (root / relative_path).resolve()
+        if not source.is_relative_to(root) or source.is_symlink() or not source.is_file() or source.stat().st_size > 64 * 1024 * 1024:
+            raise ProtocolError(f"telemetry link line {line_number} does not resolve to a bounded regular file")
+        try:
+            interval_seconds = float(interval_text)
+        except ValueError as exc:
+            raise ProtocolError(f"telemetry link line {line_number} has an invalid interval") from exc
+        if not math.isfinite(interval_seconds) or not 0 < interval_seconds <= 300 or not collector.strip():
+            raise ProtocolError(f"telemetry link line {line_number} has invalid collection metadata")
+        with source.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if set(reader.fieldnames or ()) != expected_headers:
+                raise ProtocolError(f"telemetry file {relative} has unexpected columns")
+            samples: list[dict[str, Any]] = []
+            for row_number, row in enumerate(reader, 2):
+                try:
+                    timestamp = datetime.fromisoformat(str(row["timestamp"]))
+                    device = str(row["device"])
+                    numeric = {
+                        field: float(row[field])
+                        for field in (
+                            "edge_c",
+                            "junction_c",
+                            "memory_c",
+                            "power_w",
+                            "gpu_use_percent",
+                            "vram_allocated_percent",
+                            "vram_activity_percent",
+                        )
+                    }
+                except (TypeError, ValueError) as exc:
+                    raise ProtocolError(f"telemetry file {relative} row {row_number} is invalid") from exc
+                if not device or any(not math.isfinite(value) or value < 0 for value in numeric.values()):
+                    raise ProtocolError(f"telemetry file {relative} row {row_number} has invalid values")
+                samples.append({"timestamp": timestamp, "device": device, **numeric})
+        if len(samples) < 2:
+            raise ProtocolError(f"telemetry file {relative} requires at least two samples")
+        devices = sorted({str(sample["device"]) for sample in samples})
+        energy_wh = 0.0
+        power_means: list[float] = []
+        for device in devices:
+            device_samples = sorted((sample for sample in samples if sample["device"] == device), key=lambda sample: sample["timestamp"])
+            powers = [float(sample["power_w"]) for sample in device_samples]
+            power_means.append(sum(powers) / len(powers))
+            for left, right in zip(device_samples, device_samples[1:], strict=False):
+                seconds = (right["timestamp"] - left["timestamp"]).total_seconds()
+                if seconds <= 0 or seconds > interval_seconds * 3:
+                    raise ProtocolError(f"telemetry file {relative} has a non-monotonic or excessive sampling gap")
+                energy_wh += (float(left["power_w"]) + float(right["power_w"])) / 2 * seconds / 3600
+        digest = sha256_file(source)
+        destination = raw_output / f"{run_id}__{source.name}"
+        copies.append((source, destination, digest))
+        telemetry[run_id] = {
+            "collector": collector,
+            "source_file": relative,
+            "source_sha256": digest,
+            "sampling_interval_seconds": interval_seconds,
+            "samples": len(samples),
+            "devices": devices,
+            "started_at": min(sample["timestamp"] for sample in samples).isoformat(),
+            "finished_at": max(sample["timestamp"] for sample in samples).isoformat(),
+            "lifecycle_energy_wh": energy_wh,
+            "average_board_power_w": sum(power_means),
+            "power_w": distribution(float(sample["power_w"]) for sample in samples),
+            "gpu_use_percent": distribution(float(sample["gpu_use_percent"]) for sample in samples),
+            "vram_allocated_percent": distribution(float(sample["vram_allocated_percent"]) for sample in samples),
+            "vram_activity_percent": distribution(float(sample["vram_activity_percent"]) for sample in samples),
+            "edge_c": distribution(float(sample["edge_c"]) for sample in samples),
+            "junction_c": distribution(float(sample["junction_c"]) for sample in samples),
+            "memory_c": distribution(float(sample["memory_c"]) for sample in samples),
+        }
+    missing = sorted(run_ids - set(telemetry))
+    if missing:
+        raise ProtocolError(f"telemetry links are missing source runs: {missing}")
+    raw_output.mkdir(parents=True)
+    for source, destination, digest in copies:
+        shutil.copy2(source, destination)
+        if sha256_file(destination) != digest:
+            raise ProtocolError("copied telemetry evidence failed its SHA-256 check")
+    return telemetry
+
+
+def build_performance_matrix(
+    run_dirs: list[Path],
+    output: Path,
+    *,
+    signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY",
+    telemetry_links: Path | None = None,
+) -> dict[str, Any]:
     """Build a cross-context matrix without weakening exact-run verification."""
     require_pdf_support()
     if len(run_dirs) < 2:
@@ -2021,6 +2141,27 @@ def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_
         raise ProtocolError("performance matrix runs do not share one workload and measurement contract")
     if not rows:
         raise ProtocolError("performance matrix has no observed cells")
+    if telemetry_links and any(count != 1 for count in Counter(str(row["run_id"]) for row in rows).values()):
+        raise ProtocolError("hardware telemetry attribution requires exactly one observed cell per source run")
+    telemetry = _performance_telemetry(telemetry_links, {str(source["run_id"]) for source in sources}, output) if telemetry_links else {}
+    if not telemetry:
+        output.mkdir(parents=True)
+    for row in rows:
+        evidence = telemetry.get(str(row["run_id"]))
+        row.update(
+            {
+                "telemetry_attached": evidence is not None,
+                "telemetry_samples": int(evidence["samples"]) if evidence else None,
+                "telemetry_devices": len(evidence["devices"]) if evidence else None,
+                "lifecycle_energy_wh": float(evidence["lifecycle_energy_wh"]) if evidence else None,
+                "average_board_power_w": float(evidence["average_board_power_w"]) if evidence else None,
+                "gpu_use_p50_percent": float(evidence["gpu_use_percent"]["p50"]) if evidence else None,
+                "gpu_use_p95_percent": float(evidence["gpu_use_percent"]["p95"]) if evidence else None,
+                "vram_allocated_max_percent": float(evidence["vram_allocated_percent"]["max"]) if evidence else None,
+                "junction_max_c": float(evidence["junction_c"]["max"]) if evidence else None,
+                "memory_max_c": float(evidence["memory_c"]["max"]) if evidence else None,
+            }
+        )
 
     identities = sorted(
         {
@@ -2069,21 +2210,23 @@ def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_
         "expected_cells": expected_cells,
         "observed_cells": len(rows),
         "eligible_cells": eligible_cells,
+        "telemetry_attached": bool(telemetry),
+        "telemetry": telemetry,
         "rows": rows,
         "limitations": [
             "Only verified protocol-v1.1 runs sharing the same workload and measurement contract are included.",
             "Rows with missing server timing, errors, or failed preregistered gates are retained but excluded from best-value highlighting.",
             "Differences are observational and remain attributable to the complete model, engine, topology, launch configuration, and host environment.",
+            "Hardware telemetry, when attached, spans the benchmark process lifecycle after endpoint readiness and includes warm-up, measured requests, and report finalization.",
         ],
     }
-    output.mkdir(parents=True)
     atomic_json(output / "matrix.json", result)
     with (output / "matrix.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
 
-    specs = (
+    specs: tuple[tuple[str, str, str, int, bool], ...] = (
         ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True),
         ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True),
         ("TTFT p95", "ttft_p95_ms", "ms", 1, False),
@@ -2092,6 +2235,13 @@ def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_
         ("End-to-end output throughput", "e2e_output_tps", "tok/s", 3, True),
         ("Error rate", "error_rate", "%", 2, False),
     )
+    if telemetry:
+        specs += (
+            ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False),
+            ("Average board power", "average_board_power_w", "W", 1, False),
+            ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, True),
+            ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, False),
+        )
 
     def identity_label(identity: tuple[Any, ...]) -> str:
         return f"{identity[0]} · {identity[2]} · {identity[3]} GPU / tp{identity[4]}"
@@ -2171,6 +2321,16 @@ def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_
                 f"{row['e2e_p95_ms']:.1f}",
                 f"{row['generation_rate_difference_p50']:.2%}",
                 f"{row['error_rate']:.2%}",
+                *(
+                    (
+                        f"{float(row['lifecycle_energy_wh']):.2f}",
+                        f"{float(row['average_board_power_w']):.1f}",
+                        f"{float(row['gpu_use_p50_percent']):.1f}%",
+                        f"{float(row['vram_allocated_max_percent']):.1f}%",
+                    )
+                    if telemetry
+                    else ()
+                ),
                 row["quantization"],
                 row["runtime_id"],
             )
@@ -2198,10 +2358,11 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
 <div class="kpis"><div class="kpi"><span>Status</span><strong>{result["status"].upper()}</strong><small>publication completeness</small></div>
 <div class="kpi"><span>Configurations</span><strong>{len(identities)}</strong><small>model/topology rows</small></div>
 <div class="kpi"><span>Cells</span><strong>{eligible_cells}/{expected_cells}</strong><small>eligible / expected</small></div>
-<div class="kpi"><span>Source bundles</span><strong>{len(sources)}</strong><small>cryptographically verified</small></div></div></header>
-<section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
+<div class="kpi"><span>Source bundles</span><strong>{len(sources)}</strong><small>cryptographically verified</small></div>
+<div class="kpi"><span>Hardware telemetry</span><strong>{"ATTACHED" if telemetry else "NOT ATTACHED"}</strong><small>{sum(int(item["samples"]) for item in telemetry.values()) if telemetry else 0} samples</small></div></div></header>
+<section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Hardware energy spans the recorded benchmark lifecycle and is not a wall-plug measurement. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
 <section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
-<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Context</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th><th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
+<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Context</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th>{"<th>Lifecycle Wh</th><th>Avg board W</th><th>GPU use p50</th><th>VRAM max</th>" if telemetry else ""}<th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
 <section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
 </body></html>\n"""
     atomic_text(output / "report.html", matrix_html)
@@ -2219,8 +2380,12 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
             ("Matrix columns", str(len(cells)), "context/output/load"),
             ("Eligible cells", f"{eligible_cells}/{expected_cells}", "complete verified evidence"),
             ("Source bundles", str(len(sources)), "verified"),
+            (
+                "Telemetry",
+                "attached" if telemetry else "not attached",
+                f"{sum(int(item['samples']) for item in telemetry.values()) if telemetry else 0} samples",
+            ),
             ("Output request", f"{cells[0][1]:,}" if len({cell[1] for cell in cells}) == 1 else "mixed", "tokens per request"),
-            ("Protocol", PERFORMANCE_PROTOCOL_VERSION, "serving performance"),
         ],
         sections=[
             {
@@ -2228,6 +2393,7 @@ tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!importa
                 "paragraphs": [
                     "Server generation p50 is the primary generation-speed measure and includes a bootstrap 95% interval in the exact results. Server prefill, client-derived generation, and end-to-end throughput are separate metrics.",
                     "A complete status requires every row configuration to contain every observed matrix column and every cell to pass its preregistered integrity and SLO gates.",
+                    "Attached board telemetry is sampled with the recorded collector and covers the benchmark lifecycle after endpoint readiness. Energy is integrated from board-power samples and is not wall-plug energy.",
                 ],
                 "warning": "This is an observational comparison of complete runtime configurations, not a universal GPU or model ranking.",
             },

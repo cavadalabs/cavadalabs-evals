@@ -259,6 +259,7 @@ def parser() -> argparse.ArgumentParser:
     perf_matrix = perf_commands.add_parser("matrix", help="Build a cross-context model and topology matrix")
     perf_matrix.add_argument("runs", nargs="+")
     perf_matrix.add_argument("--output", required=True)
+    perf_matrix.add_argument("--telemetry-links")
     perf_matrix.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     return root
 
@@ -573,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
                 [Path(path) for path in args.runs],
                 Path(args.output),
                 signing_key_env=args.signing_key_env,
+                telemetry_links=Path(args.telemetry_links) if args.telemetry_links else None,
             )
             print(
                 json.dumps(
