@@ -5,6 +5,10 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Performance protocol 1.1 establishes an explicit token-rate contract:
+  server-native generation and prompt-processing rates are recomputed from raw
+  provider counts/timings, client-derived generation remains a cross-check,
+  and end-to-end throughput is no longer presented as generation speed.
 - Performance comparisons now provide dense model-by-cell metric matrices and
   a complete sticky-header results grid in HTML, with matching matrix tables in
   PDF and the expanded exact metrics preserved in JSON and CSV.

@@ -23,12 +23,29 @@ from cavada_eval.protocol import ProtocolError, sha256_file
 
 
 def test_collapsed_sse_decode_timing_is_omitted() -> None:
-    raw = {"stream_events": [{"timings": {"predicted_ms": 4000, "predicted_per_second": 32.0}}]}
-    collapsed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 69006}, 128)
-    streamed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 73000}, 128)
+    raw = {
+        "stream_events": [
+            {
+                "timings": {
+                    "predicted_ms": 4000,
+                    "predicted_n": 128,
+                    "predicted_per_second": 999.0,
+                    "prompt_ms": 2000,
+                    "prompt_n": 1000,
+                    "prompt_per_second": 1.0,
+                }
+            }
+        ]
+    }
+    collapsed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 69006}, 128, 1000)
+    streamed = _decode_metrics(raw, {"ttft_ms": 69000, "total_ms": 73000}, 128, 1000)
 
     assert collapsed["stream_timing_valid"] is False and collapsed["decode_tokens_per_second"] is None
     assert streamed["stream_timing_valid"] is True and streamed["decode_tokens_per_second"] == 31.75
+    assert collapsed["server_decode_tokens_per_second"] == streamed["server_decode_tokens_per_second"] == 32.0
+    assert streamed["server_prompt_tokens_per_second"] == 500.0
+    assert streamed["provider_decode_tokens_per_second"] == 999.0
+    assert streamed["decode_rate_relative_difference"] == pytest.approx(0.0078125)
 
 
 def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:
@@ -56,6 +73,9 @@ input_token_tolerance_fraction = 0
 [generation]
 stream = true
 temperature = 0
+[measurement]
+require_server_generation_timing = true
+require_server_prompt_timing = true
 [execution]
 repetitions = 1
 warmup_requests = 1
@@ -128,7 +148,12 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
             events = (
                 {"model": "test-model", "choices": [{"delta": {"content": "one "}}]},
                 {"model": "test-model", "choices": [{"delta": {"content": "two"}}]},
-                {"model": "test-model", "choices": [], "usage": {"prompt_tokens": 8, "completion_tokens": 2}},
+                {
+                    "model": "test-model",
+                    "choices": [],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 2},
+                    "timings": {"prompt_n": 8, "prompt_ms": 8, "predicted_n": 2, "predicted_ms": 2},
+                },
             )
             body = b"".join(f"data: {json.dumps(event)}\n\n".encode() for event in events) + b"data: [DONE]\n\n"
             self.send_response(200)
@@ -172,26 +197,34 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     cells = [json.loads(line) for line in (left_run / "cells.jsonl").read_text(encoding="utf-8").splitlines()]
     assert manifest["status"] == "completed" and len(cells) == 3
     assert all(cell["slo_passed"] for cell in cells)
+    assert all(cell["timing_coverage"]["server_generation"] == 1 for cell in cells)
     assert all(cell["ttft_ms"]["count"] > 0 and cell["output_tokens_per_second"] > 0 for cell in cells)
     assert "<circle" in (left_run / "figures" / "ttft.svg").read_text(encoding="utf-8")
     assert (left_run / "figures" / "decode.svg").is_file()
-    assert "How to read this run" in (left_run / "report.html").read_text(encoding="utf-8")
+    assert "Metric contract" in (left_run / "report.html").read_text(encoding="utf-8")
     observations = [json.loads(line) for line in (left_run / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
     assert all(row["client_queue_ms"] == 0 for row in observations if row["scenario_id"] == "closed")
     assert not (left_run / "judgments.jsonl").exists()
     output = tmp_path / "comparison"
     comparison = compare_performance_runs([left_run, right_run], output)
     assert comparison["shared_cells"] == 3 and verify_bundle(output)["valid"]
-    assert {"model", "context_tokens", "ttft_p50_ms", "decode_tps_p50", "input_tokens_per_second"} <= set(comparison["rows"][0])
+    assert {
+        "model",
+        "context_tokens",
+        "ttft_p50_ms",
+        "generation_tps_p50",
+        "server_generation_tps_p50",
+        "server_prefill_tps_p50",
+    } <= set(comparison["rows"][0])
     comparison_html = (output / "report.html").read_text(encoding="utf-8")
     assert "Metric matrices" in comparison_html and "Complete results grid" in comparison_html
-    assert "Decode p50" in comparison_html and "position:sticky" in comparison_html
+    assert "Server gen p50" in comparison_html and "position:sticky" in comparison_html
     run_pdf = PdfReader(left_run / "report.pdf")
     comparison_pdf = PdfReader(output / "report.pdf")
     assert len(run_pdf.pages) >= 2 and "Measured performance cells" in "".join(page.extract_text() or "" for page in run_pdf.pages)
     comparison_text = "".join(page.extract_text() or "" for page in comparison_pdf.pages)
     assert len(comparison_pdf.pages) >= 2 and "Observed comparison" in comparison_text
-    assert "TTFT p95 matrix" in comparison_text and "Output throughput matrix" in comparison_text
+    assert "TTFT p95 matrix" in comparison_text and "End-to-end output throughput matrix" in comparison_text
 
 
 def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> None:
@@ -214,7 +247,7 @@ def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> No
         "status": "completed-with-errors",
         "started_at": "2026-08-06T10:00:00+00:00",
         "finished_at": "2026-08-06T10:01:00+00:00",
-        "performance_protocol_version": "1.0.1",
+        "performance_protocol_version": "1.1.0",
         "plan": {"name": "capacity-128k", "revision": "1.0.0", "sha256": "a" * 64, "data_classification": "synthetic"},
         "workload": {"id": "long-context", "revision": "1.0.0", "sha256": "b" * 64, "asset_set_sha256": "c" * 64},
         "runtime": {
