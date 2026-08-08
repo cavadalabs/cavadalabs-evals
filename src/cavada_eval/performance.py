@@ -653,6 +653,7 @@ def _bootstrap_percentile(values: list[float], probability: float, samples: int,
 
 def _metric_summary(values: list[float], bootstrap_samples: int, seed: int) -> dict[str, Any]:
     summary: dict[str, Any] = distribution(values)
+    summary["p50_ci"] = _bootstrap_percentile(values, 0.50, bootstrap_samples, seed - 1)
     summary["p95_ci"] = _bootstrap_percentile(values, 0.95, bootstrap_samples, seed)
     summary["p99_ci"] = _bootstrap_percentile(values, 0.99, bootstrap_samples, seed + 1)
     return summary
@@ -1887,3 +1888,364 @@ def _comparison_pdf(path: Path, result: dict[str, Any], rows: list[dict[str, Any
             "Protocol": str(result.get("performance_protocol_version", "unknown")),
         },
     )
+
+
+def build_performance_matrix(run_dirs: list[Path], output: Path, *, signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY") -> dict[str, Any]:
+    """Build a cross-context matrix without weakening exact-run verification."""
+    require_pdf_support()
+    if len(run_dirs) < 2:
+        raise ProtocolError("performance matrix requires at least two runs")
+    if output.exists():
+        raise ProtocolError(f"refusing to overwrite performance matrix: {output}")
+
+    sources: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    contracts: set[str] = set()
+    workload_identities: set[tuple[str, str]] = set()
+    classifications: set[str] = set()
+    coordinates: set[tuple[Any, ...]] = set()
+    for run_dir in run_dirs:
+        verification = verify_bundle(run_dir, signing_key_env=signing_key_env)
+        if not verification["valid"]:
+            raise ProtocolError(f"invalid performance bundle: {run_dir}")
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("performance_protocol_version") != PERFORMANCE_PROTOCOL_VERSION:
+            raise ProtocolError(f"incompatible performance protocol: {run_dir}")
+        plan_config = tomllib.loads((run_dir / "plan_snapshot.toml").read_text(encoding="utf-8"))
+        scenarios = [
+            {key: value for key, value in scenario.items() if key not in {"id", "context_tokens", "warmup_requests", "measured_requests", "duration_seconds"}}
+            for scenario in plan_config.get("scenarios", [])
+        ]
+        contract = {
+            "workload": {key: plan_config.get("workload", {}).get(key) for key in ("id", "revision", "sha256", "mode", "input_token_tolerance_fraction")},
+            "generation": plan_config.get("generation"),
+            "measurement": plan_config.get("measurement", {}),
+            "execution": plan_config.get("execution"),
+            "scenario_shapes": scenarios,
+        }
+        contracts.add(sha256_bytes(json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()))
+        workload_identities.add((str(manifest["workload"]["sha256"]), str(manifest["workload"]["asset_set_sha256"])))
+        classifications.add(str(manifest["plan"]["data_classification"]))
+        runtime = manifest["runtime"]
+        bundle_hash = sha256_file(run_dir / "bundle.json")
+        sources.append(
+            {
+                "run_id": manifest["run_id"],
+                "runtime_id": runtime["id"],
+                "status": manifest["status"],
+                "plan_sha256": manifest["plan"]["sha256"],
+                "bundle_sha256": bundle_hash,
+            }
+        )
+        for cell in (json.loads(line) for line in (run_dir / "cells.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()):
+            if cell.get("status") == "skipped":
+                continue
+            timing_coverage = cell.get("timing_coverage") or {}
+            server_generation = cell.get("server_decode_tokens_per_second") or {}
+            server_prompt = cell.get("server_prompt_tokens_per_second") or {}
+            client_generation = cell.get("decode_tokens_per_second") or {}
+            ttft = cell.get("ttft_ms") or {}
+            e2e = cell.get("e2e_ms") or {}
+            agreement = cell.get("decode_rate_relative_difference") or {}
+            load = f"c{int(cell['concurrency'])}" if cell.get("concurrency") is not None else f"r{float(cell.get('request_rate') or 0):g}"
+            identity = (
+                str(runtime["expected_model"]),
+                str(runtime["model_revision"]),
+                str(runtime["quantization"]),
+                int(runtime["gpu_count"]),
+                int(runtime["tensor_parallel"]),
+                str(runtime["gpu_model"]),
+            )
+            coordinate = (
+                *identity,
+                int(cell["context_tokens"]),
+                int(cell["output_tokens"]),
+                str(cell["arrival"]),
+                load,
+            )
+            if coordinate in coordinates:
+                raise ProtocolError(f"duplicate performance matrix coordinate: {coordinate}")
+            coordinates.add(coordinate)
+            successes = int(cell.get("successes", 0))
+            eligible = (
+                manifest.get("status") == "completed"
+                and cell.get("status") == "completed"
+                and int(cell.get("errors", 0)) == 0
+                and bool(cell.get("slo_passed"))
+                and float(timing_coverage.get("server_generation", 0)) == 1
+                and float(timing_coverage.get("server_prompt", 0)) == 1
+                and int(server_generation.get("count", 0)) == successes
+                and int(server_prompt.get("count", 0)) == successes
+            )
+            row = {
+                "model": identity[0],
+                "model_revision": identity[1],
+                "quantization": identity[2],
+                "gpu_count": identity[3],
+                "tensor_parallel": identity[4],
+                "gpu_model": identity[5],
+                "runtime_id": runtime["id"],
+                "run_id": manifest["run_id"],
+                "bundle_sha256": bundle_hash,
+                "context_tokens": int(cell["context_tokens"]),
+                "output_tokens": int(cell["output_tokens"]),
+                "arrival": str(cell["arrival"]),
+                "load": load,
+                "observations": int(cell.get("observations", 0)),
+                "successes": successes,
+                "errors": int(cell.get("errors", 0)),
+                "eligible": eligible,
+                "slo_passed": bool(cell.get("slo_passed")),
+                "ttft_p50_ms": float(ttft.get("p50", 0)),
+                "ttft_p95_ms": float(ttft.get("p95", 0)),
+                "ttft_p95_ci_lower_ms": float((ttft.get("p95_ci") or {}).get("lower", 0)),
+                "ttft_p95_ci_upper_ms": float((ttft.get("p95_ci") or {}).get("upper", 0)),
+                "e2e_p50_ms": float(e2e.get("p50", 0)),
+                "e2e_p95_ms": float(e2e.get("p95", 0)),
+                "e2e_p99_ms": float(e2e.get("p99", 0)),
+                "server_generation_tps_p50": float(server_generation.get("p50", 0)),
+                "server_generation_tps_p50_ci_lower": float((server_generation.get("p50_ci") or {}).get("lower", 0)),
+                "server_generation_tps_p50_ci_upper": float((server_generation.get("p50_ci") or {}).get("upper", 0)),
+                "server_generation_tps_p95": float(server_generation.get("p95", 0)),
+                "client_generation_tps_p50": float(client_generation.get("p50", 0)),
+                "server_prefill_tps_p50": float(server_prompt.get("p50", 0)),
+                "generation_rate_difference_p50": float(agreement.get("p50", 0)),
+                "e2e_input_tps": float(cell.get("input_tokens_per_second", 0)),
+                "e2e_output_tps": float(cell.get("output_tokens_per_second", 0)),
+                "requests_per_second": float(cell.get("requests_per_second", 0)),
+                "goodput_requests_per_second": float(cell.get("goodput_requests_per_second", 0)),
+                "error_rate": float(cell.get("error_rate", 0)),
+            }
+            rows.append(row)
+    if len(contracts) != 1 or len(workload_identities) != 1:
+        raise ProtocolError("performance matrix runs do not share one workload and measurement contract")
+    if not rows:
+        raise ProtocolError("performance matrix has no observed cells")
+
+    identities = sorted(
+        {
+            (
+                str(row["model"]),
+                str(row["model_revision"]),
+                str(row["quantization"]),
+                int(row["gpu_count"]),
+                int(row["tensor_parallel"]),
+                str(row["gpu_model"]),
+            )
+            for row in rows
+        },
+        key=lambda item: (item[0], item[3], item[5]),
+    )
+    cells = sorted({(int(row["context_tokens"]), int(row["output_tokens"]), str(row["arrival"]), str(row["load"])) for row in rows})
+    lookup = {
+        (
+            str(row["model"]),
+            str(row["model_revision"]),
+            str(row["quantization"]),
+            int(row["gpu_count"]),
+            int(row["tensor_parallel"]),
+            str(row["gpu_model"]),
+            int(row["context_tokens"]),
+            int(row["output_tokens"]),
+            str(row["arrival"]),
+            str(row["load"]),
+        ): row
+        for row in rows
+    }
+    expected_cells = len(identities) * len(cells)
+    eligible_cells = sum(bool(row["eligible"]) for row in rows)
+    complete = len(rows) == expected_cells and eligible_cells == expected_cells
+    classification = next(iter(classifications)) if len(classifications) == 1 else "mixed"
+    result: dict[str, Any] = {
+        "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
+        "performance_report_version": PERFORMANCE_REPORT_VERSION,
+        "status": "completed" if complete else "incomplete",
+        "measurement_contract_sha256": next(iter(contracts)),
+        "workload_sha256": next(iter(workload_identities))[0],
+        "data_classification": classification,
+        "source_runs": sources,
+        "row_configurations": len(identities),
+        "matrix_columns": len(cells),
+        "expected_cells": expected_cells,
+        "observed_cells": len(rows),
+        "eligible_cells": eligible_cells,
+        "rows": rows,
+        "limitations": [
+            "Only verified protocol-v1.1 runs sharing the same workload and measurement contract are included.",
+            "Rows with missing server timing, errors, or failed preregistered gates are retained but excluded from best-value highlighting.",
+            "Differences are observational and remain attributable to the complete model, engine, topology, launch configuration, and host environment.",
+        ],
+    }
+    output.mkdir(parents=True)
+    atomic_json(output / "matrix.json", result)
+    with (output / "matrix.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    specs = (
+        ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True),
+        ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True),
+        ("TTFT p95", "ttft_p95_ms", "ms", 1, False),
+        ("End-to-end p95", "e2e_p95_ms", "ms", 1, False),
+        ("Client generation p50", "client_generation_tps_p50", "tok/s", 2, True),
+        ("End-to-end output throughput", "e2e_output_tps", "tok/s", 3, True),
+        ("Error rate", "error_rate", "%", 2, False),
+    )
+
+    def identity_label(identity: tuple[Any, ...]) -> str:
+        return f"{identity[0]} · {identity[2]} · {identity[3]} GPU / tp{identity[4]}"
+
+    def cell_label(cell: tuple[int, int, str, str]) -> str:
+        return f"{cell[0]:,} ctx · {cell[1]} out · {cell[3]}"
+
+    def matrix_value(identity: tuple[Any, ...], cell: tuple[int, int, str, str]) -> dict[str, Any] | None:
+        return lookup.get((*identity, *cell))
+
+    matrix_articles: list[str] = []
+    pdf_sections: list[dict[str, Any]] = []
+    for title, field, unit, digits, higher_is_better in specs:
+        best_by_cell: dict[tuple[int, int, str, str], float] = {}
+        for cell in cells:
+            values: list[float] = []
+            for identity in identities:
+                candidate = matrix_value(identity, cell)
+                if candidate is not None and candidate["eligible"]:
+                    values.append(float(candidate[field]))
+            if values:
+                best_by_cell[cell] = (max if higher_is_better else min)(values)
+        html_rows: list[str] = []
+        pdf_rows: list[list[str]] = []
+        for identity in identities:
+            values_html: list[str] = []
+            values_pdf: list[str] = []
+            for cell in cells:
+                candidate = matrix_value(identity, cell)
+                if candidate is None:
+                    display = "—"
+                    css = "missing"
+                elif not candidate["eligible"]:
+                    display = "INVALID"
+                    css = "invalid"
+                else:
+                    value = float(candidate[field])
+                    display = f"{value:.{digits}%}" if unit == "%" else f"{value:,.{digits}f}"
+                    css = "best" if value == best_by_cell.get(cell) else ""
+                values_html.append(f'<td class="{css}">{html.escape(display)}</td>')
+                values_pdf.append(display)
+            label = identity_label(identity)
+            html_rows.append(f"<tr><th>{html.escape(label)}</th>{''.join(values_html)}</tr>")
+            pdf_rows.append([label, *values_pdf])
+        matrix_articles.append(
+            f'<article class="matrix"><h3>{html.escape(title)} <small>{html.escape(unit)} · {"higher" if higher_is_better else "lower"} is better</small></h3>'
+            f'<div class="table-wrap"><table><thead><tr><th>Model / topology</th>{"".join(f"<th>{html.escape(cell_label(cell))}</th>" for cell in cells)}</tr></thead>'
+            f"<tbody>{''.join(html_rows)}</tbody></table></div></article>"
+        )
+        cell_width = 124 / max(1, len(cells))
+        pdf_sections.append(
+            {
+                "title": f"{title} matrix · {unit} · {'higher' if higher_is_better else 'lower'} is better",
+                "table": {
+                    "headers": ["Model / topology", *(cell_label(cell) for cell in cells)],
+                    "rows": pdf_rows,
+                    "widths": [55, *(cell_width for _ in cells)],
+                },
+            }
+        )
+
+    exact_rows = "".join(
+        "<tr>"
+        + "".join(
+            f"<td>{html.escape(str(value))}</td>"
+            for value in (
+                row["model"],
+                row["gpu_count"],
+                f"{row['context_tokens']:,}",
+                row["output_tokens"],
+                row["observations"],
+                row["eligible"],
+                f"{row['server_generation_tps_p50']:.2f}",
+                f"[{row['server_generation_tps_p50_ci_lower']:.2f}, {row['server_generation_tps_p50_ci_upper']:.2f}]",
+                f"{row['server_prefill_tps_p50']:.2f}",
+                f"{row['ttft_p95_ms']:.1f}",
+                f"{row['e2e_p95_ms']:.1f}",
+                f"{row['generation_rate_difference_p50']:.2%}",
+                f"{row['error_rate']:.2%}",
+                row["quantization"],
+                row["runtime_id"],
+            )
+        )
+        + "</tr>"
+        for row in sorted(rows, key=lambda item: (item["model"], item["gpu_count"], item["context_tokens"]))
+    )
+    matrix_html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+<title>CavadaLabs Performance Campaign Matrix</title>
+<style>
+body{{font:15px system-ui;max-width:1800px;margin:0 auto;padding:36px 22px;color:#172033;background:#f4f7fb;line-height:1.45}}
+header,.panel{{background:#fff;border:1px solid #dce3ec;border-radius:14px;padding:22px;margin-bottom:18px;box-shadow:0 6px 22px #1720330a}}
+h1{{margin:0 0 6px}} h2{{margin-top:0}} h3{{margin:0 0 10px}} h3 small{{display:block;color:#5d697b;font-weight:400}}
+.kpis{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:18px}} .kpi{{border:1px solid #dce3ec;border-radius:10px;padding:12px}}
+.kpi strong{{display:block;font-size:24px}} .matrices{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,650px),1fr));gap:14px}}
+.matrix{{border:1px solid #dce3ec;border-radius:10px;padding:13px;min-width:0}} .table-wrap{{overflow:auto;max-height:72vh}}
+table{{border-collapse:separate;border-spacing:0;width:100%;font-variant-numeric:tabular-nums}} th,td{{padding:8px 10px;border-bottom:1px solid #dce3ec;text-align:right;white-space:nowrap}}
+thead th{{position:sticky;top:0;background:#eef3f8;z-index:2}} th:first-child,td:first-child{{position:sticky;left:0;text-align:left;background:inherit;z-index:1}} thead th:first-child{{z-index:3;background:#eef3f8}}
+tbody tr:nth-child(even){{background:#f8fafc}} .best{{background:#e4f5e9!important;color:#0d5f2a;font-weight:750}} .invalid{{background:#ffe8e5!important;color:#8b1f13;font-weight:700}} .missing{{color:#7a8494}}
+.notice{{border-left:5px solid #1769aa;background:#eef6ff;padding:12px 15px}} code{{overflow-wrap:anywhere}} @media print{{body{{background:#fff;padding:0}}header,.panel{{box-shadow:none}}.table-wrap{{overflow:visible;max-height:none}}}}
+</style></head><body>
+<header><h1>LLM serving campaign matrix</h1><p>Dense model × context × topology results from verified evidence bundles.</p>
+<div class="kpis"><div class="kpi"><span>Status</span><strong>{result["status"].upper()}</strong><small>publication completeness</small></div>
+<div class="kpi"><span>Configurations</span><strong>{len(identities)}</strong><small>model/topology rows</small></div>
+<div class="kpi"><span>Cells</span><strong>{eligible_cells}/{expected_cells}</strong><small>eligible / expected</small></div>
+<div class="kpi"><span>Source bundles</span><strong>{len(sources)}</strong><small>cryptographically verified</small></div></div></header>
+<section class="panel"><h2>Metric contract</h2><p class="notice">Server generation and prefill rates are recomputed from raw server token counts and durations. Client generation is a cross-check. End-to-end throughput includes prefill and transport. Green marks the best eligible observation per exact column; red cells are retained but invalid for ranking.</p></section>
+<section class="panel"><h2>Comparison matrices</h2><div class="matrices">{"".join(matrix_articles)}</div></section>
+<section class="panel"><h2>Complete exact results</h2><div class="table-wrap"><table><thead><tr><th>Model</th><th>GPUs</th><th>Context</th><th>Output</th><th>N</th><th>Eligible</th><th>Server gen p50</th><th>95% CI</th><th>Prefill p50</th><th>TTFT p95 ms</th><th>E2E p95 ms</th><th>Client diff</th><th>Error rate</th><th>Quant</th><th>Runtime</th></tr></thead><tbody>{exact_rows}</tbody></table></div></section>
+<section class="panel"><h2>Reproducibility and limits</h2><p>Protocol {PERFORMANCE_PROTOCOL_VERSION}; measurement contract <code>{result["measurement_contract_sha256"]}</code>; workload <code>{result["workload_sha256"]}</code>.</p><ul>{"".join(f"<li>{html.escape(item)}</li>" for item in result["limitations"])}</ul></section>
+</body></html>\n"""
+    atomic_text(output / "report.html", matrix_html)
+    source_rows = [[item["runtime_id"], item["run_id"], item["bundle_sha256"]] for item in sources]
+    render_pdf(
+        output / "report.pdf",
+        title="LLM Serving Campaign Matrix",
+        subtitle=f"{len(identities)} configurations / {eligible_cells} of {expected_cells} eligible cells",
+        status=str(result["status"]),
+        report_id=str(result["measurement_contract_sha256"]),
+        classification=classification.upper(),
+        scope="Cross-context observational matrix of verified runs sharing one workload and measurement contract.",
+        kpis=[
+            ("Configurations", str(len(identities)), "model/topology rows"),
+            ("Matrix columns", str(len(cells)), "context/output/load"),
+            ("Eligible cells", f"{eligible_cells}/{expected_cells}", "complete verified evidence"),
+            ("Source bundles", str(len(sources)), "verified"),
+            ("Output request", f"{cells[0][1]:,}" if len({cell[1] for cell in cells}) == 1 else "mixed", "tokens per request"),
+            ("Protocol", PERFORMANCE_PROTOCOL_VERSION, "serving performance"),
+        ],
+        sections=[
+            {
+                "title": "How to read this matrix",
+                "paragraphs": [
+                    "Server generation p50 is the primary generation-speed measure and includes a bootstrap 95% interval in the exact results. Server prefill, client-derived generation, and end-to-end throughput are separate metrics.",
+                    "A complete status requires every row configuration to contain every observed matrix column and every cell to pass its preregistered integrity and SLO gates.",
+                ],
+                "warning": "This is an observational comparison of complete runtime configurations, not a universal GPU or model ranking.",
+            },
+            *pdf_sections,
+            {
+                "title": "Source bundles",
+                "table": {"headers": ["Runtime", "Run ID", "Bundle SHA-256"], "rows": source_rows, "widths": [55, 60, 64]},
+            },
+            {"title": "Limitations", "paragraphs": result["limitations"]},
+        ],
+        metadata={
+            "Status": str(result["status"]),
+            "Protocol": PERFORMANCE_PROTOCOL_VERSION,
+            "Measurement contract": str(result["measurement_contract_sha256"]),
+            "Workload SHA-256": str(result["workload_sha256"]),
+        },
+    )
+    write_bundle(output, signing_key_env=signing_key_env)
+    if not verify_bundle(output, signing_key_env=signing_key_env)["valid"]:
+        raise ProtocolError("performance matrix bundle verification failed")
+    return result

@@ -13,6 +13,7 @@ from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     _decode_metrics,
     _performance_pdf,
+    build_performance_matrix,
     compare_performance_runs,
     load_performance_plan,
     load_performance_runtime,
@@ -130,7 +131,7 @@ model_artifact_revision = "artifact-sha"
 dtype = "fp16"
 quantization = "none"
 gpu_count = 1
-gpu_model = "test-gpu"
+gpu_model = "test-gpu-{runtime_id}"
 tensor_parallel = 1
 max_context_tokens = 10
 launch_command_sanitized = "test-server"
@@ -225,6 +226,16 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
     comparison_text = "".join(page.extract_text() or "" for page in comparison_pdf.pages)
     assert len(comparison_pdf.pages) >= 2 and "Observed comparison" in comparison_text
     assert "TTFT p95 matrix" in comparison_text and "End-to-end output throughput matrix" in comparison_text
+
+    matrix_output = tmp_path / "matrix"
+    matrix_result = build_performance_matrix([left_run, right_run], matrix_output)
+    assert matrix_result["status"] == "completed" and matrix_result["eligible_cells"] == 6
+    assert verify_bundle(matrix_output)["valid"]
+    matrix_html = (matrix_output / "report.html").read_text(encoding="utf-8")
+    assert "Server generation p50" in matrix_html and "Complete exact results" in matrix_html
+    matrix_pdf = PdfReader(matrix_output / "report.pdf")
+    matrix_text = "".join(page.extract_text() or "" for page in matrix_pdf.pages)
+    assert "LLM Serving Campaign Matrix" in matrix_text and "Server generation p50 matrix" in matrix_text
 
 
 def test_performance_failure_pdf_is_explicit_and_auditable(tmp_path: Path) -> None:

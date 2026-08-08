@@ -19,6 +19,7 @@ from .demo import run_demo
 from .external import import_external_results
 from .pairwise import pairwise_runs
 from .performance import (
+    build_performance_matrix,
     compare_performance_runs,
     load_performance_plan,
     load_performance_runtime,
@@ -255,6 +256,10 @@ def parser() -> argparse.ArgumentParser:
     perf_compare.add_argument("runs", nargs="+")
     perf_compare.add_argument("--output", required=True)
     perf_compare.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
+    perf_matrix = perf_commands.add_parser("matrix", help="Build a cross-context model and topology matrix")
+    perf_matrix.add_argument("runs", nargs="+")
+    perf_matrix.add_argument("--output", required=True)
+    perf_matrix.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     return root
 
 
@@ -556,20 +561,36 @@ def main(argv: list[str] | None = None) -> int:
                 manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
                 print(output)
                 return EXIT_PASS if manifest["status"] == "completed" and manifest["cells"]["slo_failed"] == 0 else EXIT_GATE_FAILURE
-            result = compare_performance_runs(
+            if args.perf_command == "compare":
+                result = compare_performance_runs(
+                    [Path(path) for path in args.runs],
+                    Path(args.output),
+                    signing_key_env=args.signing_key_env,
+                )
+                print(json.dumps({"baseline": result["baseline"], "shared_cells": result["shared_cells"]}, indent=2))
+                return EXIT_PASS
+            result = build_performance_matrix(
                 [Path(path) for path in args.runs],
                 Path(args.output),
                 signing_key_env=args.signing_key_env,
             )
-            print(json.dumps({"baseline": result["baseline"], "shared_cells": result["shared_cells"]}, indent=2))
-            return EXIT_PASS
+            print(
+                json.dumps(
+                    {
+                        "status": result["status"],
+                        "configurations": result["row_configurations"],
+                        "eligible_cells": result["eligible_cells"],
+                        "expected_cells": result["expected_cells"],
+                    },
+                    indent=2,
+                )
+            )
+            return EXIT_PASS if result["status"] == "completed" else EXIT_GATE_FAILURE
         if args.command == "validate":
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))
             return EXIT_PASS
         if args.command == "annotations":
-            result = export_annotation_package(
-                load_suite(args.suite), Path(args.run_dir), Path(args.output), Path(args.linkage_output)
-            )
+            result = export_annotation_package(load_suite(args.suite), Path(args.run_dir), Path(args.output), Path(args.linkage_output))
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "annotations-ingest":
@@ -600,9 +621,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "judge-qualify":
-            result = qualify_judge_run(
-                Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output)
-            )
+            result = qualify_judge_run(Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output))
             print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
             return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
         if args.command == "pilot-audit":

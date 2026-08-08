@@ -44,9 +44,9 @@ procedural claim, not a certification, capacity guarantee, or proof of safety.
     tokens/second, client-derived generation tokens/second, server-native
     prompt tokens/second, request/input/output end-to-end throughput, queue
     delay, error taxonomy, goodput, cost when priced, and p50/p90/p95/p99
-    distributions. Report bootstrap intervals for latency tail estimates and
-    warn when p99 is weakly resolved. Never label end-to-end output throughput
-    as model generation speed.
+    distributions. Report bootstrap intervals for primary medians and latency
+    tail estimates, and warn when p99 is weakly resolved. Never label
+    end-to-end output throughput as model generation speed.
 12. Apply aggregate SLO gates and per-request goodput thresholds separately.
     A completed campaign may fail its SLO; execution status and SLO result must
     never be conflated.

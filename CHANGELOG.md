@@ -5,6 +5,9 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Added `cavada-eval perf matrix` for verified cross-context model × topology
+  reports with completeness gates, dense HTML/PDF matrices, exact CSV/JSON,
+  server-timing eligibility, and bootstrap intervals for median metrics.
 - Performance protocol 1.1 establishes an explicit token-rate contract:
   server-native generation and prompt-processing rates are recomputed from raw
   provider counts/timings, client-derived generation remains a cross-check,
