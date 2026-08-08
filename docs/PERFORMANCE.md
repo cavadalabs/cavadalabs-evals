@@ -12,6 +12,14 @@ committed. Fill every immutable revision and the exact hardware topology. The
 endpoint must return its exact `expected_model` and streaming usage containing
 `prompt_tokens` and `completion_tokens`.
 
+For publishable generation-rate claims, the endpoint should also emit
+server-native prompt and generation token counts and durations (for example,
+llama.cpp's `prompt_n`, `prompt_ms`, `predicted_n`, and `predicted_ms`). The
+framework recomputes rates from those primitives. Client-derived generation is
+reported as a transport cross-check; end-to-end output throughput includes
+prefill, scheduling, and transport and is never labeled as model generation
+speed.
+
 `max_context_tokens` is total input plus output capacity. To run the full
 reference plan with 256k input and 8k output, set it to at least `270336` and
 ensure the server was launched with that capacity. Cells that do not fit are
@@ -97,6 +105,11 @@ The comparison report places models on rows and exact context/output/load cells
 on columns for each primary metric. Its complete grid keeps performance columns
 before long runtime and GPU identity fields; the same exact values remain
 available in `comparison.csv` and `comparison.json`.
+
+Read `Server generation p50` as the primary generation-speed metric when it is
+available. `Client generation p50` is derived from the interval after the first
+received token. `E2E output tok/s` divides completed output by the whole
+measurement window and is useful for serving capacity, not decode speed.
 
 ## Artifacts
 

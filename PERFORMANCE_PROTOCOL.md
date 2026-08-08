@@ -1,4 +1,4 @@
-# CavadaLabs LLM Serving Performance Protocol v1.0
+# CavadaLabs LLM Serving Performance Protocol v1.1
 
 ## Status and scope
 
@@ -8,7 +8,7 @@ capacity, long context, concurrency, token usage, failures, and optional cost.
 It does not score response quality and does not control the inference engine.
 
 A run may be described as conforming to “CavadaLabs LLM Serving Performance
-Protocol v1.0” only when its verified bundle reports `completed`. This is a
+Protocol v1.1” only when its verified bundle reports `completed`. This is a
 procedural claim, not a certification, capacity guarantee, or proof of safety.
 
 ## Normative requirements
@@ -40,10 +40,13 @@ procedural claim, not a certification, capacity guarantee, or proof of safety.
    is therefore a separate observation, not recovery of the original sample.
 10. Enforce preregistered request, token, duration, timeout, context, output,
     and in-flight limits. Preserve partial evidence on interruption.
-11. Report TTFT, end-to-end latency, derived TPOT, derived decode tokens/second,
-    request/input/output throughput, queue delay, error taxonomy, goodput,
-    cost when priced, and p50/p90/p95/p99 distributions. Report bootstrap
-    intervals for latency tail estimates and warn when p99 is weakly resolved.
+11. Report TTFT, end-to-end latency, derived TPOT, server-native generation
+    tokens/second, client-derived generation tokens/second, server-native
+    prompt tokens/second, request/input/output end-to-end throughput, queue
+    delay, error taxonomy, goodput, cost when priced, and p50/p90/p95/p99
+    distributions. Report bootstrap intervals for latency tail estimates and
+    warn when p99 is weakly resolved. Never label end-to-end output throughput
+    as model generation speed.
 12. Apply aggregate SLO gates and per-request goodput thresholds separately.
     A completed campaign may fail its SLO; execution status and SLO result must
     never be conflated.
@@ -62,17 +65,30 @@ procedural claim, not a certification, capacity guarantee, or proof of safety.
 - **E2E latency:** client elapsed time from request start through stream end.
 - **TPOT:** `(E2E - TTFT) / (reported output tokens - 1)`; derived, not direct
   token timestamps.
-- **Decode tokens/s:** `(reported output tokens - 1) / (E2E - TTFT)`.
+- **Server-native generation tokens/s:** provider-reported generated tokens
+  divided by provider-reported generation time. The protocol recomputes this
+  value rather than trusting a provider's precomputed rate, and rejects it when
+  the provider token count conflicts with usage.
+- **Client-derived generation tokens/s:** `(reported output tokens - 1) /
+  (E2E - TTFT)`. This is a transport-observed cross-check, not a replacement
+  for valid server-native timing.
+- **Server-native prompt tokens/s:** provider-reported prompt tokens divided by
+  provider-reported prompt-processing time.
 - **Request throughput:** successful requests divided by the measured wall-time
   window.
-- **Token throughput:** provider-reported input or output tokens divided by the
-  same window.
+- **End-to-end token throughput:** provider-reported input or output tokens
+  divided by the measured campaign window. It includes prompt processing,
+  scheduling, transport, and generation and must not be interpreted as decode
+  or generation speed.
 - **Goodput:** successful requests satisfying the per-request TTFT, E2E,
   minimum-output, and input-token rules, divided by the measured window.
 - **Client queue delay:** actual request start minus scheduled open-loop start.
 
 Inter-chunk time is diagnostic only because one stream event is not necessarily
-one token. All times use the load generator's monotonic clock.
+one token. All client times use the load generator's monotonic clock. Reports
+publish the relative difference between server-native and client-derived
+generation rates whenever both are available so timing collapse, buffering,
+or incompatible provider semantics remain visible.
 
 ## Comparability and publication
 
