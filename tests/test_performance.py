@@ -12,6 +12,7 @@ from cavada_eval.artifacts import verify_bundle
 from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     _decode_metrics,
+    _matrix_display,
     _performance_pdf,
     _performance_telemetry,
     build_performance_matrix,
@@ -48,6 +49,12 @@ def test_collapsed_sse_decode_timing_is_omitted() -> None:
     assert streamed["server_prompt_tokens_per_second"] == 500.0
     assert streamed["provider_decode_tokens_per_second"] == 999.0
     assert streamed["decode_rate_relative_difference"] == pytest.approx(0.0078125)
+
+
+def test_matrix_percent_formatter_distinguishes_fractions_from_percentage_points() -> None:
+    assert _matrix_display(0.125, "%", 2, fraction=True) == "12.50%"
+    assert _matrix_display(100, "%", 1) == "100.0%"
+    assert _matrix_display(69, "%", 1) == "69.0%"
 
 
 def test_hardware_telemetry_is_validated_summarized_and_copied(tmp_path: Path) -> None:

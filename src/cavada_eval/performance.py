@@ -659,6 +659,12 @@ def _metric_summary(values: list[float], bootstrap_samples: int, seed: int) -> d
     return summary
 
 
+def _matrix_display(value: float, unit: str, digits: int, *, fraction: bool = False) -> str:
+    if unit != "%":
+        return f"{value:,.{digits}f}"
+    return f"{value:.{digits}%}" if fraction else f"{value:,.{digits}f}%"
+
+
 def _line_svg(
     title: str,
     series: list[tuple[str, list[float]]],
@@ -2251,21 +2257,21 @@ def build_performance_matrix(
         writer.writeheader()
         writer.writerows(rows)
 
-    specs: tuple[tuple[str, str, str, int, bool], ...] = (
-        ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True),
-        ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True),
-        ("TTFT p95", "ttft_p95_ms", "ms", 1, False),
-        ("End-to-end p95", "e2e_p95_ms", "ms", 1, False),
-        ("Client generation p50", "client_generation_tps_p50", "tok/s", 2, True),
-        ("End-to-end output throughput", "e2e_output_tps", "tok/s", 3, True),
-        ("Error rate", "error_rate", "%", 2, False),
+    specs: tuple[tuple[str, str, str, int, bool, bool], ...] = (
+        ("Server generation p50", "server_generation_tps_p50", "tok/s", 2, True, False),
+        ("Server prefill p50", "server_prefill_tps_p50", "tok/s", 2, True, False),
+        ("TTFT p95", "ttft_p95_ms", "ms", 1, False, False),
+        ("End-to-end p95", "e2e_p95_ms", "ms", 1, False, False),
+        ("Client generation p50", "client_generation_tps_p50", "tok/s", 2, True, False),
+        ("End-to-end output throughput", "e2e_output_tps", "tok/s", 3, True, False),
+        ("Error rate", "error_rate", "%", 2, False, True),
     )
     if telemetry:
         specs += (
-            ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False),
-            ("Average board power", "average_board_power_w", "W", 1, False),
-            ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, True),
-            ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, False),
+            ("Lifecycle energy", "lifecycle_energy_wh", "Wh", 2, False, False),
+            ("Average board power", "average_board_power_w", "W", 1, False, False),
+            ("GPU utilization p50", "gpu_use_p50_percent", "%", 1, True, False),
+            ("Maximum VRAM allocation", "vram_allocated_max_percent", "%", 1, False, False),
         )
 
     def identity_label(identity: tuple[Any, ...]) -> str:
@@ -2373,7 +2379,7 @@ def build_performance_matrix(
             },
         }
     )
-    for title, field, unit, digits, higher_is_better in specs:
+    for title, field, unit, digits, higher_is_better, fraction in specs:
         best_by_cell: dict[tuple[int, int, int, str, str], float] = {}
         for cell in cells:
             values: list[float] = []
@@ -2398,7 +2404,7 @@ def build_performance_matrix(
                     css = "invalid"
                 else:
                     value = float(candidate[field])
-                    display = f"{value:.{digits}%}" if unit == "%" else f"{value:,.{digits}f}"
+                    display = _matrix_display(value, unit, digits, fraction=fraction)
                     css = "best" if value == best_by_cell.get(cell) else ""
                 values_html.append(f'<td class="{css}">{html.escape(display)}</td>')
                 values_pdf.append(display)
