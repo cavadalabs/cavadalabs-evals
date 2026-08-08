@@ -13,6 +13,7 @@ from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     _decode_metrics,
     _performance_pdf,
+    _performance_telemetry,
     build_performance_matrix,
     compare_performance_runs,
     load_performance_plan,
@@ -47,6 +48,24 @@ def test_collapsed_sse_decode_timing_is_omitted() -> None:
     assert streamed["server_prompt_tokens_per_second"] == 500.0
     assert streamed["provider_decode_tokens_per_second"] == 999.0
     assert streamed["decode_rate_relative_difference"] == pytest.approx(0.0078125)
+
+
+def test_hardware_telemetry_is_validated_summarized_and_copied(tmp_path: Path) -> None:
+    telemetry = tmp_path / "gpu.csv"
+    telemetry.write_text(
+        "timestamp,device,edge_c,junction_c,memory_c,power_w,gpu_use_percent,vram_allocated_percent,vram_activity_percent,memory_activity,average_memory_bandwidth\n"
+        "2026-08-08T10:00:00+02:00,card0,40,50,60,100,90,70,20,N/A,0\n"
+        "2026-08-08T10:00:05+02:00,card0,42,53,62,110,100,72,30,N/A,0\n",
+        encoding="utf-8",
+    )
+    links = tmp_path / "links.tsv"
+    links.write_text("run-a\tgpu.csv\t5\trocm-smi\n", encoding="utf-8")
+    result = _performance_telemetry(links, {"run-a"}, tmp_path / "output")
+
+    assert result["run-a"]["average_board_power_w"] == 105
+    assert result["run-a"]["lifecycle_energy_wh"] == pytest.approx(105 * 5 / 3600)
+    assert result["run-a"]["vram_allocated_percent"]["max"] == 72
+    assert len(list((tmp_path / "output" / "telemetry").iterdir())) == 1
 
 
 def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:

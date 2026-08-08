@@ -129,6 +129,25 @@ matrix is complete and every cell is error-free, passes its preregistered gates,
 and has full server generation and prompt-timing coverage. Missing and invalid
 cells remain visible and make the command return a gate-failure exit code.
 
+For one-cell-per-run hardware campaigns, attach a tab-separated telemetry link
+file with `run_id`, relative CSV path, sampling interval in seconds, and
+collector name:
+
+```bash
+uv run cavada-eval perf matrix runs/performance/*/* \
+  --telemetry-links /evidence/telemetry-links.tsv \
+  --output runs/performance/matrices/MATRIX_ID
+```
+
+The CSV contract records timestamp, device, edge/junction/memory temperature,
+board power, GPU use, VRAM allocation/activity, memory activity, and bandwidth.
+The importer rejects unsafe paths, unknown/duplicate runs, malformed or
+non-monotonic samples, missing runs, excessive gaps, and multi-cell attribution.
+It preserves the raw CSVs by hash and reports lifecycle energy, average power,
+utilization, VRAM, and thermal distributions. Temperature is evidence, not an
+automatic stop condition. Board telemetry is not equivalent to wall-plug
+energy and the lifecycle includes warm-up and report finalization.
+
 ## Artifacts
 
 Each immutable run contains plan/runtime/workload snapshots, `requests.jsonl`,

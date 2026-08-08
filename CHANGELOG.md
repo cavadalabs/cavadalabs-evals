@@ -5,6 +5,9 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Performance matrices can attach validated, hash-preserved per-run GPU
+  telemetry and report lifecycle energy, board power, utilization, VRAM, and
+  thermal evidence without using temperature as an execution gate.
 - Added `cavada-eval perf matrix` for verified cross-context model × topology
   reports with completeness gates, dense HTML/PDF matrices, exact CSV/JSON,
   server-timing eligibility, and bootstrap intervals for median metrics.
