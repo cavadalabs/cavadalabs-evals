@@ -1,0 +1,105 @@
+{
+  "artifacts": [
+    "cells.csv",
+    "cells.jsonl",
+    "events.jsonl",
+    "figures/e2e.svg",
+    "figures/goodput.svg",
+    "figures/throughput.svg",
+    "figures/ttft.svg",
+    "manifest.json",
+    "observations.jsonl",
+    "plan_snapshot.toml",
+    "report.html",
+    "report.pdf",
+    "requests.jsonl",
+    "responses.jsonl",
+    "runtime_snapshot.toml",
+    "summary.json",
+    "warmups.jsonl",
+    "workload_snapshot.jsonl"
+  ],
+  "cells": {
+    "completed": 1,
+    "skipped": 0,
+    "slo_failed": 0,
+    "slo_passed": 1,
+    "total": 1,
+    "with_errors": 0
+  },
+  "environment": {
+    "hardware": {
+      "cpu_count": 8,
+      "machine": "arm64",
+      "memory_bytes": 8589934592,
+      "processor": "arm"
+    },
+    "platform": "macOS-26.5.1-arm64-arm-64bit",
+    "python": "3.11.13",
+    "uv_lock_sha256": "3151b5c0e50d771a3095d16f44a2f69188eff75fd23e57723308fc8cd92ad770"
+  },
+  "estimated_cost": null,
+  "finished_at": "2026-08-10T13:46:20.941057+00:00",
+  "performance_protocol_version": "1.0.0",
+  "plan": {
+    "data_classification": "synthetic",
+    "name": "historical-v1-golden",
+    "profile": "llm-serving-v1",
+    "revision": "1.0.0",
+    "sha256": "f20423c0b3042cda9648a26340bb413d4b58a97082773bbd53bbb478aac30e91"
+  },
+  "plan_version": "1.0.0",
+  "planned_cells": 1,
+  "planned_requests": 1,
+  "report_version": "1.0.0",
+  "requests": 1,
+  "run_id": "20260810T134620Z_loopback-fixture_3de48ad532",
+  "runtime": {
+    "api_key_env": "MISSING_FIXTURE_KEY",
+    "dtype": "synthetic",
+    "endpoint": "http://127.0.0.1:55077/v1",
+    "engine": "stdlib-loopback",
+    "engine_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expected_model": "fixture-model",
+    "gpu_count": 1,
+    "gpu_model": "synthetic-fixture-device",
+    "id": "loopback-fixture",
+    "launch_command_sanitized": "python stdlib loopback fixture server",
+    "max_context_tokens": 10,
+    "model_artifact_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "model_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pricing": null,
+    "quantization": "none",
+    "request_model": "fixture-model",
+    "runtime_version": "1.0.0",
+    "sha256": "a00aeae960dae0596ae261703aa1a5ea9d3dd285c95a88720f3e3b18d04aeadc",
+    "tensor_parallel": 1
+  },
+  "source": {
+    "commit": "9fd83112f0fd62e7dd1832cb50eb1c4a3671cbd7",
+    "dirty": false,
+    "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "started_at": "2026-08-10T13:46:20.830144+00:00",
+  "status": "completed",
+  "token_usage": {
+    "input": 8.0,
+    "output": 2.0,
+    "total": 10.0
+  },
+  "tokens": 10.0,
+  "warmups": {
+    "errors": 0,
+    "successes": 0,
+    "total": 0
+  },
+  "workload": {
+    "asset_set_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "assets": {},
+    "cases": 1,
+    "id": "historical-v1-golden",
+    "mode": "iso-token",
+    "revision": "1.0.0",
+    "sha256": "68afffe1e4d2171a92fa537f6adc9a1c799b5043ae8d8ae7602ed0acd6e71f90"
+  }
+}

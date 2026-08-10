@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/results-registry/1.0.0",
+  "title": "CavadaLabs Public Results Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_version", "results", "reproductions", "corrections"],
+  "properties": {
+    "registry_version": {"const": "1.0.0"},
+    "results": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/result"}
+    },
+    "reproductions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/reproduction"}
+    },
+    "corrections": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/correction"}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+    "uri": {"type": "string", "format": "uri", "pattern": "^https://"},
+    "nonempty": {"type": "string", "minLength": 1},
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": {"$ref": "#/$defs/uri"},
+        "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signer_id", "method", "uri", "sha256"],
+      "properties": {
+        "signer_id": {"$ref": "#/$defs/nonempty"},
+        "method": {"$ref": "#/$defs/nonempty"},
+        "uri": {"$ref": "#/$defs/uri"},
+        "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "bundleArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "bundle_sha256", "manifest_sha256"],
+      "properties": {
+        "uri": {"$ref": "#/$defs/uri"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "bundle_sha256": {"$ref": "#/$defs/hash"},
+        "manifest_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "versionedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "sha256"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonempty"},
+        "version": {"$ref": "#/$defs/semver"},
+        "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "benchmark", "inputs", "measurement", "parameters_sha256", "conditions_sha256", "source_commit"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/versionedArtifact"},
+        "benchmark": {"$ref": "#/$defs/versionedArtifact"},
+        "inputs": {"$ref": "#/$defs/versionedArtifact"},
+        "measurement": {"$ref": "#/$defs/versionedArtifact"},
+        "parameters_sha256": {"$ref": "#/$defs/hash"},
+        "conditions_sha256": {"$ref": "#/$defs/hash"},
+        "source_commit": {"$ref": "#/$defs/commit"}
+      }
+    },
+    "behaviorReleaseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_version", "release_id", "run_id", "bundle_sha256", "manifest_sha256", "engagement_id", "engagement_sha256", "approval_sha256", "assurance_level", "permitted_claims", "decision_statuses", "approved_at", "expires_at", "public_release"],
+      "properties": {
+        "release_version": {"const": "1.0.0"},
+        "release_id": {"$ref": "#/$defs/nonempty"},
+        "run_id": {"$ref": "#/$defs/nonempty"},
+        "bundle_sha256": {"$ref": "#/$defs/hash"},
+        "manifest_sha256": {"$ref": "#/$defs/hash"},
+        "engagement_id": {"$ref": "#/$defs/nonempty"},
+        "engagement_sha256": {"$ref": "#/$defs/hash"},
+        "approval_sha256": {"$ref": "#/$defs/hash"},
+        "assurance_level": {"const": "approved"},
+        "permitted_claims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "decision_statuses": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["statistical", "security", "privacy_legal", "disclosure", "release"],
+          "properties": {
+            "statistical": {"const": "passed"},
+            "security": {"const": "passed"},
+            "privacy_legal": {"enum": ["passed", "not-applicable"]},
+            "disclosure": {"const": "passed"},
+            "release": {"const": "passed"}
+          }
+        },
+        "approved_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "public_release": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "performanceReleaseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_version", "release_id", "run_id", "source_bundle_sha256", "source_manifest_sha256", "bundle_sha256", "manifest_sha256", "approval_sha256", "approver_id", "permitted_claims", "approved_at", "expires_at", "public_release"],
+      "properties": {
+        "release_version": {"const": "1.0.0"},
+        "release_id": {"$ref": "#/$defs/nonempty"},
+        "run_id": {"$ref": "#/$defs/nonempty"},
+        "source_bundle_sha256": {"$ref": "#/$defs/hash"},
+        "source_manifest_sha256": {"$ref": "#/$defs/hash"},
+        "bundle_sha256": {"$ref": "#/$defs/hash"},
+        "manifest_sha256": {"$ref": "#/$defs/hash"},
+        "approval_sha256": {"$ref": "#/$defs/hash"},
+        "approver_id": {"$ref": "#/$defs/nonempty"},
+        "permitted_claims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "approved_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "public_release": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "run_id", "published_at", "expires_at", "evaluated_system", "assurance", "artifact", "compatibility", "claims", "limitations"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["behavior", "performance", "external-import"]},
+        "run_id": {"$ref": "#/$defs/nonempty"},
+        "published_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "evaluated_system": {"$ref": "#/$defs/nonempty"},
+        "assurance": {"enum": ["compatible", "official"]},
+        "artifact": {"$ref": "#/$defs/bundleArtifact"},
+        "compatibility": {"$ref": "#/$defs/compatibility"},
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "release_evidence": {
+          "oneOf": [
+            {"$ref": "#/$defs/behaviorReleaseEvidence"},
+            {"$ref": "#/$defs/performanceReleaseEvidence"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"assurance": {"const": "official"}}, "required": ["assurance"]},
+          "then": {"required": ["release_evidence"]},
+          "else": {"not": {"required": ["release_evidence"]}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "external-import"}}, "required": ["kind"]},
+          "then": {"properties": {"assurance": {"const": "compatible"}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "behavior"}}, "required": ["kind"]},
+          "then": {"properties": {"release_evidence": {"$ref": "#/$defs/behaviorReleaseEvidence"}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "performance"}}, "required": ["kind"]},
+          "then": {"properties": {"release_evidence": {"$ref": "#/$defs/performanceReleaseEvidence"}}}
+        }
+      ]
+    },
+    "independence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluator_id", "organization", "independent", "conflicts_disclosed", "conflicts", "conflict_mitigation", "attestation"],
+      "properties": {
+        "evaluator_id": {"$ref": "#/$defs/nonempty"},
+        "organization": {"$ref": "#/$defs/nonempty"},
+        "independent": {"const": true},
+        "conflicts_disclosed": {"const": true},
+        "conflicts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        },
+        "conflict_mitigation": {"type": "string"},
+        "attestation": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "method", "evidence"],
+      "properties": {
+        "outcome": {"enum": ["confirmed", "not-confirmed", "inconclusive"]},
+        "method": {"$ref": "#/$defs/nonempty"},
+        "evidence": {"$ref": "#/$defs/artifact"}
+      }
+    },
+    "reproduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run_id", "original_result_id", "original_bundle_sha256", "published_at", "expires_at", "artifact", "compatibility", "independence", "comparison", "limitations"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "run_id": {"$ref": "#/$defs/nonempty"},
+        "original_result_id": {"$ref": "#/$defs/id"},
+        "original_bundle_sha256": {"$ref": "#/$defs/hash"},
+        "published_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "artifact": {"$ref": "#/$defs/bundleArtifact"},
+        "compatibility": {"$ref": "#/$defs/compatibility"},
+        "independence": {"$ref": "#/$defs/independence"},
+        "comparison": {"$ref": "#/$defs/comparison"},
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonempty"}
+        }
+      }
+    },
+    "correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "published_at", "subject_kind", "subject_id", "subject_bundle_sha256", "action", "reason", "notice", "signature"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "published_at": {"type": "string", "format": "date-time"},
+        "subject_kind": {"enum": ["result", "reproduction"]},
+        "subject_id": {"$ref": "#/$defs/id"},
+        "subject_bundle_sha256": {"$ref": "#/$defs/hash"},
+        "action": {"enum": ["notice", "withdraw", "supersede"]},
+        "replacement_id": {"$ref": "#/$defs/id"},
+        "reason": {"$ref": "#/$defs/nonempty"},
+        "notice": {"$ref": "#/$defs/artifact"},
+        "signature": {"$ref": "#/$defs/signature"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "supersede"}}, "required": ["action"]},
+          "then": {"required": ["replacement_id"]},
+          "else": {"not": {"required": ["replacement_id"]}}
+        }
+      ]
+    }
+  }
+}

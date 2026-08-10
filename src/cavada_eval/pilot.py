@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import math
+from collections import Counter
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from .artifacts import verify_bundle
 from .calibration import judge_evidence_errors, judge_signature
-from .protocol import ProtocolError, atomic_json, sha256_file
+from .protocol import ProtocolError, atomic_json, require_mutable_output_root, sha256_bytes, sha256_file
+
+STATUSES = ("pass", "fail", "invalid", "error", "skipped")
 
 
 def _json(path: Path, label: str) -> dict[str, Any]:
@@ -19,27 +23,206 @@ def _json(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
+def _local_path(root: Path, value: str, label: str) -> Path:
+    relative = Path(value)
+    windows_relative = PureWindowsPath(value)
+    if relative.is_absolute() or windows_relative.drive or ".." in relative.parts or ".." in windows_relative.parts or relative.as_posix() != value:
+        raise ProtocolError(f"{label} path must be package-relative")
+    candidate = root / relative
+    try:
+        current = root
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                raise ProtocolError(f"{label} path must not traverse symlinks")
+        if not candidate.resolve().is_relative_to(root.resolve()):
+            raise ProtocolError(f"{label} path escapes the campaign package")
+    except (OSError, ValueError) as exc:
+        raise ProtocolError(f"{label} path is invalid") from exc
+    return candidate
+
+
+def _jsonl(path: Path, label: str, errors: list[str]) -> list[dict[str, Any]] | None:
+    if not path.is_file() or path.is_symlink():
+        errors.append(f"{label} is missing or unsafe")
+        return None
+    rows: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        errors.append(f"cannot read {label}: {exc}")
+        return None
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f"{label} line {line_number} is invalid JSON")
+            return None
+        if not isinstance(row, dict):
+            errors.append(f"{label} line {line_number} must be an object")
+            return None
+        rows.append(row)
+    return rows
+
+
+def _aggregate_status(statuses: set[str]) -> str:
+    if "error" in statuses:
+        return "error"
+    if "invalid" in statuses or not statuses:
+        return "invalid"
+    if "skipped" in statuses:
+        return "skipped"
+    if "fail" in statuses:
+        return "fail"
+    if statuses == {"skipped"}:
+        return "skipped"
+    return "pass" if statuses == {"pass"} else "invalid"
+
+
+def _reconcile_ledgers(
+    run_path: Path,
+    relative: str,
+    metrics: dict[str, Any],
+    target_repetitions: int,
+    requirements: dict[str, Any],
+    errors: list[str],
+) -> str | None:
+    case_rows = _jsonl(run_path / "case_results.jsonl", f"pilot run {relative} case ledger", errors)
+    scenario_rows = _jsonl(run_path / "scenario_results.jsonl", f"pilot run {relative} scenario ledger", errors)
+    if case_rows is None or scenario_rows is None:
+        return None
+
+    case_keys: set[tuple[str, int]] = set()
+    repetitions_by_case: dict[str, set[int]] = {}
+    scenarios_by_case: dict[str, set[str]] = {}
+    statuses_by_scenario: dict[str, set[str]] = {}
+    malformed = False
+    for row in case_rows:
+        case_id = row.get("case_id")
+        repetition = row.get("repetition")
+        scenario_id = row.get("scenario_id")
+        status = row.get("status")
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or not isinstance(repetition, int)
+            or isinstance(repetition, bool)
+            or repetition < 1
+            or repetition > target_repetitions
+            or not isinstance(scenario_id, str)
+            or not scenario_id
+            or status not in STATUSES
+        ):
+            malformed = True
+            continue
+        key = (case_id, repetition)
+        if key in case_keys:
+            malformed = True
+        case_keys.add(key)
+        repetitions_by_case.setdefault(case_id, set()).add(repetition)
+        scenarios_by_case.setdefault(case_id, set()).add(scenario_id)
+        statuses_by_scenario.setdefault(scenario_id, set()).add(str(status))
+    if malformed:
+        errors.append(f"pilot run case ledger contains malformed or duplicate observations: {relative}")
+    expected_repetitions = set(range(1, target_repetitions + 1))
+    if (
+        len(repetitions_by_case) != requirements["evaluation_cases"]
+        or any(values != expected_repetitions for values in repetitions_by_case.values())
+        or any(len(values) != 1 for values in scenarios_by_case.values())
+        or len(case_rows) != requirements["evaluation_cases"] * target_repetitions
+    ):
+        errors.append(f"pilot run case ledger does not match its declared cases and repetitions: {relative}")
+
+    scenario_map: dict[str, str] = {}
+    categories: set[str] = set()
+    scenario_malformed = False
+    for row in scenario_rows:
+        case_id = row.get("case_id")
+        category = row.get("category")
+        status = row.get("status")
+        if not isinstance(case_id, str) or not case_id or not isinstance(category, str) or not category or status not in STATUSES or case_id in scenario_map:
+            scenario_malformed = True
+            continue
+        scenario_map[case_id] = str(status)
+        categories.add(category)
+    if scenario_malformed or len(scenario_map) != len(scenario_rows):
+        errors.append(f"pilot run scenario ledger contains malformed or duplicate observations: {relative}")
+    if len(scenario_map) != requirements["independent_scenarios"] or set(scenario_map) != set(statuses_by_scenario):
+        errors.append(f"pilot run scenario ledger does not match its declared independent scenarios: {relative}")
+    elif any(_aggregate_status(statuses_by_scenario[case_id]) != status for case_id, status in scenario_map.items()):
+        errors.append(f"pilot run scenario ledger disagrees with its case ledger: {relative}")
+
+    status_counts = Counter(scenario_map.values())
+    aggregate_scope = "single-construct" if len(categories) == 1 else "not-applicable"
+    judged = status_counts["pass"] + status_counts["fail"]
+    pass_rate = status_counts["pass"] / judged if judged else 0.0
+    expected_counts = {
+        "total": len(scenario_rows),
+        "observations": len(scenario_rows),
+        "evaluation_cases": len(repetitions_by_case),
+        "target_observations": len(case_rows),
+        **{status: status_counts[status] for status in STATUSES},
+    }
+    if (
+        any(
+            not isinstance(metrics.get(field), int) or isinstance(metrics[field], bool) or metrics[field] != expected
+            for field, expected in expected_counts.items()
+        )
+        or metrics.get("constructs") != sorted(categories)
+        or metrics.get("aggregate_scope") != aggregate_scope
+        or not isinstance(metrics.get("pass_rate"), (int, float))
+        or isinstance(metrics.get("pass_rate"), bool)
+        or not math.isclose(float(metrics["pass_rate"]), pass_rate, rel_tol=0, abs_tol=1e-12)
+    ):
+        errors.append(f"pilot run metrics do not reconcile with preserved ledgers: {relative}")
+    reconciliation = metrics.get("evidence_reconciliation")
+    if (
+        not isinstance(reconciliation, dict)
+        or reconciliation.get("valid") is not True
+        or reconciliation.get("case_results") != len(case_rows)
+        or reconciliation.get("expected_observations") != len(case_rows)
+        or reconciliation.get("errors") != []
+    ):
+        errors.append(f"pilot run execution evidence reconciliation is incomplete: {relative}")
+    return aggregate_scope if not scenario_malformed and categories else None
+
+
 def _evidence(campaign_root: Path, record: Any, label: str, errors: list[str]) -> dict[str, Any] | None:
     if not isinstance(record, dict) or not isinstance(record.get("path"), str) or not isinstance(record.get("sha256"), str):
         errors.append(f"{label} path and sha256 are required")
         return None
-    path = (campaign_root / record["path"]).resolve()
-    if not path.is_file():
+    if len(record["sha256"]) != 64 or any(character not in "0123456789abcdef" for character in record["sha256"]):
+        errors.append(f"{label} sha256 is malformed")
+        return None
+    path = _local_path(campaign_root, record["path"], label)
+    if not path.is_file() or path.is_symlink():
         errors.append(f"{label} file is missing")
         return None
-    if sha256_file(path) != record["sha256"]:
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        errors.append(f"cannot read {label}: {exc}")
+        return None
+    if sha256_bytes(raw) != record["sha256"]:
         errors.append(f"{label} hash mismatch")
         return None
     try:
-        return _json(path, label)
-    except ProtocolError as exc:
-        errors.append(str(exc))
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(f"cannot read {label}: {exc}")
         return None
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be a JSON object")
+        return None
+    return value
 
 
 def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
     campaign_path = campaign_path.resolve()
     output = output.resolve()
+    require_mutable_output_root(output.parent)
     if output.exists():
         raise ProtocolError(f"pilot audit output already exists: {output}")
     campaign = _json(campaign_path, "pilot campaign")
@@ -53,6 +236,11 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
     suite_fields = ("name", "version", "dataset_sha256", "rubric_sha256", "suite_config_sha256")
     if not all(isinstance(suite.get(field), str) and suite[field] for field in suite_fields):
         raise ProtocolError("pilot suite identity is incomplete")
+    version_parts = suite["version"].split(".")
+    if len(version_parts) != 3 or not all(part.isdigit() for part in version_parts):
+        raise ProtocolError("pilot suite version must be semantic")
+    if any(len(suite[field]) != 64 or any(character not in "0123456789abcdef" for character in suite[field]) for field in suite_fields[2:]):
+        raise ProtocolError("pilot suite hashes are malformed")
     numeric_requirements = (
         "minimum_model_families",
         "minimum_target_repetitions",
@@ -60,8 +248,12 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
         "evaluation_cases",
         "independent_scenarios",
     )
-    if not all(isinstance(requirements.get(field), int) and not isinstance(requirements[field], bool) and requirements[field] > 0 for field in numeric_requirements):
+    if not all(
+        isinstance(requirements.get(field), int) and not isinstance(requirements[field], bool) and requirements[field] > 0 for field in numeric_requirements
+    ):
         raise ProtocolError("pilot numeric requirements must be positive integers")
+    if requirements["minimum_model_families"] < 3 or requirements["minimum_target_repetitions"] < 3 or requirements["minimum_judge_repetitions"] < 3:
+        raise ProtocolError("pilot campaign requires at least three families and three repetitions")
     positive_min = requirements.get("positive_control_min_pass_rate")
     negative_max = requirements.get("negative_control_max_pass_rate")
     if (
@@ -74,6 +266,8 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
         raise ProtocolError("pilot control pass-rate thresholds are invalid")
 
     errors: list[str] = []
+    if len(runs) < 5:
+        errors.append("pilot campaign requires at least five runs")
     campaign_root = campaign_path.parent
     qualification = _evidence(campaign_root, campaign.get("judge_qualification"), "judge qualification", errors)
     approval = _evidence(campaign_root, campaign.get("judge_independent_approval"), "judge independent approval", errors)
@@ -110,7 +304,7 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
         if role not in roles or not isinstance(alias, str) or not alias or not isinstance(relative, str) or not relative:
             raise ProtocolError(f"pilot run {index} has invalid role, family_alias, or path")
         roles[str(role)].append(record)
-        run_path = (campaign_root / relative).resolve()
+        run_path = _local_path(campaign_root, relative, f"pilot run {index}")
         if run_path in run_paths:
             errors.append(f"pilot run path is repeated: {relative}")
             continue
@@ -133,8 +327,12 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
             errors.append(f"pilot run suite identity mismatch: {relative}")
         parameters = manifest.get("parameters") or {}
         metrics = manifest.get("metrics") or {}
+        if not isinstance(parameters, dict) or not isinstance(metrics, dict):
+            errors.append(f"pilot run parameters or metrics are malformed: {relative}")
+            continue
         target_repetitions = parameters.get("repetitions")
         judge_repetitions = parameters.get("judge_repetitions")
+        aggregate_scope: str | None = None
         if (
             parameters.get("max_cases") != 0
             or not isinstance(target_repetitions, int)
@@ -154,12 +352,13 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
         integrity_counts = tuple(metrics.get(field) for field in ("invalid", "error", "skipped"))
         if any(not isinstance(value, int) or isinstance(value, bool) or value != 0 for value in integrity_counts):
             errors.append(f"pilot run contains invalid, error, or skipped scenarios: {relative}")
+        if isinstance(target_repetitions, int) and not isinstance(target_repetitions, bool) and target_repetitions > 0:
+            aggregate_scope = _reconcile_ledgers(run_path, relative, metrics, target_repetitions, requirements, errors)
         if manifest.get("status") not in {"passed", "failed"} or manifest.get("abort_reason") or not manifest.get("finished_at"):
             errors.append(f"pilot run is aborted or unfinished: {relative}")
         artifact_versions.add(
             tuple(
-                str(manifest.get(field, ""))
-                for field in ("protocol_version", "schema_version", "report_version", "metric_version", "adapter_contract_version")
+                str(manifest.get(field, "")) for field in ("protocol_version", "schema_version", "report_version", "metric_version", "adapter_contract_version")
             )
         )
         manifest_judge = manifest.get("judge")
@@ -176,12 +375,14 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
             or not execution["mode"]
             or not isinstance(execution["timeout_seconds"], (int, float))
             or isinstance(execution["timeout_seconds"], bool)
+            or not math.isfinite(float(execution["timeout_seconds"]))
             or float(execution["timeout_seconds"]) <= 0
             or not isinstance(execution["concurrency"], int)
             or isinstance(execution["concurrency"], bool)
             or execution["concurrency"] <= 0
             or not isinstance(execution["requests_per_second"], (int, float))
             or isinstance(execution["requests_per_second"], bool)
+            or not math.isfinite(float(execution["requests_per_second"]))
             or float(execution["requests_per_second"]) < 0
             or not isinstance(case_order_sha256, str)
             or len(case_order_sha256) != 64
@@ -203,14 +404,27 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
                 errors.append(f"pilot target identity is repeated: {relative}")
             target_identities.add(identity)
         pass_rate = metrics.get("pass_rate")
-        if role in {"positive-control", "negative-control"}:
-            if not isinstance(pass_rate, (int, float)) or isinstance(pass_rate, bool):
-                errors.append(f"{role} has no valid pass rate: {relative}")
+        if not isinstance(pass_rate, (int, float)) or isinstance(pass_rate, bool) or not math.isfinite(float(pass_rate)) or not 0 <= float(pass_rate) <= 1:
+            errors.append(f"pilot run has no valid pass rate: {relative}")
+            pass_rate = None
+        elif role in {"positive-control", "negative-control"}:
+            if aggregate_scope != "single-construct":
+                errors.append(f"{role} cannot use an aggregate pass-rate threshold across multiple constructs: {relative}")
             elif role == "positive-control" and float(pass_rate) < float(positive_min):
                 errors.append(f"positive control did not meet its pass-rate threshold: {relative}")
             elif role == "negative-control" and float(pass_rate) > float(negative_max):
                 errors.append(f"negative control did not meet its pass-rate threshold: {relative}")
-        summaries.append({"run_id": run_id, "role": role, "family_alias": alias, "target": target, "pass_rate": pass_rate, "bundle_sha256": sha256_file(run_path / "bundle.json")})
+        summaries.append(
+            {
+                "run_id": run_id,
+                "role": role,
+                "family_alias": alias,
+                "target": target,
+                "pass_rate": pass_rate,
+                "aggregate_scope": aggregate_scope,
+                "bundle_sha256": sha256_file(run_path / "bundle.json"),
+            }
+        )
 
     target_aliases = {str(record["family_alias"]) for record in roles["target"]}
     if len(target_aliases) < requirements["minimum_model_families"]:
@@ -234,6 +448,7 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
                 qualification_sha256=str(qualification_record.get("sha256", "")),
                 expected_judge=expected_judge_configuration,
                 rubric_sha256=str(suite["rubric_sha256"]),
+                approval_root=campaign_root,
             )
         )
     report = {

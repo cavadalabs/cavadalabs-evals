@@ -16,9 +16,13 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Testing",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+deepeval = ["deepeval>=3,<4"]
 
 [project.urls]
 Homepage = "https://github.com/cavadalabs/cavadalabs-evals"
@@ -30,15 +34,36 @@ Issues = "https://github.com/cavadalabs/cavadalabs-evals/issues"
 cavada-eval = "cavada_eval.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.12,<1", "mypy>=1.15,<2"]
-deepeval = ["deepeval>=3,<4"]
+dev = ["jsonschema>=4.23,<5", "pytest>=8.3", "ruff>=0.12,<1", "mypy>=1.15,<2"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cavada_eval"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "cavada_eval/_resources/schemas"
+"performance" = "cavada_eval/_resources/performance"
+"program" = "cavada_eval/_resources/program"
+"standards" = "cavada_eval/_resources/standards"
+"suites" = "cavada_eval/_resources/suites"
+"PROTOCOL.md" = "cavada_eval/_resources/PROTOCOL.md"
+"PERFORMANCE_PROTOCOL.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL.md"
+"PERFORMANCE_PROTOCOL_V1_0.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_0.md"
+"PERFORMANCE_PROTOCOL_V1_1.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_1.md"
+"PERFORMANCE_PROTOCOL_V2.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V2.md"
+"IMPLEMENTATION_CHECKLIST.md" = "cavada_eval/_resources/IMPLEMENTATION_CHECKLIST.md"
+"OFFICIAL_EVALUATION_PROGRAM.md" = "cavada_eval/_resources/OFFICIAL_EVALUATION_PROGRAM.md"
+"SECURITY.md" = "cavada_eval/_resources/SECURITY.md"
+"docs/COMPLIANCE.md" = "cavada_eval/_resources/docs/COMPLIANCE.md"
+"docs/THREAT_MODEL.md" = "cavada_eval/_resources/docs/THREAT_MODEL.md"
+".github/workflows/ci.yml" = "cavada_eval/_resources/.github/workflows/ci.yml"
+"uv.lock" = "cavada_eval/_resources/uv.lock"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.codex-internal/**", "/dist/**", "/runs/**", "/tmp/**"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

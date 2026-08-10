@@ -26,7 +26,7 @@ When creating or running a benchmark:
 
 ## LLM serving performance runs
 
-1. Follow `PERFORMANCE_PROTOCOL.md`; validate the complete plan, workload, and runtime before starting or contacting an endpoint.
+1. Follow `PERFORMANCE_PROTOCOL_V2.md` for current/reference runs; validate the complete plan, workload, and runtime before starting or contacting an endpoint. `PERFORMANCE_PROTOCOL_V1_1.md` is an unanchored historical-development snapshot; `PERFORMANCE_PROTOCOL_V1_0.md` remains the commit-anchored historical contract for its recorded bundles.
 2. Keep inference engines outside this repository. Never execute a stored launch command automatically.
 3. If explicitly asked to start an engine, use its documented command, record immutable revisions and a credential-free command, verify readiness, and stop only the process you started.
 4. Never modify an existing performance plan or workload for a run. Create a new version and preserve exact hashes.

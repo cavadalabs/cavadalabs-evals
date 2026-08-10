@@ -1,8 +1,22 @@
 # Contributing
 
-All code, configuration, documentation, errors, and report labels must be in
-English. Run `uv run pytest`, `uv run ruff check .`, `uv run mypy src`,
-`uv run cavada-eval doctor`, and `uv build` before requesting review.
+Public code, configuration, documentation, errors, and report labels must be in
+English. Before requesting review, run:
+
+```console
+uv sync --frozen
+uv lock --check
+uv run ruff check .
+uv run mypy src
+uv run pytest
+uv run python scripts/check_release.py
+uv run cavada-eval doctor
+uv build
+uv run python scripts/check_distribution.py
+```
+
+These checks validate the working commit; they do not approve a suite or close
+the external release decisions in `docs/PUBLICATION_INVENTORY.md`.
 
 Never modify a released dataset or rubric. Copy the suite to a new semantic
 version, document the change, recompute hashes, recalibrate, and preserve the

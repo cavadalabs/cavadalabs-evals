@@ -7,12 +7,37 @@ from statistics import mean, median, pstdev
 from typing import Any
 
 
+def _finite_values(values: Iterable[float]) -> list[float]:
+    try:
+        samples = [float(value) for value in values]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("statistical inputs must be finite numbers") from exc
+    if any(not math.isfinite(value) for value in samples):
+        raise ValueError("statistical inputs must be finite numbers")
+    return samples
+
+
+def _resampling_parameters(confidence: float, samples: int, seed: int) -> None:
+    if (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or not math.isfinite(float(confidence))
+        or not 0 < float(confidence) < 1
+        or not isinstance(samples, int)
+        or isinstance(samples, bool)
+        or samples < 100
+        or not isinstance(seed, int)
+        or isinstance(seed, bool)
+    ):
+        raise ValueError("confidence must be finite and between 0 and 1, samples at least 100, and seed an integer")
+
+
 def percentile(values: Sequence[float], probability: float) -> float:
-    if not values:
+    if not isinstance(probability, (int, float)) or isinstance(probability, bool) or not math.isfinite(float(probability)) or not 0 <= float(probability) <= 1:
+        raise ValueError("probability must be a finite number from 0 to 1")
+    ordered = sorted(_finite_values(values))
+    if not ordered:
         return 0.0
-    if not 0 <= probability <= 1:
-        raise ValueError("probability must be from 0 to 1")
-    ordered = sorted(float(value) for value in values)
     position = (len(ordered) - 1) * probability
     lower = math.floor(position)
     upper = math.ceil(position)
@@ -22,7 +47,7 @@ def percentile(values: Sequence[float], probability: float) -> float:
 
 
 def distribution(values: Iterable[float]) -> dict[str, float | int]:
-    samples = [float(value) for value in values]
+    samples = _finite_values(values)
     if not samples:
         return {"count": 0, "min": 0.0, "max": 0.0, "mean": 0.0, "median": 0.0, "stdev": 0.0, "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
     return {
@@ -46,11 +71,10 @@ def bootstrap_mean_interval(
     samples: int = 10_000,
     seed: int = 0,
 ) -> dict[str, float | int]:
-    if not values:
+    _resampling_parameters(confidence, samples, seed)
+    source = _finite_values(values)
+    if not source:
         return {"lower": 0.0, "upper": 0.0, "confidence": confidence, "samples": samples, "seed": seed}
-    if not 0 < confidence < 1 or samples < 100:
-        raise ValueError("confidence must be between 0 and 1 and samples must be at least 100")
-    source = [float(value) for value in values]
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.
     estimates = [mean(rng.choices(source, k=len(source))) for _ in range(samples)]
     tail = (1 - confidence) / 2
@@ -70,11 +94,10 @@ def stratified_bootstrap_mean_interval(
     samples: int = 10_000,
     seed: int = 0,
 ) -> dict[str, float | int]:
-    groups = {name: [float(value) for value in values] for name, values in strata.items() if values}
+    _resampling_parameters(confidence, samples, seed)
+    groups = {name: finite for name, values in strata.items() if (finite := _finite_values(values))}
     if not groups:
         return bootstrap_mean_interval([], confidence=confidence, samples=samples, seed=seed)
-    if not 0 < confidence < 1 or samples < 100:
-        raise ValueError("confidence must be between 0 and 1 and samples must be at least 100")
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.
     total = sum(len(values) for values in groups.values())
     estimates = [sum(sum(rng.choices(values, k=len(values))) for values in groups.values()) / total for _ in range(samples)]
@@ -90,8 +113,8 @@ def stratified_bootstrap_mean_interval(
 
 
 def mcnemar_exact(baseline: Sequence[bool], candidate: Sequence[bool]) -> dict[str, float | int]:
-    if len(baseline) != len(candidate) or not baseline:
-        raise ValueError("paired non-empty samples of equal length are required")
+    if len(baseline) != len(candidate) or not baseline or not all(isinstance(value, bool) for value in (*baseline, *candidate)):
+        raise ValueError("paired non-empty boolean samples of equal length are required")
     baseline_only = sum(left and not right for left, right in zip(baseline, candidate, strict=True))
     candidate_only = sum(right and not left for left, right in zip(baseline, candidate, strict=True))
     discordant = baseline_only + candidate_only
@@ -111,6 +134,8 @@ def paired_binary_comparison(
     samples: int = 10_000,
     seed: int = 0,
 ) -> dict[str, Any]:
+    if not all(isinstance(value, bool) for value in (*baseline.values(), *candidate.values())):
+        raise ValueError("paired comparison inputs must be booleans")
     shared = sorted(set(baseline) & set(candidate))
     if not shared:
         raise ValueError("runs have no shared case IDs")
@@ -132,7 +157,10 @@ def paired_binary_comparison(
 
 
 def holm_adjust(p_values: Sequence[float]) -> list[float]:
-    indexed = sorted(enumerate(float(value) for value in p_values), key=lambda item: item[1])
+    values = _finite_values(p_values)
+    if any(not 0 <= value <= 1 for value in values):
+        raise ValueError("p-values must be finite numbers from 0 to 1")
+    indexed = sorted(enumerate(values), key=lambda item: item[1])
     adjusted = [0.0] * len(indexed)
     running = 0.0
     for rank, (original_index, value) in enumerate(indexed):

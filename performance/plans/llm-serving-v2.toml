@@ -1,0 +1,90 @@
+plan_version = "2.0.0"
+revision = "2.0.0"
+name = "llm-serving-v2"
+description = "Reference OpenAI-compatible LLM serving campaign with deterministic cache diversity, Poisson offered load, and fail-closed tail-latency resolution. Thresholds are examples, not universal SLOs."
+profile = "llm-serving-v2"
+data_classification = "synthetic"
+
+[workload]
+id = "llm-serving-synthetic-v2"
+revision = "2.0.0"
+path = "../workloads/llm-serving-synthetic-v2.jsonl"
+sha256 = "0d42a222f86c3146f54c73a3d40d980c8e20286e8e1edd9100f26bfa26ad6dc8"
+mode = "iso-prompt"
+prefix_cache_policy = "diverse"
+input_token_tolerance_fraction = 0.05
+
+[generation]
+stream = true
+temperature = 0
+request_defaults = { top_p = 1 }
+
+[execution]
+repetitions = 3
+warmup_requests = 5
+measured_requests = 120
+open_loop_duration_seconds = 180
+open_loop_arrival_distribution = "poisson"
+bootstrap_samples = 2000
+seed = 4345
+randomize_cells = true
+cooldown_seconds = 5
+max_in_flight = 256
+
+[load_generator]
+minimum_dispatch_rate_fraction = 0.98
+maximum_dispatch_lag_p95_ms = 100
+maximum_dispatch_lag_ms = 1000
+
+[limits]
+timeout_seconds = 900
+max_requests = 80000
+max_total_tokens = 4000000000
+max_campaign_seconds = 259200
+max_context_tokens = 270336
+max_output_tokens = 8192
+
+[slo]
+ttft_p95_ms = 5000
+e2e_p99_ms = 120000
+goodput_ttft_ms = 5000
+goodput_e2e_ms = 120000
+maximum_error_rate = 0.01
+minimum_output_tokens_fraction = 0.5
+minimum_p99_observations = 100
+
+[[scenarios]]
+id = "single-user-context-output"
+arrival = "closed-loop"
+context_tokens = [128, 512, 2048, 8192, 32768, 65536, 131072, 262144]
+output_tokens = [128, 512, 2048, 8192]
+concurrency = [1]
+warmup_requests = 2
+measured_requests = 120
+
+[[scenarios]]
+id = "multi-user-throughput"
+arrival = "closed-loop"
+context_tokens = [2048, 32768, 131072]
+output_tokens = [512]
+concurrency = [1, 2, 4, 8, 16, 32, 64]
+warmup_requests = 64
+measured_requests = 640
+
+[[scenarios]]
+id = "long-context-concurrency"
+arrival = "closed-loop"
+context_tokens = [131072, 262144]
+output_tokens = [2048]
+concurrency = [1, 2, 4]
+warmup_requests = 4
+measured_requests = 120
+
+[[scenarios]]
+id = "open-loop-capacity"
+arrival = "open-loop"
+context_tokens = [2048]
+output_tokens = [512]
+request_rates = [1, 2, 5, 10, 20]
+warmup_requests = 5
+duration_seconds = 180

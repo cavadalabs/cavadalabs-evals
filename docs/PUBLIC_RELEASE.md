@@ -19,38 +19,65 @@ Before the first public push, an organization owner must:
 
 ## Publication audit
 
-From a clean checkout run:
+Use uv 0.11.14. From a clean checkout with no earlier files in `dist/`, run:
 
 ```bash
 uv sync --frozen
+uv lock --check
 uv run ruff check .
 uv run mypy src
 uv run pytest
 uv run python scripts/check_secrets.py
+uv run python scripts/check_release.py
+uv run python scripts/validate_results_registry.py
 uv run cavada-eval doctor
 uv run cavada-eval program
-uv run cavada-eval perf validate --preset quick
-uv run cavada-eval perf validate --preset standard
+uv run cavada-eval perf validate --preset reference
+audit_file=$(mktemp)
+uv export --quiet --frozen --no-dev --extra deepeval --no-emit-project --output-file "$audit_file"
+uvx pip-audit==2.10.1 --strict --progress-spinner off --disable-pip --requirement "$audit_file"
 uv build
-uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
-uv run python scripts/generate_provenance.py
+uv run python scripts/check_distribution.py
+wheel=$(realpath dist/*.whl)
+smoke_dir=$(mktemp -d)
+(cd "$smoke_dir" && uvx --from "$wheel" cavada-eval doctor)
+(cd "$smoke_dir" && uvx --from "$wheel" cavada-eval list)
+(cd "$smoke_dir" && uvx --from "$wheel" cavada-eval program)
+(cd "$smoke_dir" && uvx --from "$wheel" cavada-eval perf validate --preset reference)
+uv run python scripts/generate_sbom.py --wheel dist/*.whl --output dist/sbom.cdx.json
+uv run python scripts/generate_provenance.py --require-clean
 git status --short
 ```
+
+The core wheel intentionally declares zero unconditional runtime dependencies.
+The dependency audit above therefore exports and audits the complete locked
+`deepeval` extra instead of auditing unrelated packages from the development
+environment. The SBOM is generated from the built wheel's `METADATA`; provenance
+records the exact uv and build-backend versions.
 
 Review the complete Git history for credentials, customer identifiers, internal
 hosts, personal data, private holdouts, licensed content, and restricted attack
 payloads. A current-tree scan does not clear historical commits.
 
-Resolve every blocked row in `docs/PUBLICATION_INVENTORY.md`. Do not make the
-repository public while a tracked suite lacks an affirmative redistribution
-decision or while unintended author-email disclosure remains unresolved.
+Resolve every blocked row in `docs/PUBLICATION_INVENTORY.md`, including the
+organizational approval and historical author-email decisions. Do not make the
+repository public while any decision remains blocked.
 
 Publish the first release as a pre-1.0 developer preview. Do not tag a release
 until the package version, changelog, citation metadata, protocol status, and
 known limitations agree. Do not publish generated run directories from Git.
+Immediately before a tag, move all release notes out of `Unreleased`, then run
+`GITHUB_REF_NAME=vX.Y.Z uv run python scripts/check_release.py --release`. This
+gate requires the tag, `pyproject.toml`, package `__version__`, CLI version,
+`CITATION.cff`, and changelog release to agree and rejects unknown inventory
+decisions or any remaining blocker.
 
 ## Result publication
 
 Repository publication does not authorize benchmark-result publication. Follow
 `RESULTS_POLICY.md`; official public export additionally requires the exact
 engagement and post-run release approval required by `PROTOCOL.md`.
+The public behavior bundle records the evaluation window and a non-sensitive
+projection of each preregistered confidence-bound gate. `cavada-eval verify`
+recomputes those gates and the published category metrics; authenticity still
+requires a trusted signature or registry entry.

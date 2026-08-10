@@ -1,0 +1,17 @@
+runtime_version = "1.0.0"
+id = "loopback-fixture"
+endpoint = "http://127.0.0.1:55077/v1"
+request_model = "fixture-model"
+expected_model = "fixture-model"
+model_revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+api_key_env = "MISSING_FIXTURE_KEY"
+engine = "stdlib-loopback"
+engine_revision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+model_artifact_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+dtype = "synthetic"
+quantization = "none"
+gpu_count = 1
+gpu_model = "synthetic-fixture-device"
+tensor_parallel = 1
+max_context_tokens = 10
+launch_command_sanitized = "python stdlib loopback fixture server"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 from typing import Any
 
@@ -39,7 +40,7 @@ def secure_import() -> tuple[Any, Any, str]:
         metrics = importlib.import_module("deepeval.metrics")
         test_case = importlib.import_module("deepeval.test_case")
     except ImportError as exc:
-        raise ProtocolError("DeepEval is not installed; run `uv sync --group deepeval`") from exc
+        raise ProtocolError("DeepEval is not installed; install the published `deepeval` extra or run `uv sync --extra deepeval`") from exc
     version = str(getattr(deepeval, "__version__", "unknown"))
     if not version.startswith("3."):
         raise ProtocolError(f"unsupported DeepEval version: {version}")
@@ -85,6 +86,8 @@ def evaluate_metrics(
             score = float(metric.measure(test_case, _show_indicator=False, _log_metric_to_confident=False))
         except Exception as exc:
             raise ProtocolError(f"DeepEval metric {name} failed: {exc}") from exc
+        if not math.isfinite(score):
+            raise ProtocolError(f"DeepEval metric {name} returned a non-finite score")
         results.append(
             {
                 "engine": "deepeval",

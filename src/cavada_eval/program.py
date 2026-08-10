@@ -479,6 +479,7 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
     crosswalk = load_evidence_crosswalk(
         repo_root / registry["evidence_crosswalk"],
         {str(source["id"]) for source in source_register["sources"]},
+        repo_root=repo_root,
     )
     return {
         **registry,
@@ -582,7 +583,7 @@ def validate_source_register(register: dict[str, Any]) -> list[str]:
     return errors
 
 
-def load_evidence_crosswalk(path: Path, source_ids: set[str]) -> dict[str, Any]:
+def load_evidence_crosswalk(path: Path, source_ids: set[str], *, repo_root: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as handle:
             crosswalk = tomllib.load(handle)
@@ -632,6 +633,27 @@ def load_evidence_crosswalk(path: Path, source_ids: set[str]) -> dict[str, Any]:
             values = mapping.get(field)
             if not isinstance(values, list) or not values or not all(isinstance(value, str) and value.strip() for value in values):
                 errors.append(f"{prefix}.{field} must be a non-empty string array")
+        evidence = mapping.get("repository_evidence")
+        if isinstance(evidence, list):
+            for value in evidence:
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                relative = Path(value)
+                if relative.is_absolute() or ".." in relative.parts:
+                    errors.append(f"{prefix}.repository_evidence contains unsafe path: {value}")
+                    continue
+                packaged_source = relative.parts[:2] == ("src", "cavada_eval") and repo_root.resolve() == (
+                    Path(__file__).resolve().parent / "_resources"
+                ).resolve()
+                resolved = ((Path(__file__).resolve().parent / Path(*relative.parts[2:])) if packaged_source else (repo_root / relative)).resolve()
+                evidence_root = Path(__file__).resolve().parent if packaged_source else repo_root.resolve()
+                try:
+                    resolved.relative_to(evidence_root)
+                except ValueError:
+                    errors.append(f"{prefix}.repository_evidence escapes the repository: {value}")
+                    continue
+                if not resolved.exists():
+                    errors.append(f"{prefix}.repository_evidence does not exist: {value}")
     if errors:
         raise ProtocolError("invalid evidence crosswalk:\n" + "\n".join(errors))
     return {

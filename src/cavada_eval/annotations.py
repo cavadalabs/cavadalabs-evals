@@ -3,23 +3,46 @@ from __future__ import annotations
 import json
 import random
 import secrets
+import shutil
+import tempfile
+import tomllib
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import quantiles
 from typing import Any
 
-from .protocol import ProtocolError, Suite, append_jsonl, atomic_json, atomic_text, sha256_file
+from .artifacts import verify_bundle
+from .protocol import ProtocolError, Suite, append_jsonl, atomic_json, atomic_text, require_mutable_output_root, sha256_bytes, sha256_file
 from .runner import _target_answer
 
 ANNOTATION_LABELS = {"pass", "fail", "invalid", "borderline"}
+EDITABLE_ANNOTATION_FIELDS = {"label", "criterion_findings", "rationale", "failure_severity", "confidence", "escalation_flags"}
+EVIDENCE_BINDING_FIELDS = (
+    "package_manifest_sha256",
+    "restricted_linkage_sha256",
+    "source_run_manifest_sha256",
+    "source_run_bundle_sha256",
+    "source_raw_responses_sha256",
+    "dataset_sha256",
+    "rubric_sha256",
+)
 
 
-def _jsonl(path: Path) -> list[dict[str, Any]]:
+def _immutable_item_sha256(row: dict[str, Any]) -> str:
+    immutable = {key: value for key, value in row.items() if key not in EDITABLE_ANNOTATION_FIELDS}
+    return sha256_bytes(json.dumps(immutable, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _jsonl(path: Path, content: bytes | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
+        lines = (path.read_bytes() if content is None else content).decode("utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
         raise ProtocolError(f"cannot read annotation source: {exc}") from exc
     for line_number, raw in enumerate(lines, 1):
         if not raw.strip():
@@ -38,6 +61,8 @@ def export_annotation_package(suite: Suite, run_dir: Path, output: Path, linkage
     run_dir = run_dir.resolve()
     output = output.resolve()
     linkage_output = linkage_output.resolve()
+    require_mutable_output_root(output)
+    require_mutable_output_root(linkage_output.parent)
     if output.exists() or linkage_output.exists():
         raise ProtocolError("annotation package or restricted linkage output already exists")
     if linkage_output == output or output in linkage_output.parents:
@@ -46,11 +71,56 @@ def export_annotation_package(suite: Suite, run_dir: Path, output: Path, linkage
     manifest_path = run_dir / "manifest.json"
     if not raw_path.is_file() or not manifest_path.is_file():
         raise ProtocolError("run directory must contain manifest.json and raw_responses.jsonl")
+    try:
+        suite_config_raw = (suite.root / "suite.toml").read_bytes()
+        dataset_raw = suite.dataset_path.read_bytes()
+        rubric_raw = suite.rubric_path.read_bytes()
+        suite_config = tomllib.loads(suite_config_raw.decode("utf-8"))
+        rubric = rubric_raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ProtocolError("annotation suite inputs are unreadable") from exc
+    if suite_config != suite.config or tuple(_jsonl(suite.dataset_path, dataset_raw)) != suite.cases or rubric != suite.rubric:
+        raise ProtocolError("annotation suite changed after loading")
+    with tempfile.TemporaryDirectory(prefix="cavada-annotation-source-") as temporary:
+        snapshot = Path(temporary) / "run"
+        try:
+            shutil.copytree(run_dir, snapshot, symlinks=True)
+        except OSError as exc:
+            raise ProtocolError("annotation source run could not be snapshotted") from exc
+        if not verify_bundle(snapshot)["valid"]:
+            raise ProtocolError("annotation source run bundle is invalid")
+        source_manifest_raw = (snapshot / "manifest.json").read_bytes()
+        raw_responses = (snapshot / "raw_responses.jsonl").read_bytes()
+        source_bundle_raw = (snapshot / "bundle.json").read_bytes()
+    try:
+        source_manifest = json.loads(source_manifest_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProtocolError("annotation source run manifest is invalid") from exc
+    if not isinstance(source_manifest, dict):
+        raise ProtocolError("annotation source run manifest is invalid")
+    expected_suite = {
+        "name": suite.name,
+        "version": suite.version,
+        "dataset_sha256": sha256_bytes(dataset_raw),
+        "rubric_sha256": sha256_bytes(rubric_raw),
+        "suite_config_sha256": sha256_bytes(suite_config_raw),
+    }
+    source_suite = source_manifest.get("suite")
+    raw_sha256 = sha256_bytes(raw_responses)
+    if (
+        not isinstance(source_suite, dict)
+        or any(source_suite.get(field) != value for field, value in expected_suite.items())
+        or source_manifest.get("protocol_version") != suite.config["protocol_version"]
+        or source_manifest.get("status") not in {"passed", "failed"}
+        or not isinstance(source_manifest.get("artifacts"), dict)
+        or source_manifest["artifacts"].get("raw_responses.jsonl") != raw_sha256
+    ):
+        raise ProtocolError("annotation source run does not match the exact finalized suite evidence")
     cases = {str(case["id"]): case for case in suite.cases}
     package_rows: list[dict[str, Any]] = []
     linkage_rows: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
-    for raw in _jsonl(raw_path):
+    for raw in _jsonl(raw_path, raw_responses):
         case_id = str(raw.get("case_id", ""))
         repetition = raw.get("repetition")
         response = raw.get("response")
@@ -85,34 +155,50 @@ def export_annotation_package(suite: Suite, run_dir: Path, output: Path, linkage
                 "escalation_flags": [],
             }
         )
-        linkage_rows.append({"package_id": package_id, "case_id": case_id, "repetition": repetition})
+        linkage_rows.append(
+            {
+                "package_id": package_id,
+                "case_id": case_id,
+                "repetition": repetition,
+                "item_sha256": _immutable_item_sha256(package_rows[-1]),
+            }
+        )
     if not package_rows:
         raise ProtocolError("run contains no raw responses")
     secrets.SystemRandom().shuffle(package_rows)
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, mode=0o700)
     linkage_output.parent.mkdir(parents=True, exist_ok=True)
     atomic_text(output / "annotations.jsonl", "")
-    atomic_text(linkage_output, "")
     for row in package_rows:
         append_jsonl(output / "annotations.jsonl", row)
-    for row in linkage_rows:
-        append_jsonl(linkage_output, row)
     atomic_text(output / "RUBRIC.md", suite.rubric)
     handbook = suite.root / "LABEL_HANDBOOK.md"
-    if handbook.is_file():
-        atomic_text(output / "LABEL_HANDBOOK.md", handbook.read_text(encoding="utf-8"))
+    handbook_raw = handbook.read_bytes() if handbook.is_file() else None
+    if handbook_raw is not None:
+        try:
+            atomic_text(output / "LABEL_HANDBOOK.md", handbook_raw.decode("utf-8"))
+        except UnicodeDecodeError as exc:
+            raise ProtocolError("annotation label handbook is not valid UTF-8") from exc
     manifest = {
+        "annotation_package_version": "1.0.0",
         "protocol_version": suite.config["protocol_version"],
         "suite": suite.name,
         "suite_version": suite.version,
-        "source_run_manifest_sha256": sha256_file(manifest_path),
-        "dataset_sha256": sha256_file(suite.dataset_path),
-        "rubric_sha256": sha256_file(suite.rubric_path),
+        "source_run_manifest_sha256": sha256_bytes(source_manifest_raw),
+        "source_run_bundle_sha256": sha256_bytes(source_bundle_raw),
+        "source_raw_responses_sha256": raw_sha256,
+        "dataset_sha256": expected_suite["dataset_sha256"],
+        "rubric_sha256": expected_suite["rubric_sha256"],
+        "label_handbook_sha256": sha256_bytes(handbook_raw) if handbook_raw is not None else None,
         "observations": len(package_rows),
         "identity_blinded": True,
         "excluded_fields": ["model", "provider", "endpoint", "price", "latency", "split", "judge", "existing verdict"],
     }
     atomic_json(output / "package_manifest.json", manifest)
+    package_manifest_sha256 = sha256_file(output / "package_manifest.json")
+    atomic_text(linkage_output, "")
+    for row in linkage_rows:
+        append_jsonl(linkage_output, {**row, "package_manifest_sha256": package_manifest_sha256})
     return manifest
 
 
@@ -128,30 +214,64 @@ def ingest_annotations(
     package = package.resolve()
     linkage = linkage.resolve()
     output = output.resolve()
+    require_mutable_output_root(output)
     if output.exists():
         raise ProtocolError(f"annotation evidence output already exists: {output}")
     if not reviewer_id.strip() or not qualification_evidence.strip() or not conflicts.strip():
         raise ProtocolError("reviewer ID, qualification evidence, and conflicts declaration are required")
     manifest_path = package / "package_manifest.json"
     annotations_path = package / "annotations.jsonl"
-    if not manifest_path.is_file() or not annotations_path.is_file() or not linkage.is_file():
+    rubric_path = package / "RUBRIC.md"
+    handbook_path = package / "LABEL_HANDBOOK.md"
+    if not manifest_path.is_file() or not annotations_path.is_file() or not linkage.is_file() or not rubric_path.is_file():
         raise ProtocolError("annotation package, manifest, or restricted linkage is missing")
     try:
-        package_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest_raw = manifest_path.read_bytes()
+        annotations_raw = annotations_path.read_bytes()
+        linkage_raw = linkage.read_bytes()
+        rubric_raw = rubric_path.read_bytes()
+        package_manifest = json.loads(manifest_raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(f"invalid annotation package manifest: {exc}") from exc
-    if not isinstance(package_manifest, dict) or package_manifest.get("identity_blinded") is not True:
+    if (
+        not isinstance(package_manifest, dict)
+        or package_manifest.get("annotation_package_version") != "1.0.0"
+        or package_manifest.get("identity_blinded") is not True
+        or any(
+            not _is_sha256(package_manifest.get(field))
+            for field in (
+                "source_run_manifest_sha256",
+                "source_run_bundle_sha256",
+                "source_raw_responses_sha256",
+                "dataset_sha256",
+                "rubric_sha256",
+            )
+        )
+    ):
         raise ProtocolError("annotation package manifest does not declare identity blinding")
-    package_rows = _jsonl(annotations_path)
-    linkage_rows = _jsonl(linkage)
+    if sha256_bytes(rubric_raw) != package_manifest.get("rubric_sha256"):
+        raise ProtocolError("annotation package rubric is missing or changed")
+    expected_handbook = package_manifest.get("label_handbook_sha256")
+    if expected_handbook is not None:
+        try:
+            handbook_raw = handbook_path.read_bytes() if handbook_path.is_file() else None
+        except OSError as exc:
+            raise ProtocolError("annotation package label handbook is missing or changed") from exc
+        if handbook_raw is None or sha256_bytes(handbook_raw) != expected_handbook:
+            raise ProtocolError("annotation package label handbook is missing or changed")
+    package_rows = _jsonl(annotations_path, annotations_raw)
+    linkage_rows = _jsonl(linkage, linkage_raw)
     linkage_map = {str(row.get("package_id")): row for row in linkage_rows}
     if len(linkage_map) != len(linkage_rows):
         raise ProtocolError("restricted linkage contains duplicate package IDs")
+    manifest_sha256 = sha256_bytes(manifest_raw)
+    if package_manifest.get("observations") != len(package_rows) or len(package_rows) != len(linkage_rows):
+        raise ProtocolError("annotation package observation count does not match its linkage")
     evidence: list[dict[str, Any]] = []
     seen: set[str] = set()
     for row in package_rows:
-        package_id = str(row.get("package_id", ""))
-        if package_id in seen or package_id not in linkage_map:
+        package_id = row.get("package_id")
+        if not isinstance(package_id, str) or not package_id or package_id in seen or package_id not in linkage_map:
             raise ProtocolError("annotation package IDs are duplicate or missing from linkage")
         seen.add(package_id)
         label = row.get("label")
@@ -162,8 +282,10 @@ def ingest_annotations(
         failure_severity = row.get("failure_severity")
         if label not in ANNOTATION_LABELS or not isinstance(rationale, str) or not rationale.strip():
             raise ProtocolError(f"incomplete annotation: {package_id}")
-        if not isinstance(findings, dict) or not findings or not all(
-            isinstance(key, str) and key and isinstance(value, bool) for key, value in findings.items()
+        if (
+            not isinstance(findings, dict)
+            or not findings
+            or not all(isinstance(key, str) and key and isinstance(value, bool) for key, value in findings.items())
         ):
             raise ProtocolError(f"criterion findings must map names to booleans: {package_id}")
         if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= float(confidence) <= 1:
@@ -175,7 +297,14 @@ def ingest_annotations(
         if label != "fail" and failure_severity is not None:
             raise ProtocolError(f"only failed annotations may set failure severity: {package_id}")
         link = linkage_map[package_id]
-        if not isinstance(link.get("case_id"), str) or not link["case_id"] or not isinstance(link.get("repetition"), int):
+        if (
+            not isinstance(link.get("case_id"), str)
+            or not link["case_id"]
+            or not isinstance(link.get("repetition"), int)
+            or isinstance(link.get("repetition"), bool)
+            or link.get("package_manifest_sha256") != manifest_sha256
+            or link.get("item_sha256") != _immutable_item_sha256(row)
+        ):
             raise ProtocolError(f"restricted linkage is invalid: {package_id}")
         evidence.append(
             {
@@ -201,9 +330,14 @@ def ingest_annotations(
         "reviewer_id": reviewer_id,
         "qualification_evidence": qualification_evidence,
         "conflicts": conflicts,
-        "package_manifest_sha256": sha256_file(manifest_path),
-        "completed_annotations_sha256": sha256_file(annotations_path),
-        "restricted_linkage_sha256": sha256_file(linkage),
+        "package_manifest_sha256": manifest_sha256,
+        "completed_annotations_sha256": sha256_bytes(annotations_raw),
+        "restricted_linkage_sha256": sha256_bytes(linkage_raw),
+        "source_run_manifest_sha256": package_manifest.get("source_run_manifest_sha256"),
+        "source_run_bundle_sha256": package_manifest.get("source_run_bundle_sha256"),
+        "source_raw_responses_sha256": package_manifest.get("source_raw_responses_sha256"),
+        "dataset_sha256": package_manifest.get("dataset_sha256"),
+        "rubric_sha256": package_manifest.get("rubric_sha256"),
         "labels_sha256": sha256_file(output / "labels.jsonl"),
         "labels": len(evidence),
         "ingested_at": datetime.now(timezone.utc).isoformat(),
@@ -212,19 +346,27 @@ def ingest_annotations(
     return manifest
 
 
-def _annotation_evidence(path: Path) -> tuple[dict[tuple[str, int], dict[str, Any]], str]:
+def _annotation_evidence(path: Path) -> tuple[dict[tuple[str, int], dict[str, Any]], str, dict[str, Any], str]:
     labels_path = path.resolve() / "labels.jsonl"
     manifest_path = path.resolve() / "evidence_manifest.json"
     if not labels_path.is_file() or not manifest_path.is_file():
         raise ProtocolError("annotation evidence requires labels.jsonl and evidence_manifest.json")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest_raw = manifest_path.read_bytes()
+        labels_raw = labels_path.read_bytes()
+        manifest = json.loads(manifest_raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(f"invalid annotation evidence manifest: {exc}") from exc
     reviewer_id = manifest.get("reviewer_id") if isinstance(manifest, dict) else None
-    if not isinstance(reviewer_id, str) or not reviewer_id or manifest.get("labels_sha256") != sha256_file(labels_path):
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(reviewer_id, str)
+        or not reviewer_id
+        or manifest.get("labels_sha256") != sha256_bytes(labels_raw)
+        or any(not _is_sha256(manifest.get(field)) for field in EVIDENCE_BINDING_FIELDS)
+    ):
         raise ProtocolError("annotation evidence identity or labels hash is invalid")
-    rows = _jsonl(labels_path)
+    rows = _jsonl(labels_path, labels_raw)
     evidence: dict[tuple[str, int], dict[str, Any]] = {}
     for row in rows:
         if (
@@ -240,19 +382,29 @@ def _annotation_evidence(path: Path) -> tuple[dict[tuple[str, int], dict[str, An
         evidence[key] = row
     if not evidence:
         raise ProtocolError("annotation evidence is empty")
-    return evidence, reviewer_id
+    return evidence, reviewer_id, manifest, sha256_bytes(manifest_raw)
 
 
 def _paired_evidence(
     left: Path, right: Path
-) -> tuple[dict[tuple[str, int], dict[str, Any]], dict[tuple[str, int], dict[str, Any]], tuple[str, str]]:
-    left_map, left_reviewer = _annotation_evidence(left)
-    right_map, right_reviewer = _annotation_evidence(right)
+) -> tuple[
+    dict[tuple[str, int], dict[str, Any]],
+    dict[tuple[str, int], dict[str, Any]],
+    tuple[str, str],
+    dict[str, str],
+    tuple[str, str],
+]:
+    left_map, left_reviewer, left_manifest, left_manifest_sha256 = _annotation_evidence(left)
+    right_map, right_reviewer, right_manifest, right_manifest_sha256 = _annotation_evidence(right)
     if set(left_map) != set(right_map):
         raise ProtocolError("annotation evidence must contain identical unique observations")
     if left_reviewer == right_reviewer:
         raise ProtocolError("agreement requires two distinct reviewers")
-    return left_map, right_map, (left_reviewer, right_reviewer)
+    for field in EVIDENCE_BINDING_FIELDS:
+        if left_manifest[field] != right_manifest[field]:
+            raise ProtocolError("agreement requires annotations from the same exact source package")
+    bindings = {field: str(left_manifest[field]) for field in EVIDENCE_BINDING_FIELDS}
+    return left_map, right_map, (left_reviewer, right_reviewer), bindings, (left_manifest_sha256, right_manifest_sha256)
 
 
 def _blind_review(row: dict[str, Any]) -> dict[str, Any]:
@@ -281,11 +433,12 @@ def _kappa(pairs: list[tuple[str, str]]) -> float:
 
 def annotation_agreement(left: Path, right: Path, output: Path, *, bootstrap_samples: int = 10_000, seed: int = 20260805) -> dict[str, Any]:
     output = output.resolve()
+    require_mutable_output_root(output)
     if output.exists():
         raise ProtocolError(f"annotation agreement output already exists: {output}")
     if bootstrap_samples < 100:
         raise ProtocolError("annotation agreement requires at least 100 bootstrap samples")
-    left_map, right_map, reviewers = _paired_evidence(left, right)
+    left_map, right_map, reviewers, bindings, _ = _paired_evidence(left, right)
     keys = sorted(left_map)
     pairs = [(str(left_map[item]["label"]), str(right_map[item]["label"])) for item in keys]
     raw_agreement = sum(left_label == right_label for left_label, right_label in pairs) / len(pairs)
@@ -316,6 +469,7 @@ def annotation_agreement(left: Path, right: Path, output: Path, *, bootstrap_sam
         )
     result = {
         "reviewers": sorted(reviewers),
+        "source_package": bindings,
         "observations": len(pairs),
         "raw_agreement": raw_agreement,
         "cohen_kappa": _kappa(pairs),
@@ -342,6 +496,7 @@ def ingest_adjudications(
 ) -> dict[str, Any]:
     agreement = agreement.resolve()
     output = output.resolve()
+    require_mutable_output_root(output)
     if output.exists():
         raise ProtocolError(f"adjudication evidence output already exists: {output}")
     if not adjudicator_id.strip() or not qualification_evidence.strip() or not conflicts.strip():
@@ -350,12 +505,17 @@ def ingest_adjudications(
     decisions_path = agreement / "disagreements.jsonl"
     if not agreement_path.is_file() or not decisions_path.is_file():
         raise ProtocolError("agreement evidence requires agreement.json and disagreements.jsonl")
-    left_map, right_map, reviewers = _paired_evidence(left, right)
+    try:
+        agreement_raw = agreement_path.read_bytes()
+        decisions_raw = decisions_path.read_bytes()
+    except OSError as exc:
+        raise ProtocolError("agreement evidence is unreadable") from exc
+    left_map, right_map, reviewers, _, evidence_manifest_sha256 = _paired_evidence(left, right)
     if adjudicator_id in reviewers:
         raise ProtocolError("adjudicator must be distinct from both reviewers")
     expected = {key for key in left_map if left_map[key]["label"] != right_map[key]["label"]}
     decisions: dict[tuple[str, int], dict[str, Any]] = {}
-    for row in _jsonl(decisions_path):
+    for row in _jsonl(decisions_path, decisions_raw):
         key = row.get("case_id"), row.get("repetition")
         if not isinstance(key[0], str) or not isinstance(key[1], int) or key in decisions:
             raise ProtocolError("adjudication package contains an invalid or duplicate observation")
@@ -376,8 +536,10 @@ def ingest_adjudications(
         failure_severity = decision.get("failure_severity")
         if label not in ANNOTATION_LABELS or not isinstance(rationale, str) or not rationale.strip():
             raise ProtocolError("adjudication decision is incomplete")
-        if not isinstance(findings, dict) or not findings or not all(
-            isinstance(name, str) and name and isinstance(value, bool) for name, value in findings.items()
+        if (
+            not isinstance(findings, dict)
+            or not findings
+            or not all(isinstance(name, str) and name and isinstance(value, bool) for name, value in findings.items())
         ):
             raise ProtocolError("adjudication criterion findings must map names to booleans")
         if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= float(confidence) <= 1:
@@ -407,10 +569,10 @@ def ingest_adjudications(
         "qualification_evidence": qualification_evidence,
         "conflicts": conflicts,
         "reviewers": sorted(reviewers),
-        "agreement_sha256": sha256_file(agreement_path),
-        "completed_disagreements_sha256": sha256_file(decisions_path),
-        "left_evidence_manifest_sha256": sha256_file(left.resolve() / "evidence_manifest.json"),
-        "right_evidence_manifest_sha256": sha256_file(right.resolve() / "evidence_manifest.json"),
+        "agreement_sha256": sha256_bytes(agreement_raw),
+        "completed_disagreements_sha256": sha256_bytes(decisions_raw),
+        "left_evidence_manifest_sha256": evidence_manifest_sha256[0],
+        "right_evidence_manifest_sha256": evidence_manifest_sha256[1],
         "adjudications_sha256": sha256_file(output / "adjudications.jsonl"),
         "adjudications": len(decisions),
         "ingested_at": datetime.now(timezone.utc).isoformat(),

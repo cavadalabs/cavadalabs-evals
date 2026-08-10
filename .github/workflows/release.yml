@@ -19,20 +19,46 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
+          version: "0.11.14"
           python-version: "3.11"
           enable-cache: false
       - run: uv sync --frozen
-      - name: Verify tag matches package version
-        run: uv run python -c "import os,tomllib; version=tomllib.load(open('pyproject.toml','rb'))['project']['version']; assert os.environ['GITHUB_REF_NAME'] == 'v' + version"
+      - run: uv lock --check
+      - name: Verify release metadata and publication decisions
+        run: uv run python scripts/check_release.py --release
       - run: uv run ruff check .
       - run: uv run mypy src
       - run: uv run pytest
       - run: uv run python scripts/check_secrets.py
-      - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
+      - name: Validate results registry and append-only history
+        run: |
+          previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$GITHUB_SHA^" 2>/dev/null || true)
+          if [[ -n "$previous_tag" ]] && git cat-file -e "$previous_tag:results/registry.json"; then
+            git show "$previous_tag:results/registry.json" > "$RUNNER_TEMP/previous-registry.json"
+            uv run python scripts/validate_results_registry.py --previous "$RUNNER_TEMP/previous-registry.json"
+          else
+            uv run python scripts/validate_results_registry.py --initial-empty
+          fi
+      - run: uv run cavada-eval doctor
+      - run: uv run cavada-eval program
+      - run: uv run cavada-eval perf validate --preset reference
+      - run: uv export --quiet --frozen --no-dev --extra deepeval --no-emit-project --output-file "$RUNNER_TEMP/deepeval-requirements.txt"
+      - run: uvx pip-audit==2.10.1 --strict --progress-spinner off --disable-pip --requirement "$RUNNER_TEMP/deepeval-requirements.txt"
       - run: uv build
-      - run: uv run python scripts/generate_provenance.py
+      - run: uv run python scripts/check_distribution.py
+      - name: Smoke-test the built wheel outside the source checkout
+        run: |
+          wheel=$(realpath dist/*.whl)
+          cd "$RUNNER_TEMP"
+          uvx --from "$wheel" cavada-eval doctor
+          uvx --from "$wheel" cavada-eval list
+          uvx --from "$wheel" cavada-eval program
+          uvx --from "$wheel" cavada-eval perf validate --preset reference
+      - run: uv run python scripts/generate_sbom.py --wheel dist/*.whl --output dist/sbom.cdx.json
+      - run: uv run python scripts/generate_provenance.py --require-clean
       - name: Attest package provenance
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
@@ -44,10 +70,8 @@ jobs:
         with:
           subject-path: |
             dist/*.whl
-            dist/*.tar.gz
           sbom-path: dist/sbom.cdx.json
       - name: Create immutable release candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz dist/sbom.cdx.json dist/build-provenance.json --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
-

@@ -1,92 +1,73 @@
-# Repository readiness audit
+# Repository readiness assessment
 
-- Audit date: 2026-08-06
-- Release candidate: 0.3.0
-- Scope: repository-implementable CavadaLabs Evaluation Protocol controls
+Status snapshot: 2026-08-07. Reviewed package version: `0.3.0` (alpha).
 
 ## Conclusion
 
-The repository implementation gate is complete. It provides a fail-closed,
-versioned, reproducible evidence pipeline for supported text, structured, RAG,
-conversation, agent-trace, PNG/JPEG, and bounded WAV inputs. Unsupported or
-unqualified modalities and claims are blocked in official mode.
-The dedicated LLM serving path adds generation-only closed/open-loop campaigns,
-128k/256k input contexts, outputs through 8k, strict runtime evidence, and exact
-verified-run comparisons without including judge overhead.
-Versioned smoke, quick, standard, and reference presets provide deterministic
-quality-suite sampling and immutable performance plans without changing released
-datasets or silently rewriting execution inputs.
+The repository contains a substantial local implementation of the behavior and
+LLM serving-performance protocols. It is not yet ready for an official public
+benchmark release.
 
-This is not evidence that any model is universally correct, safe, secure,
-unbiased, or legally compliant. An official result states conformance only to
-the named protocol, suite, versions, population, configuration, and gates.
+No suite in `program/registry.toml` is currently marked `official_capable`, and
+`results/registry.json` contains no accepted result or independent
+reproduction. The publication inventory also contains unresolved blocking
+decisions. Therefore this repository does not currently substantiate an
+“Official CavadaLabs result,” a production-readiness claim, or a 10/10
+readiness score.
 
-## Automated evidence
+## Capability status
 
-- Locked environment sync, lint, strict typing, and unit/mock end-to-end tests.
-- Schema and suite validation, including the unchanged imported MEMO dataset.
-- Secret-pattern and dependency-vulnerability scans.
-- Source distribution, wheel, SBOM, and current-version build provenance.
-- Bundle allowlist, checksum, optional HMAC, tamper, and unlisted-file checks.
-- Exact pre-run engagement validation and post-run public-release approval bound
-  to the verified bundle, permitted claims, expiry, and independent decisions.
-- Deliberate gate failure, crash/resume, retry/idempotency, malicious media,
-  judge disagreement/calibration, external import, and report-generation tests.
-- Mock streaming closed/open-loop performance runs, SLO/goodput checks, raw
-  evidence preservation, bundle verification, and exact-cell comparison tests.
-- Optional DeepEval import with telemetry, cloud sync, dotenv, key-file loading,
-  update checks, and error reporting disabled before import.
+| Area | Assessment |
+|---|---|
+| Protocol | Versioned behavior and serving-performance protocols exist, with fail-closed rules and separate claims. |
+| Implementation | Core validation, execution, evidence preservation, comparison, and export paths exist and are exercised by repository tests. A clean-checkout verification is still required for any release candidate. |
+| Hardware science | System configuration evidence and client-side serving metrics exist. Calibrated synchronized utilization, power, energy, network, and load-generator evidence does not. |
+| Results presentation | HTML, PDF, JSON, JSONL, CSV, JUnit, and accessible figures are generated and covered by local visual, responsive, structural-accessibility, and publication-path QA. Independent accessibility conformance has not been established. |
+| Onboarding | Packaging, CLI help, examples, and CI configuration exist. Hosted installation and release workflows have not been demonstrated by an approved public release. |
+| Public credibility | No accepted public baseline or independent reproduction is registered. |
+| Publication | Blocked by the current decisions in `docs/PUBLICATION_INVENTORY.md` and by the absence of required organizational and independent evidence. |
 
-The CI workflow repeats these checks from a locked environment and uses pinned
-third-party action revisions. A clean-checkout verification is required before
-the release candidate is handed off.
+## What repository checks can establish
 
-## External obligations that remain open
+The test, lint, type, schema, secret, build, distribution, registry, and mock
+endpoint checks can establish that the corresponding implementation behaves as
+specified for the tested commit. Bundle verification can establish closed-set
+file integrity and hashes; optional HMAC can establish integrity for holders of
+the shared key.
 
-The authoritative item-by-item list is every `[!]` entry in
-`IMPLEMENTATION_CHECKLIST.md` (53 entries at this audit). They are intentionally
-not represented as implementation defects or passed controls. They fall into:
+Those checks do not establish dataset rights, representative sampling, human
+label validity, judge validity, legal compliance, production security,
+organizational independence, hardware calibration, accessibility conformance,
+or an asymmetric release identity.
 
-1. **Repository and release authority:** remote ownership, protected branches,
-   required independent reviews, immutable tags, organizational asymmetric
-   signing identity, and trusted timestamps.
-2. **Independent benchmark governance:** third-party licenses, human label and
-   rubric review, private holdout/canary operation, judge calibration by risk
-   severity, bias qualification, and critical-case adjudication.
-3. **Approved execution infrastructure:** OS parser/code sandbox, product SDK
-   adapters and their phase timeouts/signals, encrypted cache, hardware/energy
-   collectors, MCP/agent/RAG/code/embedding adapters, and sandbox integration
-   tests.
-4. **Qualified multimodal measurement:** licensed OCR/VQA/image generation,
-   audio, video, safety, privacy, bias, biometric, and C2PA models/datasets;
-   compressed-media parsing and sanitized preview generation.
-5. **Authorized adversarial and fairness work:** privacy attacks, adaptive red
-   teaming, representative demographic/intersectional datasets, and independent
-   fairness review.
-6. **Legal accountability:** applicability, legal basis, DPIA, ROPA, FRIA,
-   contracts, transfer assessments, residual-risk acceptance, and licensed
-   standards mappings. Automated benchmark evidence never closes these items.
-7. **Production security systems:** organizational DLP, KMS, RBAC, append-only
-   WORM storage, backup/restore, incident response, results registry, security
-   review, penetration test, and multi-tenant operational approval.
-8. **Performance publication:** tokenizer-calibrated equal-token workloads,
-   synchronized hardware/power telemetry, validated load-generator/network
-   capacity, and independent approval of the frozen reference plan.
+## Release blockers
 
-## Source review
+- Complete the ownership, privacy, contractual, redistribution, organization,
+  and historical-identity decisions in `docs/PUBLICATION_INVENTORY.md`.
+- Complete independent dataset/rubric review, calibration, judge qualification,
+  statistical review, security review, and reproduction for any suite proposed
+  as official.
+- Provision and evidence the restricted storage, authorization, signing, and
+  operational controls required by the applicable protocol.
+- Validate the exact release commit from a clean checkout and preserve the
+  resulting artifacts and provenance.
+- For hardware, utilization, or energy claims, add calibrated synchronized
+  collectors and validate the benchmark topology and load generator.
 
-The compliance catalog snapshot records the authoritative EUR-Lex instruments,
-their publication/version evidence, and application notes as of the audit date.
-The AI Act note preserves Article 113 phase-specific exceptions instead of
-assuming uniform applicability. The current partial executable OWASP mapping
-uses the August 2026 taxonomy; the superseded 2025 mapping remains versioned for
-historical evidence. ISO text is not copied; licensed standards require a
-separately approved mapping.
+## Sources of truth
 
-## Release rule
+- Normative behavior rules: `PROTOCOL.md` and `AGENTS.md`.
+- Normative serving rules for new reference runs:
+  [Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md); the unanchored
+  historical-development [v1.1 protocol](../PERFORMANCE_PROTOCOL_V1_1.md) and commit-anchored
+  [v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) remain available for their
+  recorded bundle versions.
+- Program and suite status: `program/registry.toml` and each `suite.toml`.
+- Public result status: `results/registry.json`.
+- Publication decision: `docs/PUBLICATION_INVENTORY.md`.
+- Current capability map and verification commands:
+  `IMPLEMENTATION_CHECKLIST.md`.
 
-Do not promote the template, MEMO, or security/privacy smoke suites to
-`approved` until their own calibration, independent review, pinning, storage,
-identity, and authorization requirements pass. Candidate output must never be
-relabeled as official evidence. No public export is authorized until the exact
-official run has a current post-run release approval and effective engagement.
+An official result means conformance to the exact named protocol, suite,
+configuration, evidence, and gates. It is not certification, accreditation,
+legal compliance, or a universal quality or safety claim.

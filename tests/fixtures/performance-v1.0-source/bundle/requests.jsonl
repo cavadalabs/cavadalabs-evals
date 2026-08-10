@@ -1,0 +1,1 @@
+{"block": 1, "cell_key": "closed__ctx8__out2__c1", "client_queue_ms": 0.0, "declared_context_tokens": 8, "payload_sha256": "37d5a840d19c5b484aebc9025c818cff20fe5678dfb860a0d1fdfd733a4de778", "phase": "measured", "request_id": "200fc4c53aba449bae5f72698f6566fa", "request_index": 1, "requested_output_tokens": 2, "scenario_id": "closed", "workload_id": "ctx-8"}

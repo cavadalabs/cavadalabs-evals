@@ -23,22 +23,41 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
+          version: "0.11.14"
           python-version: "3.11"
           enable-cache: false
       - run: uv sync --frozen
+      - run: uv lock --check
       - run: uv run ruff check .
       - run: uv run mypy src
       - run: uv run pytest
       - run: uv run python scripts/check_secrets.py
-      - run: uvx pip-audit==2.10.1 --strict --progress-spinner off
+      - run: uv run python scripts/check_release.py
+      - name: Validate results registry and append-only history
+        env:
+          REGISTRY_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$REGISTRY_BASE_SHA" && ! "$REGISTRY_BASE_SHA" =~ ^0+$ ]]; then
+            if git cat-file -e "$REGISTRY_BASE_SHA:results/registry.json"; then
+              git show "$REGISTRY_BASE_SHA:results/registry.json" > "$RUNNER_TEMP/previous-registry.json"
+              uv run python scripts/validate_results_registry.py --previous "$RUNNER_TEMP/previous-registry.json"
+            else
+              uv run python scripts/validate_results_registry.py --initial-empty
+            fi
+          else
+            uv run python scripts/validate_results_registry.py --initial-empty
+          fi
+      - run: uv export --quiet --frozen --no-dev --extra deepeval --no-emit-project --output-file "$RUNNER_TEMP/deepeval-requirements.txt"
+      - run: uvx pip-audit==2.10.1 --strict --progress-spinner off --disable-pip --requirement "$RUNNER_TEMP/deepeval-requirements.txt"
       - run: uv run cavada-eval doctor
       - run: uv run cavada-eval program
       - run: uv run cavada-eval presets
       - run: uv run cavada-eval perf validate --preset quick
       - run: uv run cavada-eval perf validate --preset standard
-      - run: uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml
+      - run: uv run cavada-eval perf validate --preset reference
       - run: uv run cavada-eval validate suites/template
       - run: uv run cavada-eval validate suites/memo4345-v1
       - run: uv run cavada-eval validate suites/security-privacy-smoke-v1
@@ -57,10 +76,50 @@ jobs:
       - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.7.0.json --dataset dataset-0.7.0.jsonl --suite-version 0.7.0 --check
       - run: uv run python scripts/audit_dataset_quality.py suites/cavada-core-assistant-text-v1 suites/cavada-core-assistant-text-v1/review/author-qa-0.8.0.json --check
       - run: uv run cavada-eval validate suites/cavada-core-assistant-text-v1
-      - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
       - run: uv build
+      - run: uv run python scripts/check_distribution.py
+      - name: Smoke-test the built wheel outside the source checkout
+        run: |
+          wheel=$(realpath dist/*.whl)
+          cd "$RUNNER_TEMP"
+          uvx --from "$wheel" cavada-eval doctor
+          uvx --from "$wheel" cavada-eval list
+          uvx --from "$wheel" cavada-eval program
+          uvx --from "$wheel" cavada-eval perf validate --preset reference
+      - run: uv run python scripts/generate_sbom.py --wheel dist/*.whl --output dist/sbom.cdx.json
       - run: uv run python scripts/generate_provenance.py
       - run: uv run python -m compileall -q src scripts
+
+  python-compatibility:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.14"
+          - os: windows-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.14"
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+      - run: uv sync --frozen
+      - run: uv run pytest
+      - run: uv build
 
   deepeval-adapter:
     runs-on: ubuntu-latest
@@ -71,10 +130,11 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
+          version: "0.11.14"
           python-version: "3.11"
           enable-cache: false
-      - run: uv sync --frozen --group deepeval
-      - run: uv run --group deepeval python -c "from cavada_eval.deepeval_adapter import secure_import; secure_import()"
+      - run: uv sync --frozen --extra deepeval
+      - run: uv run --extra deepeval python -c "from cavada_eval.deepeval_adapter import secure_import; secure_import()"
 
   dependency-review:
     if: github.event_name == 'pull_request'

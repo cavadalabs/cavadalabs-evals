@@ -9,7 +9,7 @@ import shutil
 import struct
 import wave
 import zlib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 CONTENT_TYPES = {"text", "image", "audio", "video", "document", "tool_call", "tool_result"}
@@ -70,11 +70,24 @@ def _magic_mime(path: Path) -> str | None:
 
 
 def _inside(root: Path, relative: str) -> Path:
-    if not relative or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", relative):
+    candidate = Path(relative)
+    windows_candidate = PureWindowsPath(relative)
+    if ".." in candidate.parts or ".." in windows_candidate.parts:
+        raise ValueError("asset path escapes the suite")
+    if (
+        not relative
+        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", relative)
+        or candidate.is_absolute()
+        or windows_candidate.drive
+        or candidate.as_posix() != relative
+    ):
         raise ValueError("asset must be a local relative path")
-    path = root / relative
-    if path.is_symlink():
-        raise ValueError("asset symlinks are not allowed")
+    path = root / candidate
+    current = root
+    for part in candidate.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("asset symlinks are not allowed")
     resolved = path.resolve()
     try:
         resolved.relative_to(root.resolve())
@@ -83,6 +96,16 @@ def _inside(root: Path, relative: str) -> Path:
     if not resolved.is_file() or not os.path.isfile(resolved):
         raise ValueError("asset is not a regular file")
     return resolved
+
+
+def _snapshot_root(path: Path) -> Path:
+    root = path.absolute()
+    if any(candidate.is_symlink() for candidate in (root, *root.parents)):
+        raise ValueError("asset snapshot paths must not traverse symlinks")
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if any(candidate.is_symlink() for candidate in (root, *root.parents)):
+        raise ValueError("asset snapshot paths must not traverse symlinks")
+    return root
 
 
 def validate_content_parts(
@@ -204,13 +227,17 @@ def encoded_content(value: Any, *, suite_root: Path) -> str | list[dict[str, Any
             encoded.append({"type": "text", "text": part["text"]})
         elif kind in {"image", "audio", "video", "document"}:
             path = _inside(suite_root, str(part["asset"]))
+            raw = path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            if part.get("sha256") is not None and part["sha256"] != digest:
+                raise ValueError("asset changed after validation")
             encoded.append(
                 {
                     "type": kind,
                     "mime_type": part["mime_type"],
-                    "sha256": sha256_file(path),
+                    "sha256": digest,
                     "filename": path.name,
-                    "data_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+                    "data_base64": base64.b64encode(raw).decode("ascii"),
                 }
             )
         else:
@@ -400,14 +427,21 @@ def asset_inventory(cases: list[dict[str, Any]] | tuple[dict[str, Any], ...], *,
                     continue
                 path = _inside(suite_root, str(part["asset"]))
                 digest = sha256_file(path)
-                entry = inventory.setdefault(digest, asset_metadata(path, str(part["mime_type"])))
+                metadata = asset_metadata(path, str(part["mime_type"]))
+                if metadata["sha256"] != digest:
+                    raise ValueError("asset changed while its inventory was created")
+                entry = inventory.setdefault(digest, metadata)
                 if snapshot_dir is not None:
-                    snapshot_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-                    snapshot = snapshot_dir / digest
+                    snapshot_root = _snapshot_root(snapshot_dir)
+                    snapshot = snapshot_root / digest
+                    if snapshot.is_symlink():
+                        raise ValueError("asset snapshot symlinks are not allowed")
                     if not snapshot.exists():
                         shutil.copyfile(path, snapshot)
                         os.chmod(snapshot, 0o600)
-                    entry["snapshot"] = snapshot.relative_to(snapshot_dir.parent).as_posix()
+                    if not snapshot.is_file() or sha256_file(snapshot) != digest:
+                        raise ValueError("asset snapshot hash mismatch")
+                    entry["snapshot"] = snapshot.relative_to(snapshot_root.parent).as_posix()
                 cases_for_asset = entry.setdefault("cases", [])
                 if case.get("id") not in cases_for_asset:
                     cases_for_asset.append(case.get("id"))

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-engagement/1.0.0",
+  "title": "CavadaLabs Performance Engagement Record 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "engagement_version",
+    "engagement_id",
+    "status",
+    "scope",
+    "execution_owner_id",
+    "protocol_sha256",
+    "plan_sha256",
+    "workload_sha256",
+    "runtime_sha256",
+    "system_evidence_sha256",
+    "configuration_id",
+    "approved_at",
+    "expires_at"
+  ],
+  "properties": {
+    "engagement_version": {"const": "1.0.0"},
+    "engagement_id": {"type": "string", "minLength": 1},
+    "status": {"const": "approved"},
+    "scope": {"type": "string", "minLength": 1},
+    "execution_owner_id": {"type": "string", "minLength": 1},
+    "protocol_sha256": {"$ref": "#/$defs/hash"},
+    "plan_sha256": {"$ref": "#/$defs/hash"},
+    "workload_sha256": {"$ref": "#/$defs/hash"},
+    "runtime_sha256": {"$ref": "#/$defs/hash"},
+    "system_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "configuration_id": {"type": "string", "pattern": "^cfg-sha256:[a-f0-9]{64}$"},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

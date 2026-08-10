@@ -141,8 +141,8 @@ languages = ["language-neutral"]
 profiles = ["performance"]
 execution_support = "built-in"
 official_capable = false
-claims = ["future quality, latency, throughput, stability, resource, and cost measurements"]
-exclusions = ["comparisons across uncontrolled hardware, region, load, price, or serving settings"]
+claims = ["future client-side latency, throughput, stability, and cost measurements under declared serving conditions"]
+exclusions = ["quality, safety, compliance, utilization, energy, GPU-only attribution, and comparisons across uncontrolled hardware, region, load, price, or serving settings"]
 external_prerequisites = ["controlled infrastructure and calibrated hardware or energy collectors"]
 
 [[suites]]

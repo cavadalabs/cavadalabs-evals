@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/bundle/1.0.0",
+  "title": "CavadaLabs Immutable Artifact Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bundle_version", "algorithm", "files"],
+  "properties": {
+    "bundle_version": {"const": "1.0.0"},
+    "algorithm": {"const": "sha256"},
+    "files": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+      },
+      "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+    }
+  }
+}

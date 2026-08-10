@@ -16,6 +16,92 @@ PII_PATTERNS = (
     re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b"),
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
 )
+RETRIEVAL_METRICS = {"hit_rate", "recall_at_k", "precision_at_k", "mrr", "ndcg_at_k"}
+
+
+def metric_config_errors(case: dict[str, Any]) -> list[str]:
+    """Validate case metric inputs that would otherwise fail during evaluation."""
+    errors: list[str] = []
+    for field in ("required_regex", "forbidden_regex"):
+        patterns = case.get(field)
+        if patterns is None:
+            continue
+        if not isinstance(patterns, list) or not patterns or not all(isinstance(pattern, str) and pattern for pattern in patterns):
+            errors.append(f"{field} must be a non-empty string array")
+            continue
+        for index, pattern in enumerate(patterns, 1):
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                errors.append(f"{field}[{index}] is not a valid regular expression: {exc}")
+
+    for field in ("citation_pattern", "pattern"):
+        pattern = case.get(field)
+        if pattern is None:
+            continue
+        if not isinstance(pattern, str) or not pattern:
+            errors.append(f"{field} must be non-empty text")
+        else:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                errors.append(f"{field} is not a valid regular expression: {exc}")
+
+    def validate_schema_patterns(value: Any, path: str = "json_schema") -> None:
+        if isinstance(value, dict):
+            pattern = value.get("pattern")
+            if pattern is not None:
+                if not isinstance(pattern, str) or not pattern:
+                    errors.append(f"{path}.pattern must be non-empty text")
+                else:
+                    try:
+                        re.compile(pattern)
+                    except re.error as exc:
+                        errors.append(f"{path}.pattern is not a valid regular expression: {exc}")
+            for name, child in value.items():
+                validate_schema_patterns(child, f"{path}.{name}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                validate_schema_patterns(child, f"{path}[{index}]")
+
+    if "json_schema" in case:
+        if not isinstance(case["json_schema"], dict):
+            errors.append("json_schema must be an object")
+        else:
+            validate_schema_patterns(case["json_schema"])
+
+    for field in ("token_f1_min", "structured_field_accuracy_min", "set_f1_min", "max_word_error_rate", "max_character_error_rate"):
+        value = case.get(field)
+        if value is not None and (
+            not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or not 0 <= float(value) <= 1
+        ):
+            errors.append(f"{field} must be a finite number from 0 to 1")
+    tolerance = case.get("numeric_tolerance")
+    if tolerance is not None and (
+        not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool) or not math.isfinite(float(tolerance)) or float(tolerance) < 0
+    ):
+        errors.append("numeric_tolerance must be a finite non-negative number")
+    for field in ("min_chars", "max_chars", "max_tool_calls"):
+        value = case.get(field)
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            errors.append(f"{field} must be a non-negative integer")
+    retrieval_k = case.get("retrieval_k")
+    if retrieval_k is not None and (not isinstance(retrieval_k, int) or isinstance(retrieval_k, bool) or retrieval_k < 1):
+        errors.append("retrieval_k must be a positive integer")
+    minimums = case.get("retrieval_minimums")
+    if minimums is not None and (
+        not isinstance(minimums, dict)
+        or not all(
+            name in RETRIEVAL_METRICS
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and 0 <= float(value) <= 1
+            for name, value in minimums.items()
+        )
+    ):
+        errors.append(f"retrieval_minimums must map {sorted(RETRIEVAL_METRICS)} to finite numbers from 0 to 1")
+    return errors
 
 
 def normalize_text(value: str) -> str:
@@ -120,8 +206,12 @@ def _json_schema_errors(value: Any, schema: dict[str, Any], prefix: str = "$") -
 
 def _leaf_values(value: Any, prefix: str = "$") -> dict[str, Any]:
     if isinstance(value, dict):
+        if not value:
+            return {prefix: {}}
         return {path: leaf for key, child in value.items() for path, leaf in _leaf_values(child, f"{prefix}.{key}").items()}
     if isinstance(value, list):
+        if not value:
+            return {prefix: []}
         return {path: leaf for index, child in enumerate(value) for path, leaf in _leaf_values(child, f"{prefix}[{index}]").items()}
     return {prefix: value}
 
@@ -132,7 +222,7 @@ def deterministic_evaluation(
     *,
     target_raw: dict[str, Any] | None = None,
     retrieved_ids: Sequence[str] | None = None,
-    tool_calls: Sequence[dict[str, Any]] | None = None,
+    tool_calls: Sequence[object] | None = None,
 ) -> dict[str, Any]:
     folded = normalize_text(answer)
     checks: dict[str, bool] = {
@@ -168,18 +258,20 @@ def deterministic_evaluation(
         checks["max_chars"] = len(answer) <= int(case["max_chars"])
 
     parsed: Any = None
-    if case.get("expected_json") or isinstance(case.get("json_schema"), dict):
+    parsed_ok = False
+    if case.get("expected_json") or isinstance(case.get("json_schema"), dict) or "expected_json_value" in case:
         try:
             parsed = json.loads(answer)
         except json.JSONDecodeError:
             checks["json_validity"] = False
         else:
+            parsed_ok = True
             checks["json_validity"] = True
-    if parsed is not None and isinstance(case.get("json_schema"), dict):
+    if parsed_ok and isinstance(case.get("json_schema"), dict):
         schema_errors = _json_schema_errors(parsed, case["json_schema"])
         checks["json_schema"] = not schema_errors
         details["json_schema_errors"] = schema_errors
-    if parsed is not None and "expected_json_value" in case:
+    if parsed_ok and "expected_json_value" in case:
         expected_leaves = _leaf_values(case["expected_json_value"])
         actual_leaves = _leaf_values(parsed)
         matched = sum(path in actual_leaves and actual_leaves[path] == value for path, value in expected_leaves.items())
@@ -217,7 +309,14 @@ def deterministic_evaluation(
         for metric, threshold in (case.get("retrieval_minimums") or {}).items():
             checks[f"retrieval_{metric}"] = metric in retrieval and retrieval[metric] >= float(threshold)
 
-    calls = list(tool_calls or [])
+    calls_valid = False
+    calls: list[dict[str, Any]] = []
+    if isinstance(tool_calls, Sequence) and not isinstance(tool_calls, (str, bytes)):
+        calls_valid = all(isinstance(call, dict) for call in tool_calls)
+        if calls_valid:
+            calls = [call for call in tool_calls if isinstance(call, dict)]
+    if tool_calls is not None:
+        checks["tool_calls_valid"] = calls_valid
     names = [str(call.get("name", "")) for call in calls if isinstance(call, dict)]
     if "expected_tools" in case:
         checks["expected_tools"] = set(map(str, case["expected_tools"])) <= set(names)

@@ -1,5 +1,5 @@
 {
-  "calibration_version": "1.0.0",
+  "calibration_version": "2.0.0",
   "status": "failed",
   "protocol_version": "1.0.0",
   "suite": {
@@ -9,11 +9,17 @@
     "rubric_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "source_commit": "0000000000000000000000000000000000000000",
+  "analysis_plan": "UNAVAILABLE",
   "analysis_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "human_label_evidence": "UNAVAILABLE",
   "human_label_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "holdout_manifest": "UNAVAILABLE",
   "holdout_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "pilot_audit": "UNAVAILABLE",
   "pilot_audit_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "statistical_review": "UNAVAILABLE",
   "statistical_review_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "semantic_contamination_evidence": "UNAVAILABLE",
   "semantic_contamination_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "gates_passed": false,
   "results": {"template": "not evidence"},

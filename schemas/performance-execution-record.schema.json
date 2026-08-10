@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-execution-record/1.0.0",
+  "title": "CavadaLabs Performance Execution Responsibility Record 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_version",
+    "engagement_id",
+    "execution_owner_id",
+    "scope",
+    "protocol_sha256",
+    "plan_sha256",
+    "workload_sha256",
+    "runtime_sha256",
+    "system_evidence_sha256",
+    "recorded_at"
+  ],
+  "properties": {
+    "record_version": {"const": "1.0.0"},
+    "engagement_id": {"type": "string", "minLength": 1},
+    "execution_owner_id": {"type": "string", "minLength": 1},
+    "scope": {"type": "string", "minLength": 1},
+    "protocol_sha256": {"$ref": "#/$defs/hash"},
+    "plan_sha256": {"$ref": "#/$defs/hash"},
+    "workload_sha256": {"$ref": "#/$defs/hash"},
+    "runtime_sha256": {"$ref": "#/$defs/hash"},
+    "system_evidence_sha256": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

@@ -7,13 +7,17 @@ from pathlib import Path
 
 import pytest
 
+from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.calibration import judge_evidence_errors, qualify_judge_run
-from cavada_eval.protocol import ProtocolError, load_suite
+from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file
+from cavada_eval.runner import _judge_calibration_summary
 
 assemble = runpy.run_path("scripts/assemble_judge_calibration.py")["assemble"]
 
 
-def test_exact_judge_qualification_requires_current_linked_independent_approval() -> None:
+def test_exact_judge_qualification_requires_current_linked_independent_approval(tmp_path: Path) -> None:
+    approver_evidence = tmp_path / "approver-qualification.txt"
+    approver_evidence.write_text("qualified reviewer")
     judge = {
         "requested_model": "judge",
         "expected_reported_model": "judge",
@@ -22,11 +26,13 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         "prompt_sha256": "a" * 64,
         "response_schema": "judgment.schema.json@1.0.0",
         "temperature": 0,
+        "max_tokens": 600,
+        "judge_repetitions": 3,
         "models": [{"id": "primary", "model": "judge", "expected_model": "judge", "revision": "fixed"}],
         "consensus": "unanimous",
     }
     qualification = {
-        "qualification_version": "1.0.0",
+        "qualification_version": "2.0.0",
         "passed": True,
         "rubric_sha256": "b" * 64,
         "run_manifest_sha256": "c" * 64,
@@ -38,14 +44,15 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         "judges": {"primary": {"passed": True}},
     }
     approval = {
-        "approval_version": "1.0.0",
+        "approval_version": "2.0.0",
         "approval_id": "approval-1",
         "scope": "judge-qualification",
         "status": "passed",
         "independent": True,
         "qualification_sha256": "1" * 64,
         "approver_id": "reviewer",
-        "approver_qualification_evidence": "restricted-reference",
+        "approver_qualification_evidence": approver_evidence.name,
+        "approver_qualification_evidence_sha256": sha256_file(approver_evidence),
         "conflicts": "none declared",
         "decision_rationale": "All preregistered qualification evidence passed review.",
         "approved_at": "2026-08-01T00:00:00Z",
@@ -58,8 +65,20 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=judge,
         rubric_sha256="b" * 64,
+        approval_root=tmp_path,
         now=now,
     )
+    approver_evidence.write_text("tampered")
+    assert "judge approver qualification evidence hash mismatch" in judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=judge,
+        rubric_sha256="b" * 64,
+        approval_root=tmp_path,
+        now=now,
+    )
+    approver_evidence.write_text("qualified reviewer")
     changed = {**judge, "revision": "different"}
     errors = judge_evidence_errors(
         qualification,
@@ -67,6 +86,31 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=changed,
         rubric_sha256="b" * 64,
+        approval_root=tmp_path,
+        now=now,
+    )
+    assert "judge qualification does not match the exact run configuration" in errors
+
+    changed = {**judge, "judge_repetitions": 4}
+    errors = judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=changed,
+        rubric_sha256="b" * 64,
+        approval_root=tmp_path,
+        now=now,
+    )
+    assert "judge qualification does not match the exact run configuration" in errors
+
+    changed = {**judge, "max_tokens": 601}
+    errors = judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=changed,
+        rubric_sha256="b" * 64,
+        approval_root=tmp_path,
         now=now,
     )
     assert "judge qualification does not match the exact run configuration" in errors
@@ -162,29 +206,78 @@ fail_target = 1
         )
 
 
-def test_judge_qualification_applies_lower_bound_and_stability_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run = tmp_path / "run"
-    run.mkdir()
-    blueprint = tmp_path / "blueprint.toml"
-    blueprint.write_text(
-        '''minimum_judge_repetitions = 2
-maximum_invalid_cases = 0
-minimum_repeat_stability = 0.95
-[[modules]]
-id = "instruction-following"
-target = 2
-failure_sensitivity_gate = 0.8
-pass_specificity_gate = 0.8
-''',
-        encoding="utf-8",
+def _calibration_run(root: Path, blueprint: Path) -> tuple[Path, Path]:
+    root.mkdir()
+    suite_config = root / "suite_snapshot.toml"
+    suite_config.write_text('name = "calibration-test"\nversion = "1.0.0"\nstatus = "candidate"\n', encoding="utf-8")
+    cases = (
+        {
+            "id": "pass-case",
+            "category": "instruction-following",
+            "judge_gold_verdict": "pass",
+            "probe_type": "standard",
+        },
+        {
+            "id": "fail-case",
+            "category": "instruction-following",
+            "judge_gold_verdict": "fail",
+            "probe_type": "standard",
+        },
     )
-    from cavada_eval.protocol import sha256_file
-
-    corpus = tmp_path / "corpus.json"
+    dataset = root / "dataset_snapshot.jsonl"
+    dataset.write_text("".join(json.dumps(case) + "\n" for case in cases), encoding="utf-8")
+    rubric = root / "rubric_snapshot.md"
+    rubric.write_text("Judge exact instruction following.\n", encoding="utf-8")
+    judgments = [
+        {
+            "case_id": case["id"],
+            "repetition": 1,
+            "judge_id": "primary",
+            "judge_repetition": repetition,
+            "model_repetition": repetition,
+            "judgment": {"verdict": case["judge_gold_verdict"]},
+        }
+        for case in cases
+        for repetition in (1, 2)
+    ]
+    judgments_path = root / "judgments.jsonl"
+    judgments_path.write_text("".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8")
+    suite = Suite(root, {"name": "calibration-test", "version": "1.0.0", "status": "candidate"}, cases, rubric.read_text(), dataset, rubric)
+    metrics = {"judge_calibration": _judge_calibration_summary(judgments, suite)}
+    metrics_path = root / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    manifest = {
+        "status": "passed",
+        "finished_at": "2026-08-07T00:00:00+00:00",
+        "suite": {
+            "dataset_sha256": sha256_file(dataset),
+            "rubric_sha256": sha256_file(rubric),
+            "suite_config_sha256": sha256_file(suite_config),
+        },
+        "target": {"kind": "recorded", "recorded_responses_sha256": "s" * 64},
+        "judge": {
+            "models": [{"id": "primary", "model": "judge", "revision": "fixed"}],
+            "prompt_sha256": "p" * 64,
+            "max_tokens": 600,
+            "judge_repetitions": 2,
+        },
+        "parameters": {"judge_repetitions": 2},
+        "metrics": metrics,
+        "artifacts": {
+            "suite_snapshot.toml": sha256_file(suite_config),
+            "dataset_snapshot.jsonl": sha256_file(dataset),
+            "rubric_snapshot.md": sha256_file(rubric),
+            "judgments.jsonl": sha256_file(judgments_path),
+            "metrics.json": sha256_file(metrics_path),
+        },
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    write_bundle(root)
+    corpus = root.parent / f"{root.name}-corpus.json"
     corpus.write_text(
         json.dumps(
             {
-                "dataset_sha256": "d" * 64,
+                "dataset_sha256": sha256_file(dataset),
                 "recorded_responses_sha256": "s" * 64,
                 "blueprint_sha256": sha256_file(blueprint),
                 "identity_blinded_to_judge": True,
@@ -193,36 +286,92 @@ pass_specificity_gate = 0.8
         ),
         encoding="utf-8",
     )
-    measured = {
-        "cases": 2,
-        "observations": 4,
-        "invalid_cases": 0,
-        "stable_repeated_case_fraction": 1.0,
-        "slices": {
-            "category": {
-                "instruction-following": {
-                    "cases": 2,
-                    "invalid_cases": 0,
-                    "failure_sensitivity_ci": {"lower": 0.9, "upper": 1.0, "confidence": 0.95},
-                    "pass_specificity_ci": {"lower": 0.9, "upper": 1.0, "confidence": 0.95},
-                }
-            },
-            "probe_type": {"standard": {"cases": 2}},
-        },
-    }
-    manifest = {
-        "suite": {"dataset_sha256": "d" * 64, "rubric_sha256": "r" * 64},
-        "target": {"kind": "recorded", "recorded_responses_sha256": "s" * 64},
-        "judge": {"models": [{"id": "primary", "model": "judge", "revision": "fixed"}], "prompt_sha256": "p" * 64},
-        "metrics": {"judge_calibration": {"primary": measured}},
-    }
-    (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setattr("cavada_eval.calibration.verify_bundle", lambda _run: {"valid": True, "failures": []})
+    return root, corpus
+
+
+def _reseal_calibration_run(run: Path) -> None:
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    metrics_path = run / "metrics.json"
+    metrics_path.write_text(json.dumps(manifest["metrics"]), encoding="utf-8")
+    manifest["artifacts"]["metrics.json"] = sha256_file(metrics_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    write_bundle(run)
+
+
+def test_judge_qualification_applies_lower_bound_and_stability_gates(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(
+        '''minimum_judge_repetitions = 2
+maximum_invalid_cases = 0
+minimum_repeat_stability = 0.95
+[[modules]]
+id = "instruction-following"
+target = 2
+failure_sensitivity_gate = 0.2
+pass_specificity_gate = 0.2
+''',
+        encoding="utf-8",
+    )
+    run, corpus = _calibration_run(tmp_path / "run", blueprint)
     report = qualify_judge_run(run, blueprint, corpus, tmp_path / "passed.json")
     assert report["passed"] is True
+    assert report["run_bundle_sha256"] == sha256_file(run / "bundle.json")
     assert report["judges"]["primary"]["diagnostic_slices"]["probe_type"]["standard"]["cases"] == 2
 
-    measured["slices"]["category"]["instruction-following"]["failure_sensitivity_ci"]["lower"] = 0.7
+    judgments_path = run / "judgments.jsonl"
+    judgments = [json.loads(line) for line in judgments_path.read_text(encoding="utf-8").splitlines()]
+    judgments[-1]["judgment"]["verdict"] = "pass"
+    judgments_path.write_text("".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8")
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    cases = tuple(json.loads(line) for line in (run / "dataset_snapshot.jsonl").read_text(encoding="utf-8").splitlines())
+    suite = Suite(run, {}, cases, "", run / "dataset_snapshot.jsonl", run / "rubric_snapshot.md")
+    manifest["metrics"]["judge_calibration"] = _judge_calibration_summary(judgments, suite)
+    manifest["artifacts"]["judgments.jsonl"] = sha256_file(judgments_path)
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _reseal_calibration_run(run)
     failed = qualify_judge_run(run, blueprint, corpus, tmp_path / "failed.json")
     assert failed["passed"] is False
+
+
+def test_judge_qualification_rejects_resealed_forged_aggregate(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(
+        'minimum_judge_repetitions = 2\nmaximum_invalid_cases = 0\nminimum_repeat_stability = 0\n',
+        encoding="utf-8",
+    )
+    run, corpus = _calibration_run(tmp_path / "run", blueprint)
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    manifest["metrics"]["judge_calibration"]["primary"]["accuracy"] = 0.0
+    (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _reseal_calibration_run(run)
+
+    output = tmp_path / "forged.json"
+    with pytest.raises(ProtocolError, match="do not reconcile with the immutable judgments and gold dataset"):
+        qualify_judge_run(run, blueprint, corpus, output)
+    assert not output.exists()
+
+
+def test_judge_qualification_reads_only_verified_run_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(
+        'minimum_judge_repetitions = 2\nmaximum_invalid_cases = 0\nminimum_repeat_stability = 0\n',
+        encoding="utf-8",
+    )
+    run, corpus = _calibration_run(tmp_path / "run", blueprint)
+    expected_bundle = sha256_file(run / "bundle.json")
+    expected_manifest = sha256_file(run / "manifest.json")
+
+    def swap_live_source(snapshot: Path) -> dict[str, object]:
+        result = verify_bundle(snapshot)
+        manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+        manifest["target"]["recorded_responses_sha256"] = "b" * 64
+        (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        write_bundle(run)
+        return result
+
+    monkeypatch.setattr("cavada_eval.calibration.verify_bundle", swap_live_source)
+    report = qualify_judge_run(run, blueprint, corpus, tmp_path / "qualification.json")
+
+    assert report["run_bundle_sha256"] == expected_bundle != sha256_file(run / "bundle.json")
+    assert report["run_manifest_sha256"] == expected_manifest != sha256_file(run / "manifest.json")

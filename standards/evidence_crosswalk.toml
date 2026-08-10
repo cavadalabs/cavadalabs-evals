@@ -19,7 +19,7 @@ source_id = "nist-ai-600-1"
 source_version = "NIST AI 600-1 (July 2024)"
 status = "implemented-partial"
 scope = "Generative-AI risk measurement, content provenance, predeployment testing, incident, privacy, information-integrity, and security evidence"
-repository_evidence = ["standards/control_catalog.toml", "standards/risk_mappings.toml", "SECURITY.md", "THREAT_MODEL.md", "suites/security-privacy-smoke-v1", "src/cavada_eval/compliance.py"]
+repository_evidence = ["standards/control_catalog.toml", "standards/risk_mappings.toml", "SECURITY.md", "docs/THREAT_MODEL.md", "suites/security-privacy-smoke-v1", "src/cavada_eval/compliance.py"]
 external_evidence = ["deployment context, red-team authorization, incident history, affected-party input, and accountable risk treatment"]
 limitations = ["Behavioral tests cover only named sampled risks", "No combined trustworthiness score is emitted"]
 
@@ -39,7 +39,7 @@ source_id = "owasp-llm-top-10-2026"
 source_version = "Version 2026, published 2026-08-03"
 status = "implemented-partial"
 scope = "All ten 2026 LLM application risk categories"
-repository_evidence = ["standards/risk_mappings.toml", "suites/security-privacy-smoke-v1", "SECURITY.md", "THREAT_MODEL.md"]
+repository_evidence = ["standards/risk_mappings.toml", "suites/security-privacy-smoke-v1", "SECURITY.md", "docs/THREAT_MODEL.md"]
 external_evidence = ["system-specific architecture threat model, adaptive red team, incident data, supply-chain assessment, and remediation verification"]
 limitations = ["Mapped smoke cases are not exhaustive", "Agentic systems also require the Agentic Top 10"]
 
@@ -49,7 +49,7 @@ source_id = "owasp-agentic-top-10-2026"
 source_version = "Version 2026, released 2025-12-09"
 status = "planned"
 scope = "Agent goal, tool, identity, supply-chain, code-execution, memory, communication, cascading, trust, and rogue-agent risks"
-repository_evidence = ["program/registry.toml", "examples/agent", "examples/tool", "THREAT_MODEL.md"]
+repository_evidence = ["program/registry.toml", "docs/THREAT_MODEL.md"]
 external_evidence = ["approved agent/MCP harness, side-effect sandbox, representative tasks, adaptive red team, and incident-informed review"]
 limitations = ["No approved executable agent suite exists", "Text-only smoke cases cannot establish agentic coverage"]
 
@@ -59,7 +59,7 @@ source_id = "mitre-atlas"
 source_version = "Pinned atlas-data commit recorded in program/source-register.toml"
 status = "implemented-partial"
 scope = "Threat-informed technique references for generative and planned agentic AI evaluations"
-repository_evidence = ["standards/risk_mappings.toml", "suites/security-privacy-smoke-v1", "THREAT_MODEL.md"]
+repository_evidence = ["standards/risk_mappings.toml", "suites/security-privacy-smoke-v1", "docs/THREAT_MODEL.md"]
 external_evidence = ["release-pinned ATLAS data import, system threat model, authorized adversary emulation, and mitigation validation"]
 limitations = ["ATLAS is a living knowledge base", "No claim of complete technique coverage"]
 
@@ -69,7 +69,7 @@ source_id = "gdpr"
 source_version = "Regulation (EU) 2016/679, Official Journal text"
 status = "legal-review-required"
 scope = "Article-group engineering evidence listed in standards/control_catalog.toml"
-repository_evidence = ["standards/control_catalog.toml", "schemas/control-evidence.schema.json", "src/cavada_eval/compliance.py", "PRIVACY.md"]
+repository_evidence = ["standards/control_catalog.toml", "schemas/control-evidence.schema.json", "src/cavada_eval/compliance.py", "docs/COMPLIANCE.md"]
 external_evidence = ["role and territorial applicability, lawful basis, special-category condition, notices, contracts, ROPA, DPIA, transfer assessment, DPO/counsel decisions, and residual risk"]
 limitations = ["A benchmark cannot determine GDPR compliance", "Applicability and legal conclusions are engagement-specific"]
 
@@ -109,7 +109,7 @@ source_id = "iso-iec-23894"
 source_version = "ISO/IEC 23894:2023"
 status = "license-required"
 scope = "AI risk-management mapping template only"
-repository_evidence = ["program/POLICY.md", "THREAT_MODEL.md", "standards/control_catalog.toml"]
+repository_evidence = ["program/POLICY.md", "docs/THREAT_MODEL.md", "standards/control_catalog.toml"]
 external_evidence = ["licensed standard, context-specific risk process, criteria, treatment, monitoring, communication, and accountable acceptance"]
 limitations = ["No ISO clause text is reproduced", "No conformity claim"]
 
@@ -139,7 +139,7 @@ source_id = "iso-iec-27001"
 source_version = "ISO/IEC 27001:2022"
 status = "license-required"
 scope = "Information-security management-system mapping template only"
-repository_evidence = ["SECURITY.md", "THREAT_MODEL.md", "program/POLICY.md", ".github/workflows/ci.yml", "IMPLEMENTATION_CHECKLIST.md"]
+repository_evidence = ["SECURITY.md", "docs/THREAT_MODEL.md", "program/POLICY.md", ".github/workflows/ci.yml", "IMPLEMENTATION_CHECKLIST.md"]
 external_evidence = ["licensed standard, defined ISMS scope, risk assessment and treatment, statement of applicability, operational controls, audit, management review, corrective action, and certification evidence if claimed"]
 limitations = ["Repository controls are not an ISMS conformity assessment", "No certification claim"]
 
@@ -149,7 +149,7 @@ source_id = "iso-iec-27701"
 source_version = "ISO/IEC 27701:2025 edition 2"
 status = "license-required"
 scope = "Privacy-information management-system mapping template only"
-repository_evidence = ["PRIVACY.md", "standards/control_catalog.toml", "program/POLICY.md"]
+repository_evidence = ["docs/COMPLIANCE.md", "standards/control_catalog.toml", "program/POLICY.md"]
 external_evidence = ["licensed current standard, PIMS scope, controller/processor roles, privacy risk assessment, jurisdictional requirements, operational evidence, audit, management review, and certification evidence if claimed"]
 limitations = ["The withdrawn 2019 edition is not the current mapping basis", "Benchmark privacy tests cannot establish PIMS or legal conformity"]
 

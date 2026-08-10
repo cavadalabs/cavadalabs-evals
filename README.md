@@ -12,11 +12,38 @@ The engine is an active pre-1.0 developer preview. The MEMO4345 suite remains
 and the required governance evidence exist. `official` means conformance to the
 versioned protocol, never universal safety, correctness, or legal certification.
 
+The supported flagship is the generation-only `llm-serving-v2` reference
+benchmark. The general assistant suite is a development draft, MEMO4345 and the
+security/privacy smoke suite are candidates, and registry entries marked
+`planned` are roadmap declarations rather than evaluated capabilities. The
+public results registry intentionally contains no baseline until a real run is
+approved; independent reproductions remain separate evidence.
+
+## Installation
+
+Python 3.11 or newer is required. From a source checkout, install the locked
+development environment with `uv sync --frozen`. DeepEval is optional and is
+packaged as the `deepeval` extra; contributors can install it with
+`uv sync --frozen --extra deepeval`. Once a distribution is published, install
+the dependency-free core with `python -m pip install cavadalabs-evals`, or add
+DeepEval with `python -m pip install "cavadalabs-evals[deepeval]"`.
+
 ## Quick start
 
+Prove the complete local artifact path first. This uses a temporary loopback
+fixture, no credentials, and no external network:
+
 ```bash
-uv sync
+uv sync --frozen
 uv run cavada-eval doctor
+uv run python examples/offline_demo.py
+```
+
+The printed bundle is a transport/protocol demonstration, not model-quality
+evidence. For a real suite, create and validate a versioned copy before any
+endpoint contact:
+
+```bash
 uv run cavada-eval init customer-support-v1
 uv run cavada-eval validate suites/customer-support-v1
 uv run cavada-eval estimate suites/customer-support-v1 --repetitions 3 --judge-repetitions 3
@@ -62,10 +89,10 @@ does not score response correctness or safety.
 
 | Preset | Behavior cases | Target / judge repetitions | Performance scope | Official eligibility |
 | --- | ---: | ---: | --- | --- |
-| `smoke` | up to 25 | 1 / 1 | endpoint check | no |
-| `quick` | up to 100 | 1 / 1 | 98 requests, 12 cells | no |
-| `standard` | up to 1,000 | 2 / 2 | 825 requests, 34 cells | no |
-| `reference` (`full`) | all | 3 / 3 | complete reference plan | only with every official gate |
+| `smoke` | up to 25 | 1 / 1 | historical-development v1.1 endpoint check | no |
+| `quick` | up to 100 | 1 / 1 | historical-development v1.1, 98 requests | no |
+| `standard` | up to 1,000 | 2 / 2 | historical-development v1.1, 825 requests | no |
+| `reference` (`full`) | all | 3 / 3 | current v2 complete reference plan | only with every official gate |
 
 Reduced behavior subsets are selected deterministically across categories,
 risks, severities, languages, and splits without separating scenario groups.
@@ -75,29 +102,37 @@ it into a reference or official result.
 Useful commands:
 
 ```text
-init doctor list profiles program validate audit estimate run resume redteam
+init doctor list profiles program validate audit estimate run redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
 judge-qualify pilot-audit compare pairwise report verify promote export controls
 import-external retention-record
-perf validate | perf run | perf compare
+perf validate | perf run | perf compare | perf export
 ```
 
 Run a generation-only serving benchmark against an externally managed engine:
 
 ```bash
-uv run cavada-eval perf validate performance/plans/llm-serving-v1.toml \
+uv run cavada-eval perf validate --preset quick \
   --runtime /secure/path/runtime.toml
-uv run cavada-eval perf run performance/plans/llm-serving-v1.toml \
-  /secure/path/runtime.toml
-
-# Or select the immutable built-in plan by preset:
 uv run cavada-eval perf run /secure/path/runtime.toml --preset quick
+uv run cavada-eval perf validate --preset reference \
+  --runtime /secure/path/runtime.toml \
+  --system-evidence /secure/path/system-evidence.json
 ```
 
-The versioned plan covers closed-loop users, open-loop offered load, concurrency
-1–64, input contexts through 128k/256k, and requested outputs through 8k. See
-[PERFORMANCE_PROTOCOL.md](PERFORMANCE_PROTOCOL.md) and
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md). Inference engines remain external.
+Validation is offline. `quick` is a historical-development v1.1 run and is never
+official; use the current v2 `reference` preset only for official-capable work,
+following the additional evidence and execution steps in
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md). The reference plan covers closed-loop
+users, open-loop offered load, concurrency 1–64, input contexts through
+128k/256k, and requested outputs through 8k. Its normative rules are in
+[Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). The unanchored
+historical-development [v1.1 protocol](PERFORMANCE_PROTOCOL_V1_1.md) and commit-anchored
+[v1.0 protocol](PERFORMANCE_PROTOCOL_V1_0.md) remain available for bundles that
+record those versions.
+
+Inference engines remain external. Client-side serving measurements do not
+establish model quality, hardware utilization, or energy use.
 
 API keys are read from named environment variables only. Endpoint credentials
 and query values are never written to manifests. Official non-public data needs
@@ -188,13 +223,21 @@ suite or result official. The first public push must also satisfy the
 ## Development verification
 
 ```bash
+uv sync --frozen
+uv lock --check
 uv run ruff check .
 uv run mypy src
 uv run pytest
-uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
+uv run python scripts/check_secrets.py
+uv run python scripts/validate_results_registry.py
+uv run python scripts/check_release.py
+uv run cavada-eval perf validate --preset reference
 uv build
+uv run python scripts/check_distribution.py
+uv run python scripts/generate_sbom.py --wheel dist/*.whl --output dist/sbom.cdx.json
 uv run python scripts/generate_provenance.py
 ```
 
-The Apache License 2.0 applies to source code. Every dataset, rubric, media asset, and
-third-party benchmark keeps its own declared license and redistribution terms.
+The Apache License 2.0 applies to source code. Every dataset, rubric, media
+asset, and third-party benchmark keeps its own declared license and
+redistribution terms.

@@ -15,6 +15,13 @@ calibrated datasets. Their absence must be reported, never replaced with a fake
 score. C2PA marker detection is only discovery; cryptographic C2PA verification
 requires an approved verifier and does not prove that content is truthful.
 
+Transport support is not measurement validity. The built-in OpenAI-compatible
+path can encode validated PNG/JPEG images and bounded input audio, while generic
+JSON can carry validated encoded parts. A suite still needs a qualified target
+adapter, dataset, metric, and rubric for the exact modality before official use.
+
 Original assets and failure previews are restricted. Public reports may contain
 only separately sanitized derivatives. Rich media parsers and custom metrics
 must execute in a sandbox with CPU, memory, time, filesystem, and network limits.
+No such general-purpose OS sandbox is provided by this repository; unsupported
+official modalities fail closed.

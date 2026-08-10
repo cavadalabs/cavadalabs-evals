@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+from shutil import copyfile as _snapshot_copyfile
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from .artifacts import verify_bundle
-from .protocol import ProtocolError, atomic_json, sha256_file
+from .protocol import ProtocolError, Suite, atomic_json, require_mutable_output_root, sha256_bytes, sha256_file
 
 
 def judge_signature(judge: Any) -> str:
@@ -19,6 +23,9 @@ def judge_signature(judge: Any) -> str:
         not all(isinstance(judge.get(field), str) and judge[field] for field in text_fields)
         or not isinstance(judge.get("temperature"), (int, float))
         or isinstance(judge.get("temperature"), bool)
+        or not isinstance(judge.get("max_tokens"), int)
+        or isinstance(judge.get("max_tokens"), bool)
+        or judge["max_tokens"] < 1
         or not isinstance(models, list)
         or not models
         or not all(
@@ -29,8 +36,32 @@ def judge_signature(judge: Any) -> str:
         or judge.get("consensus") not in {"majority", "unanimous"}
     ):
         return ""
-    fields = (*text_fields, "temperature", "models", "consensus")
+    judge_repetitions = judge.get("judge_repetitions")
+    if not isinstance(judge_repetitions, int) or isinstance(judge_repetitions, bool) or judge_repetitions < 1:
+        return ""
+    fields = (*text_fields, "temperature", "max_tokens", "judge_repetitions", "models", "consensus")
     return json.dumps({field: judge.get(field) for field in fields}, sort_keys=True, separators=(",", ":"))
+
+
+def _evidence_error(root: Path | None, relative: Any, expected_hash: Any) -> str | None:
+    if (
+        root is None
+        or not isinstance(relative, str)
+        or not relative
+        or not isinstance(expected_hash, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+        or expected_hash == "0" * 64
+    ):
+        return "judge approver qualification path and non-placeholder SHA-256 are required"
+    candidate = root / relative
+    resolved = candidate.resolve()
+    if Path(relative).is_absolute() or ".." in Path(relative).parts or not resolved.is_relative_to(root.resolve()):
+        return "judge approver qualification evidence must stay inside its evidence package"
+    if candidate.is_symlink() or not resolved.is_file():
+        return "judge approver qualification evidence must be a regular package-local file"
+    if sha256_file(resolved) != expected_hash:
+        return "judge approver qualification evidence hash mismatch"
+    return None
 
 
 def judge_evidence_errors(
@@ -40,6 +71,7 @@ def judge_evidence_errors(
     qualification_sha256: str,
     expected_judge: Any,
     rubric_sha256: str,
+    approval_root: Path | None = None,
     now: datetime | None = None,
 ) -> list[str]:
     errors: list[str] = []
@@ -47,7 +79,7 @@ def judge_evidence_errors(
     judges = qualification.get("judges") if isinstance(qualification, dict) else None
     if (
         not isinstance(qualification, dict)
-        or qualification.get("qualification_version") != "1.0.0"
+        or qualification.get("qualification_version") != "2.0.0"
         or qualification.get("passed") is not True
         or qualification.get("rubric_sha256") != rubric_sha256
         or not isinstance(qualification.get("bundle_verification"), dict)
@@ -69,7 +101,6 @@ def judge_evidence_errors(
     approval_fields = (
         "approval_id",
         "approver_id",
-        "approver_qualification_evidence",
         "conflicts",
         "decision_rationale",
         "approved_at",
@@ -77,7 +108,7 @@ def judge_evidence_errors(
     )
     if (
         not isinstance(approval, dict)
-        or approval.get("approval_version") != "1.0.0"
+        or approval.get("approval_version") != "2.0.0"
         or approval.get("scope") != "judge-qualification"
         or approval.get("status") != "passed"
         or approval.get("independent") is not True
@@ -86,6 +117,13 @@ def judge_evidence_errors(
     ):
         errors.append("judge independent approval is incomplete, unlinked, or did not pass")
         return errors
+    evidence_error = _evidence_error(
+        approval_root,
+        approval.get("approver_qualification_evidence"),
+        approval.get("approver_qualification_evidence_sha256"),
+    )
+    if evidence_error:
+        errors.append(evidence_error)
     try:
         approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
         expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
@@ -108,27 +146,70 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ProtocolError(f"cannot read calibration evidence {path}: {exc}") from exc
+    rows: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(lines, 1):
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ProtocolError(f"invalid calibration evidence {path}:{line_number}: {exc.msg}") from exc
+        if not isinstance(row, dict):
+            raise ProtocolError(f"calibration evidence must contain objects: {path}:{line_number}")
+        rows.append(row)
+    return rows
+
+
 def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Path, output: Path) -> dict[str, Any]:
-    run = run.resolve()
+    source_run = run
+    run = source_run.resolve()
     output = output.resolve()
+    require_mutable_output_root(output.parent)
     if output.exists():
         raise ProtocolError(f"judge qualification output already exists: {output}")
     if output == run or run in output.parents:
         raise ProtocolError("judge qualification output must not mutate the finalized run bundle")
+    if source_run.is_symlink() or not run.is_dir():
+        raise ProtocolError("judge qualification requires a regular finalized run directory")
+    with TemporaryDirectory(prefix="cavada-judge-qualification-") as temporary:
+        snapshot = Path(temporary) / "run"
+        shutil.copytree(run, snapshot, symlinks=True, copy_function=_snapshot_copyfile)
+        return _qualify_judge_run_snapshot(snapshot, blueprint_path, corpus_manifest_path, output)
+
+
+def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest_path: Path, output: Path) -> dict[str, Any]:
     verification = verify_bundle(run)
     if not verification["valid"]:
         raise ProtocolError("judge qualification requires a valid finalized run bundle")
+    run_bundle_sha256 = sha256_file(run / "bundle.json")
+    run_manifest_sha256 = sha256_file(run / "manifest.json")
     manifest = _json(run / "manifest.json")
-    corpus = _json(corpus_manifest_path)
+    if corpus_manifest_path.is_symlink() or not corpus_manifest_path.is_file():
+        raise ProtocolError("calibration corpus manifest must be a regular file")
     try:
-        with blueprint_path.open("rb") as handle:
-            blueprint = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        corpus_raw = corpus_manifest_path.read_bytes()
+        corpus = json.loads(corpus_raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProtocolError(f"cannot read calibration evidence {corpus_manifest_path}: {exc}") from exc
+    if not isinstance(corpus, dict):
+        raise ProtocolError(f"calibration evidence must be an object: {corpus_manifest_path}")
+    if blueprint_path.is_symlink() or not blueprint_path.is_file():
+        raise ProtocolError("judge qualification blueprint must be a regular file")
+    try:
+        blueprint_raw = blueprint_path.read_bytes()
+        blueprint = tomllib.loads(blueprint_raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot read judge qualification blueprint: {exc}") from exc
     suite = manifest.get("suite")
     if not isinstance(suite, dict) or suite.get("dataset_sha256") != corpus.get("dataset_sha256"):
         raise ProtocolError("run dataset does not match the calibration corpus manifest")
-    if corpus.get("blueprint_sha256") != sha256_file(blueprint_path):
+    blueprint_sha256 = sha256_bytes(blueprint_raw)
+    if corpus.get("blueprint_sha256") != blueprint_sha256:
         raise ProtocolError("calibration corpus does not match the qualification blueprint")
     target = manifest.get("target")
     if (
@@ -143,12 +224,60 @@ def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Pat
     calibration = metrics.get("judge_calibration") if isinstance(metrics, dict) else None
     if not isinstance(calibration, dict) or not calibration:
         raise ProtocolError("run contains no judge calibration metrics")
+    required = {
+        "suite_snapshot.toml": suite.get("suite_config_sha256"),
+        "dataset_snapshot.jsonl": suite.get("dataset_sha256"),
+        "rubric_snapshot.md": suite.get("rubric_sha256"),
+        "judgments.jsonl": (manifest.get("artifacts") or {}).get("judgments.jsonl"),
+        "metrics.json": (manifest.get("artifacts") or {}).get("metrics.json"),
+    }
+    if any(
+        not isinstance(expected, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", expected)
+        or not (path := run / name).is_file()
+        or path.is_symlink()
+        or sha256_file(path) != expected
+        for name, expected in required.items()
+    ):
+        raise ProtocolError("judge qualification run is missing exact hash-bound calibration evidence")
+    if _json(run / "metrics.json") != metrics:
+        raise ProtocolError("judge qualification metrics artifact differs from the run manifest")
+    try:
+        suite_config = tomllib.loads((run / "suite_snapshot.toml").read_text(encoding="utf-8"))
+        rubric = (run / "rubric_snapshot.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ProtocolError(f"cannot read judge qualification suite snapshots: {exc}") from exc
+    cases = _jsonl(run / "dataset_snapshot.jsonl")
+    judgments = _jsonl(run / "judgments.jsonl")
+    if not cases or not judgments or any(case.get("judge_gold_verdict") not in {"pass", "fail"} for case in cases):
+        raise ProtocolError("judge qualification requires complete gold cases and judgment evidence")
+    snapshot_suite = Suite(
+        run,
+        suite_config,
+        tuple(cases),
+        rubric,
+        run / "dataset_snapshot.jsonl",
+        run / "rubric_snapshot.md",
+    )
+    from .runner import _judge_calibration_summary
+
+    calculated_calibration = _judge_calibration_summary(judgments, snapshot_suite)
+    if calibration != calculated_calibration:
+        raise ProtocolError("judge calibration metrics do not reconcile with the immutable judgments and gold dataset")
     judge_models = (manifest.get("judge") or {}).get("models")
     if not isinstance(judge_models, list) or not judge_models:
         raise ProtocolError("run does not identify the qualified judge configuration")
     judge_ids = {str(model.get("id")) for model in judge_models if isinstance(model, dict) and model.get("id")}
     if judge_ids != set(calibration):
         raise ProtocolError("judge calibration metrics do not match the declared judge identities")
+    judge_repetitions = (manifest.get("parameters") or {}).get("judge_repetitions")
+    if (
+        not isinstance(judge_repetitions, int)
+        or isinstance(judge_repetitions, bool)
+        or judge_repetitions < 1
+        or (manifest.get("judge") or {}).get("judge_repetitions") != judge_repetitions
+    ):
+        raise ProtocolError("judge qualification requires exact judge repetition evidence")
     minimum_repetitions = int(blueprint.get("minimum_judge_repetitions", 1))
     maximum_invalid = int(blueprint.get("maximum_invalid_cases", 0))
     minimum_stability = float(blueprint.get("minimum_repeat_stability", 0.0))
@@ -212,12 +341,13 @@ def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Pat
             },
         }
     report = {
-        "qualification_version": "1.0.0",
+        "qualification_version": "2.0.0",
         "passed": bool(judge_results) and all(row["passed"] for row in judge_results.values()),
-        "run_manifest_sha256": sha256_file(run / "manifest.json"),
+        "run_manifest_sha256": run_manifest_sha256,
+        "run_bundle_sha256": run_bundle_sha256,
         "bundle_verification": verification,
-        "corpus_manifest_sha256": sha256_file(corpus_manifest_path),
-        "blueprint_sha256": sha256_file(blueprint_path),
+        "corpus_manifest_sha256": sha256_bytes(corpus_raw),
+        "blueprint_sha256": blueprint_sha256,
         "corpus_dataset_sha256": corpus["dataset_sha256"],
         "judge_configuration": manifest["judge"],
         "rubric_sha256": suite["rubric_sha256"],

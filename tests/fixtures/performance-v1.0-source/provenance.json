@@ -1,0 +1,53 @@
+{
+  "fixture_version": "1.0.0",
+  "source": {
+    "commit": "9fd83112f0fd62e7dd1832cb50eb1c4a3671cbd7",
+    "tree": "bb4d174c3e3649b78567310c4aa218d15f215361",
+    "tag": null,
+    "checkout_state": "clean"
+  },
+  "generation": {
+    "command": "git clone --no-hardlinks . /tmp/cavadalabs-v1-source && git -C /tmp/cavadalabs-v1-source switch --detach 9fd83112f0fd62e7dd1832cb50eb1c4a3671cbd7 && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/tmp/cavadalabs-v1-source/src .venv/bin/python tests/fixtures/performance-v1.0-source/generate_fixture.py --historical-source /tmp/cavadalabs-v1-source --output tests/fixtures/performance-v1.0-source/bundle",
+    "implementation": "src/cavada_eval/performance.py",
+    "implementation_sha256": "213601004deeee8fc5c923c3e4b60e326ffcdc184909b993098164ec4882a041",
+    "integrity_implementation_sha256": "60e14f2985ad1d9bf2ceab749efca18bd57d15a3521ce4e5daef86c6ad4ba6b9",
+    "transport": "stdlib HTTP server bound to 127.0.0.1 with static synthetic SSE events",
+    "external_network_contacted": false
+  },
+  "protocol": {
+    "source_path": "PERFORMANCE_PROTOCOL.md",
+    "sha256": "a754416f07c1a0f0436614543fdfa45dee95a2f20ab93116af1f4f47ea5ae97a"
+  },
+  "schemas": {
+    "performance-manifest.schema.json": "c0ac65f3e0434c9793142c993a9da2abc2a66e8342243bab5493fca7bb5f3101",
+    "performance-plan.schema.json": "a1cde1a4b3cfd7cc9907f0b5669505d322839d6efcbf452598699a04c6f150dc",
+    "performance-runtime.schema.json": "24fd2ee31865bf79e12a4b9340786a4845b7ca04e4cfc6b57a2ed8f4c5392cc6",
+    "performance-workload-item.schema.json": "6d2f751d80ce5382b6f6fd77eedac20490feda405e00abb421e3d47bfd52bd9a"
+  },
+  "bundle": {
+    "path": "bundle",
+    "run_id": "20260810T134620Z_loopback-fixture_3de48ad532",
+    "sha256": "e17a15176850513123541116a23a4e7f81917578ebeebab2ce73a2a5587f31c2",
+    "manifest_sha256": "1eeb4afbb3233613d56313220799204d6c70b71f0877bbf98967599260f6fa04",
+    "cells_sha256": "aef6186cbacc233915b7372bfd8d48466a8c0265a66a796c97aa4d0d3693f5f5",
+    "files": 18,
+    "signature": "absent"
+  },
+  "assurance": {
+    "level": "legacy-hash-only",
+    "semantic_valid": false,
+    "official": false,
+    "rankable": false,
+    "reason": "The historical v1 runner verified artifact hashes only and did not preserve the evidence required for current semantic reconstruction."
+  },
+  "public_bundle": {
+    "applicable": false,
+    "reason": "The pinned source had no performance public exporter, public verifier, performance publication schema, or perf export command."
+  },
+  "data": {
+    "classification": "synthetic",
+    "contains_real_model_output": false,
+    "contains_credentials": false,
+    "contains_personal_data": false
+  }
+}

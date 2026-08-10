@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/performance-publication/2.0.0",
+  "title": "CavadaLabs Public Performance Publication 2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "publication_version",
+    "performance_protocol_version",
+    "protocol_sha256",
+    "run_id",
+    "evaluation_started_at",
+    "evaluation_finished_at",
+    "status",
+    "assurance",
+    "official",
+    "source_manifest_sha256",
+    "source_bundle_sha256",
+    "plan",
+    "workload",
+    "runtime",
+    "system_evidence",
+    "source",
+    "cells",
+    "warmups",
+    "request_reconciliation",
+    "token_usage",
+    "estimated_cost",
+    "release",
+    "limitations"
+  ],
+  "properties": {
+    "publication_version": {"const": "2.0.0"},
+    "performance_protocol_version": {"const": "2.0.0"},
+    "protocol_sha256": {"$ref": "#/$defs/hash"},
+    "run_id": {"type": "string", "minLength": 1},
+    "evaluation_started_at": {"type": "string", "format": "date-time"},
+    "evaluation_finished_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["completed", "completed-with-errors", "invalid-loadgen"]},
+    "assurance": {"enum": ["development", "approved"]},
+    "official": {"type": "boolean"},
+    "source_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "source_bundle_sha256": {"$ref": "#/$defs/hash"},
+    "plan": {"$ref": "#/$defs/plan"},
+    "workload": {"$ref": "#/$defs/workload"},
+    "runtime": {"$ref": "#/$defs/runtime"},
+    "system_evidence": {"oneOf": [{"$ref": "#/$defs/systemEvidence"}, {"type": "null"}]},
+    "source": {"$ref": "#/$defs/source"},
+    "cells": {"$ref": "#/$defs/cells"},
+    "warmups": {"$ref": "#/$defs/warmups"},
+    "request_reconciliation": {"$ref": "#/$defs/reconciliation"},
+    "token_usage": {"$ref": "#/$defs/tokenUsage"},
+    "estimated_cost": {"oneOf": [{"$ref": "#/$defs/estimatedCost"}, {"type": "null"}]},
+    "release": {"oneOf": [{"$ref": "#/$defs/release"}, {"type": "null"}]},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"official": {"const": true}}, "required": ["official"]},
+      "then": {
+        "properties": {
+          "status": {"const": "completed"},
+          "assurance": {"const": "approved"},
+          "system_evidence": {"$ref": "#/$defs/systemEvidence"},
+          "release": {"$ref": "#/$defs/release"},
+          "cells": {"properties": {"invalid_loadgen": {"const": 0}}}
+        }
+      },
+      "else": {"properties": {"assurance": {"const": "development"}, "release": {"type": "null"}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "invalid-loadgen"}}, "required": ["status"]},
+      "then": {"properties": {"official": {"const": false}, "cells": {"properties": {"invalid_loadgen": {"minimum": 1}}}}}
+    }
+  ],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "semanticVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "safeRelativePath": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "loadGenerator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_dispatch_rate_fraction", "maximum_dispatch_lag_p95_ms", "maximum_dispatch_lag_ms"],
+      "properties": {
+        "minimum_dispatch_rate_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "maximum_dispatch_lag_p95_ms": {"type": "number", "minimum": 0},
+        "maximum_dispatch_lag_ms": {"type": "number", "minimum": 0}
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "revision", "sha256", "profile", "data_classification", "load_generator"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/semanticVersion"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "profile": {"const": "llm-serving-v2"},
+        "data_classification": {"enum": ["public", "synthetic"]},
+        "open_loop_arrival_distribution": {"enum": ["fixed", "poisson"]},
+        "execution_seed": {"type": "integer", "minimum": 0},
+        "minimum_p99_observations": {"type": "integer", "minimum": 1},
+        "load_generator": {"$ref": "#/$defs/loadGenerator"}
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "mode", "sha256", "asset_set_sha256", "assets", "cases"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/semanticVersion"},
+        "mode": {"enum": ["iso-prompt", "iso-token"]},
+        "prefix_cache_policy": {"enum": ["diverse", "shared", "unspecified"]},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "asset_set_sha256": {"$ref": "#/$defs/hash"},
+        "assets": {"type": "object", "propertyNames": {"$ref": "#/$defs/safeRelativePath"}, "additionalProperties": {"$ref": "#/$defs/hash"}},
+        "cases": {"type": "integer", "minimum": 1}
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "source", "effective_at", "input_per_million", "output_per_million"],
+      "properties": {
+        "currency": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "effective_at": {"type": "string", "minLength": 1},
+        "input_per_million": {"type": "number", "minimum": 0},
+        "output_per_million": {"type": "number", "minimum": 0}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_version", "id", "request_model", "expected_model", "model_revision", "engine", "engine_revision", "model_artifact_revision", "dtype", "quantization", "gpu_count", "gpu_model", "tensor_parallel", "max_context_tokens", "launch_command_sanitized", "pricing", "sha256"],
+      "properties": {
+        "runtime_version": {"const": "1.0.0"},
+        "id": {"type": "string", "minLength": 1},
+        "request_model": {"type": "string", "minLength": 1},
+        "expected_model": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "minLength": 1},
+        "engine": {"type": "string", "minLength": 1},
+        "engine_revision": {"type": "string", "minLength": 1},
+        "model_artifact_revision": {"$ref": "#/$defs/hash"},
+        "dtype": {"type": "string", "minLength": 1},
+        "quantization": {"type": "string", "minLength": 1},
+        "gpu_count": {"type": "integer", "minimum": 1},
+        "gpu_model": {"type": "string", "minLength": 1},
+        "tensor_parallel": {"type": "integer", "minimum": 1},
+        "max_context_tokens": {"type": "integer", "minimum": 1},
+        "container_image_digest": {"type": "string", "pattern": "^(?:|sha256:[a-fA-F0-9]{64})$"},
+        "launch_command_sanitized": {"type": "string", "minLength": 1},
+        "pricing": {"oneOf": [{"$ref": "#/$defs/pricing"}, {"type": "null"}]},
+        "sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "systemEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configuration_id", "sha256", "projection"],
+      "properties": {
+        "configuration_id": {"type": "string", "pattern": "^cfg-sha256:[a-f0-9]{64}$"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "projection": {"const": "public"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "dirty", "status_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})?$"},
+        "dirty": {"type": "boolean"},
+        "status_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "cells": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "completed", "with_errors", "invalid_loadgen", "skipped", "slo_passed", "slo_failed"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 1},
+        "completed": {"type": "integer", "minimum": 0},
+        "with_errors": {"type": "integer", "minimum": 0},
+        "invalid_loadgen": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "slo_passed": {"type": "integer", "minimum": 0},
+        "slo_failed": {"type": "integer", "minimum": 0}
+      }
+    },
+    "warmups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "successes", "errors"],
+      "properties": {"total": {"type": "integer", "minimum": 0}, "successes": {"type": "integer", "minimum": 0}, "errors": {"type": "integer", "minimum": 0}}
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planned", "scheduled", "accepted", "responses", "warmup_outcomes", "measured_outcomes", "terminal_outcomes", "ledgers_complete", "campaign_complete"],
+      "properties": {
+        "planned": {"type": "integer", "minimum": 0},
+        "scheduled": {"type": "integer", "minimum": 0},
+        "accepted": {"type": "integer", "minimum": 0},
+        "responses": {"type": "integer", "minimum": 0},
+        "warmup_outcomes": {"type": "integer", "minimum": 0},
+        "measured_outcomes": {"type": "integer", "minimum": 0},
+        "terminal_outcomes": {"type": "integer", "minimum": 0},
+        "ledgers_complete": {"const": true},
+        "campaign_complete": {"const": true}
+      }
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output", "total"],
+      "properties": {"input": {"type": "number", "minimum": 0}, "output": {"type": "number", "minimum": 0}, "total": {"type": "number", "minimum": 0}}
+    },
+    "estimatedCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency", "source", "effective_at", "includes_warmup"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "effective_at": {"type": "string", "minLength": 1},
+        "includes_warmup": {"const": false}
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release_version", "release_id", "engagement_id", "engagement_sha256", "approval_sha256", "approver_id", "permitted_claims", "approved_at", "expires_at"],
+      "properties": {
+        "release_version": {"const": "2.0.0"},
+        "release_id": {"type": "string", "minLength": 1},
+        "engagement_id": {"type": "string", "minLength": 1},
+        "engagement_sha256": {"$ref": "#/$defs/hash"},
+        "approval_sha256": {"$ref": "#/$defs/hash"},
+        "approver_id": {"type": "string", "minLength": 1},
+        "permitted_claims": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "string", "minLength": 1}},
+        "approved_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

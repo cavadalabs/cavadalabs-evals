@@ -5,6 +5,33 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Hardened official behavior execution and release verification with current
+  hash-linked authorization evidence, exact target and judge identity, raw
+  ledger reconciliation, CI-lower gate recomputation, and immutable outputs.
+- Promoted the immutable LLM-serving reference inputs to revision 2 with
+  deterministic cache diversity, seeded Poisson arrivals, and fail-closed p99
+  sample minima under the new performance protocol v2; reduced presets retain
+  their commit-anchored v1.0 inputs under an unanchored historical-development
+  v1.1 interpretation, and the v1.0 protocol remains immutable.
+- Added versioned system evidence for server, accelerator, engine,
+  load-generator, and network configuration plus verified exact-cell
+  comparisons that expose skipped and non-shared observations.
+- Added fail-closed public performance exports with protocol/input snapshots,
+  reconciled sanitized measurements, public system evidence, and exact
+  independent post-run approval for official results.
+- Added an empty append-only public results registry, deterministic external
+  import adapters for lm-evaluation-harness and vLLM, and signed correction and
+  independent-reproduction contracts without inventing a baseline.
+- Added a credential-free offline demo, dependency-free wheel and `uvx`
+  workflows, Python 3.11–3.14 and multi-OS CI, reproducible distributions,
+  wheel-derived SBOMs, release provenance, and fail-closed publication gates.
+- Tightened bundles, annotations, pilots, compliance evidence, statistics,
+  assets, endpoint transport, budget accounting, pairwise judging, and public
+  sanitization at their shared trust boundaries.
+- Rebuilt behavior and performance reports around explicit confidence,
+  support, error, skip, warning, and limitation evidence; added accessible
+  responsive HTML, paginated PDFs, and correct JUnit outcome semantics.
+
 ## 0.3.0 - 2026-08-06
 
 - Changed the source-code license from MIT to Apache License 2.0 before public

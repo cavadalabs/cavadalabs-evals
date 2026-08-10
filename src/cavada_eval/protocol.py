@@ -4,6 +4,7 @@ import copy
 import csv
 import difflib
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -15,11 +16,12 @@ import tempfile
 import tomllib
 import unicodedata
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import NormalDist
-from typing import Any, Iterable, cast
+from typing import Any, Iterable
 
 from .assets import content_text, validate_content_parts, validate_messages
 from .profiles import TASK_PROFILES
@@ -34,6 +36,20 @@ REVIEW_STATUSES = {"approved", "needs_review", "rejected"}
 SUITE_STATUSES = {"draft", "candidate", "calibrated", "approved", "deprecated", "retired"}
 DATA_CLASSES = {"public", "synthetic", "internal", "confidential", "restricted"}
 SPLITS = {"public", "practice", "calibration", "holdout"}
+GATE_METRIC_PATHS = {
+    "total",
+    "observations",
+    "pass",
+    "fail",
+    "invalid",
+    "error",
+    "skipped",
+    "pass_rate",
+    "pass_rate_ci.lower",
+    "pass_rate_ci.upper",
+    "pass_rate_ci95.lower",
+    "pass_rate_ci95.upper",
+}
 OFFICIAL_SUITE_FIELDS = {
     "protocol_version",
     "name",
@@ -75,6 +91,12 @@ SECRET_PATTERNS = (
 
 class ProtocolError(ValueError):
     pass
+
+
+def require_matching_source_checkout(repo_root: Path, module_file: str) -> None:
+    expected = (repo_root / "src" / "cavada_eval").resolve()
+    if Path(module_file).resolve().parent != expected:
+        raise ProtocolError("official runs require the executed cavada_eval package to match the attested source checkout")
 
 
 @dataclass(frozen=True)
@@ -121,7 +143,7 @@ def atomic_json(path: Path, value: Any) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
             handle.write("\n")
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
@@ -145,7 +167,7 @@ def atomic_text(path: Path, value: str) -> None:
 
 def append_jsonl(path: Path, value: Any) -> None:
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
     os.chmod(path, 0o600)
 
 
@@ -158,81 +180,139 @@ def _inside(root: Path, relative: str) -> Path:
     return path
 
 
-def _read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
+def canonical_host(value: Any) -> str:
+    if not isinstance(value, str) or not value or value != value.strip() or value != value.casefold():
+        raise ProtocolError("host names must be non-empty canonical lowercase values")
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        if len(value) > 253 or value.endswith(".") or any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in value.split(".")
+        ):
+            raise ProtocolError("host names must be bare DNS names or IP addresses") from None
+    return value
+
+
+def _suite_evidence_file(
+    suite: Suite, relative: Any, expected_hash: Any, label: str
+) -> tuple[Path | None, bytes | None, str | None]:
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or not isinstance(expected_hash, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+    ):
+        return None, None, f"official {label} path and SHA-256 are required"
+    unresolved = suite.root / relative
+    try:
+        path = _inside(suite.root, relative)
+    except ProtocolError as exc:
+        return None, None, str(exc)
+    if unresolved.is_symlink() or not path.is_file():
+        return None, None, f"official {label} must be a regular suite-local file"
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, None, f"official {label} is unreadable"
+    if sha256_bytes(raw) != expected_hash:
+        return None, None, f"official {label} hash mismatch"
+    return path, raw, None
+
+
+def _read_jsonl(path: Path, raw: bytes | None = None) -> tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, raw in enumerate(handle, 1):
-            if not raw.strip():
-                continue
-            try:
-                row = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ProtocolError(f"Invalid JSONL line {line_number}: {exc.msg}") from exc
-            if not isinstance(row, dict):
-                raise ProtocolError(f"Invalid JSONL line {line_number}: expected object")
-            rows.append(row)
+    lines = (path.read_bytes() if raw is None else raw).decode("utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProtocolError(f"Invalid JSONL line {line_number}: {exc.msg}") from exc
+        if not isinstance(row, dict):
+            raise ProtocolError(f"Invalid JSONL line {line_number}: expected object")
+        rows.append(row)
     return tuple(rows)
 
 
-def load_suite(path: str | Path, *, official: bool = False) -> Suite:
+def _load_suite_snapshot(path: str | Path, *, official: bool = False) -> tuple[Suite, bytes, str, str]:
     root = Path(path).resolve()
     config_path = root / "suite.toml"
     if not config_path.is_file():
         raise ProtocolError(f"Missing suite.toml in {root}")
-    with config_path.open("rb") as handle:
-        config = tomllib.load(handle)
+    config_raw = config_path.read_bytes()
+    config = tomllib.loads(config_raw.decode("utf-8"))
     dataset_path = _inside(root, str(config.get("dataset", "dataset.jsonl")))
     rubric_path = _inside(root, str(config.get("rubric", "rubric.md")))
     if not dataset_path.is_file() or not rubric_path.is_file():
         raise ProtocolError("Dataset and rubric must exist inside the suite")
-    suite = Suite(root, config, _read_jsonl(dataset_path), rubric_path.read_text(), dataset_path, rubric_path)
-    errors = validate_suite(suite, official=official)
+    dataset_raw = dataset_path.read_bytes()
+    rubric_raw = rubric_path.read_bytes()
+    dataset_sha256 = sha256_bytes(dataset_raw)
+    rubric_sha256 = sha256_bytes(rubric_raw)
+    suite = Suite(root, config, _read_jsonl(dataset_path, dataset_raw), rubric_raw.decode("utf-8"), dataset_path, rubric_path)
+    errors = validate_suite(
+        suite,
+        official=official,
+        dataset_sha256=dataset_sha256,
+        rubric_sha256=rubric_sha256,
+    )
     if errors:
         raise ProtocolError("\n".join(errors))
-    return suite
+    return suite, config_raw, dataset_sha256, rubric_sha256
 
 
-def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    relative = integrity.get("semantic_review_evidence")
-    if not isinstance(relative, str) or not relative.strip():
-        return ["official semantic contamination evidence path is required"]
+def load_suite(path: str | Path, *, official: bool = False) -> Suite:
+    return _load_suite_snapshot(path, official=official)[0]
+
+
+def _semantic_integrity_errors(
+    suite: Suite, integrity: dict[str, Any], *, dataset_sha256: str | None = None
+) -> list[str]:
+    path, raw, path_error = _suite_evidence_file(
+        suite,
+        integrity.get("semantic_review_evidence"),
+        integrity.get("semantic_review_evidence_sha256"),
+        "semantic contamination evidence",
+    )
+    if path_error or path is None or raw is None:
+        return [path_error or "official semantic contamination evidence is missing"]
     try:
-        path = _inside(suite.root, relative)
-    except ProtocolError as exc:
-        return [str(exc)]
-    if not path.is_file():
-        return ["official semantic contamination evidence file is missing"]
-    expected_hash = str(integrity.get("semantic_review_evidence_sha256", ""))
-    if sha256_file(path) != expected_hash:
-        return ["official semantic contamination evidence hash mismatch"]
-    try:
-        evidence = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        evidence = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return ["official semantic contamination evidence must be valid JSON"]
     if not isinstance(evidence, dict):
         return ["official semantic contamination evidence must be an object"]
-    hashes = (
-        "dataset_sha256",
-        "comparison_corpus_sha256",
-        "candidate_pairs_evidence_sha256",
-        "reviewer_evidence_sha256",
-    )
+    errors: list[str] = []
+    hashes = ("dataset_sha256", "comparison_corpus_sha256", "candidate_pairs_evidence_sha256", "reviewer_evidence_sha256")
     if any(not isinstance(evidence.get(field), str) or not re.fullmatch(r"[a-f0-9]{64}", evidence[field]) for field in hashes):
         errors.append("official semantic contamination evidence contains invalid hashes")
-    if evidence.get("evidence_version") != "1.0.0":
-        errors.append("official semantic contamination evidence_version must be 1.0.0")
-    if evidence.get("dataset_sha256") != sha256_file(suite.dataset_path):
+    if evidence.get("evidence_version") != "2.0.0":
+        errors.append("official semantic contamination evidence_version must be 2.0.0")
+    if evidence.get("dataset_sha256") != (dataset_sha256 or sha256_file(suite.dataset_path)):
         errors.append("official semantic contamination evidence dataset hash mismatch")
     if evidence.get("detector") != integrity.get("semantic_detector"):
         errors.append("official semantic contamination detector mismatch")
     if evidence.get("detector_revision") != integrity.get("semantic_detector_revision"):
         errors.append("official semantic contamination detector revision mismatch")
+    for field, label in (
+        ("comparison_corpus", "semantic comparison corpus"),
+        ("candidate_pairs_evidence", "semantic candidate-pair evidence"),
+        ("reviewer_evidence", "semantic independent-review evidence"),
+    ):
+        _, _, error = _suite_evidence_file(suite, evidence.get(field), evidence.get(f"{field}_sha256"), label)
+        if error:
+            errors.append(error)
     for field in ("detector_license", "similarity_metric"):
         if not isinstance(evidence.get(field), str) or not str(evidence[field]).strip():
             errors.append(f"official semantic contamination {field} is required")
     threshold = evidence.get("threshold")
-    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not -1 <= float(threshold) <= 1:
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not math.isfinite(float(threshold))
+        or not -1 <= float(threshold) <= 1
+    ):
         errors.append("official semantic contamination threshold is invalid")
     if evidence.get("cases") != len(suite.cases):
         errors.append("official semantic contamination case count mismatch")
@@ -250,11 +330,7 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
         errors.append("official semantic contamination pair counts are invalid")
     if evidence.get("cross_split_reviewed") is not True or evidence.get("cross_suite_reviewed") is not True:
         errors.append("official semantic contamination evidence requires cross-split and cross-suite review")
-    if (
-        evidence.get("independent_review_status") != "passed"
-        or not isinstance(evidence.get("reviewer_evidence"), str)
-        or not str(evidence["reviewer_evidence"]).strip()
-    ):
+    if evidence.get("independent_review_status") != "passed":
         errors.append("official semantic contamination evidence requires independent reviewer evidence")
     if evidence.get("passed") is not True or confirmed != 0:
         errors.append("official semantic contamination evidence did not pass")
@@ -273,6 +349,8 @@ def _calibration_evidence_errors(
     *,
     require_approval: bool = True,
     now: datetime | None = None,
+    dataset_sha256: str | None = None,
+    rubric_sha256: str | None = None,
 ) -> list[str]:
     if not isinstance(calibration, dict):
         return ["official suite calibration configuration is missing"]
@@ -281,21 +359,12 @@ def _calibration_evidence_errors(
         required_paths["independent_review_evidence"] = "calibration independent approval"
     loaded: dict[str, dict[str, Any]] = {}
     for field, label in required_paths.items():
-        relative = calibration.get(field)
-        expected_hash = calibration.get(f"{field}_sha256")
-        if not isinstance(relative, str) or not relative or not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
-            return [f"official {label} path and SHA-256 are required"]
+        path, raw, path_error = _suite_evidence_file(suite, calibration.get(field), calibration.get(f"{field}_sha256"), label)
+        if path_error or path is None or raw is None:
+            return [path_error or f"official {label} is missing"]
         try:
-            path = _inside(suite.root, relative)
-        except ProtocolError as exc:
-            return [str(exc)]
-        if not path.is_file() or path.is_symlink():
-            return [f"official {label} must be a regular suite-local file"]
-        if sha256_file(path) != expected_hash:
-            return [f"official {label} hash mismatch"]
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return [f"official {label} must be valid JSON"]
         if not isinstance(value, dict):
             return [f"official {label} must be a JSON object"]
@@ -303,23 +372,23 @@ def _calibration_evidence_errors(
 
     errors: list[str] = []
     report = loaded["evidence"]
-    evidence_hashes = (
-        "analysis_plan_sha256",
-        "human_label_evidence_sha256",
-        "holdout_manifest_sha256",
-        "pilot_audit_sha256",
-        "statistical_review_sha256",
-        "semantic_contamination_evidence_sha256",
+    report_evidence = (
+        ("analysis_plan", "calibration analysis plan"),
+        ("human_label_evidence", "calibration human-label evidence"),
+        ("holdout_manifest", "calibration holdout manifest"),
+        ("pilot_audit", "calibration pilot audit"),
+        ("statistical_review", "calibration statistical review"),
+        ("semantic_contamination_evidence", "calibration semantic-contamination evidence"),
     )
     report_suite = report.get("suite")
     expected_suite = {
         "name": suite.name,
         "version": suite.version,
-        "dataset_sha256": sha256_file(suite.dataset_path),
-        "rubric_sha256": sha256_file(suite.rubric_path),
+        "dataset_sha256": dataset_sha256 or sha256_file(suite.dataset_path),
+        "rubric_sha256": rubric_sha256 or sha256_file(suite.rubric_path),
     }
     if (
-        report.get("calibration_version") != "1.0.0"
+        report.get("calibration_version") != "2.0.0"
         or report.get("status") != "passed"
         or report.get("protocol_version") != PROTOCOL_VERSION
         or report_suite != expected_suite
@@ -331,11 +400,17 @@ def _calibration_evidence_errors(
         or not all(isinstance(value, str) and value.strip() for value in report["limitations"])
         or not isinstance(report.get("source_commit"), str)
         or not re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", report["source_commit"])
-        or not all(isinstance(report.get(field), str) and re.fullmatch(r"[a-f0-9]{64}", report[field]) for field in evidence_hashes)
     ):
         errors.append("official calibration report is incomplete or did not pass")
+    for field, label in report_evidence:
+        _, _, error = _suite_evidence_file(suite, report.get(field), report.get(f"{field}_sha256"), label)
+        if error:
+            errors.append(error)
     integrity = suite.config.get("dataset_integrity") or {}
-    if report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256"):
+    if (
+        report.get("semantic_contamination_evidence") != integrity.get("semantic_review_evidence")
+        or report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256")
+    ):
         errors.append("official calibration report does not match semantic contamination evidence")
     try:
         completed_at = datetime.fromisoformat(str(report.get("completed_at", "")).replace("Z", "+00:00"))
@@ -350,14 +425,13 @@ def _calibration_evidence_errors(
     approval_fields = (
         "approval_id",
         "approver_id",
-        "approver_qualification_evidence",
         "conflicts",
         "decision_rationale",
         "approved_at",
         "expires_at",
     )
     if (
-        approval.get("approval_version") != "1.0.0"
+        approval.get("approval_version") != "2.0.0"
         or approval.get("scope") != "suite-calibration"
         or approval.get("status") != "passed"
         or approval.get("independent") is not True
@@ -366,6 +440,14 @@ def _calibration_evidence_errors(
     ):
         errors.append("official calibration independent approval is incomplete, unlinked, or did not pass")
         return errors
+    _, _, qualification_error = _suite_evidence_file(
+        suite,
+        approval.get("approver_qualification_evidence"),
+        approval.get("approver_qualification_evidence_sha256"),
+        "calibration approver qualification evidence",
+    )
+    if qualification_error:
+        errors.append(qualification_error)
     try:
         approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
         expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
@@ -378,12 +460,41 @@ def _calibration_evidence_errors(
     return errors
 
 
-def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
+def _case_input_modalities(case: dict[str, Any]) -> set[str]:
+    values = [case.get("input")]
+    messages = case.get("messages")
+    modalities: set[str] = set()
+    if isinstance(messages, list):
+        values.extend(message.get("content") for message in messages if isinstance(message, dict))
+    for value in values:
+        if isinstance(value, str):
+            modalities.add("text")
+        elif isinstance(value, list):
+            for part in value:
+                if not isinstance(part, dict):
+                    continue
+                kind = part.get("type")
+                if kind in {"text", "image", "audio", "video", "document"}:
+                    modalities.add(str(kind))
+                elif kind in {"tool_call", "tool_result"}:
+                    modalities.add("tools")
+    return modalities
+
+
+def validate_suite(
+    suite: Suite,
+    *,
+    official: bool = False,
+    dataset_sha256: str | None = None,
+    rubric_sha256: str | None = None,
+) -> list[str]:
     errors: list[str] = []
     config = suite.config
     for field in ("name", "version", "status", "description", "dataset", "rubric", "data_classification"):
         if not isinstance(config.get(field), str) or not str(config[field]).strip():
             errors.append(f"suite.{field} is required")
+    if isinstance(config.get("name"), str) and re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", config["name"]) is None:
+        errors.append("suite.name must use lowercase letters, digits, dot, underscore, or dash")
     if config.get("protocol_version") != PROTOCOL_VERSION:
         errors.append(f"protocol_version must be {PROTOCOL_VERSION}")
     if not re.fullmatch(r"\d+\.\d+\.\d+", str(config.get("version", ""))):
@@ -405,14 +516,97 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         errors.append("dataset is empty")
     if contains_secret_like(config) or contains_secret_like(suite.rubric):
         errors.append("suite configuration or rubric contains secret-like material")
+    gates = config.get("gates")
+    if gates is not None and not isinstance(gates, list):
+        errors.append("suite.gates must be an array of tables")
+    elif isinstance(gates, list):
+        categories = {str(case.get("category")) for case in suite.cases}
+        configured_statistics = config.get("statistics")
+        configured_confidence = configured_statistics.get("confidence", 0.95) if isinstance(configured_statistics, dict) else 0.95
+        confidence = float(configured_confidence) if isinstance(configured_confidence, (int, float)) else 0.95
+        for index, gate in enumerate(gates, 1):
+            prefix = f"gate[{index}]"
+            if not isinstance(gate, dict):
+                errors.append(f"{prefix} must be a table")
+                continue
+            metric = gate.get("metric", "pass_rate_ci.lower")
+            if not isinstance(metric, str) or metric not in GATE_METRIC_PATHS:
+                errors.append(f"{prefix}.metric must be one of {sorted(GATE_METRIC_PATHS)}")
+            elif official and metric not in {"pass_rate_ci.lower", "pass_rate_ci95.lower"}:
+                errors.append(f"{prefix}.metric must be a pass-rate confidence-interval lower bound for official runs")
+            elif official and gate.get("category") is None and len(categories) > 1:
+                errors.append(f"{prefix} cannot aggregate multiple constructs in an official run; set category")
+            elif metric.startswith("pass_rate_ci95.") and confidence != 0.95:
+                errors.append(f"{prefix}.metric requires statistics.confidence=0.95")
+            minimum = gate.get("min")
+            if not isinstance(minimum, (int, float)) or isinstance(minimum, bool) or not math.isfinite(float(minimum)):
+                errors.append(f"{prefix}.min must be a finite number")
+            category = gate.get("category")
+            if category is not None and (not isinstance(category, str) or not category or category not in categories):
+                errors.append(f"{prefix}.category must identify a dataset category")
+
+    metric_config = config.get("metrics")
+    if metric_config is not None and not isinstance(metric_config, dict):
+        errors.append("suite.metrics must be a table")
+    elif isinstance(metric_config, dict):
+        deepeval = metric_config.get("deepeval", [])
+        if not isinstance(deepeval, list) or not all(isinstance(item, dict) for item in deepeval):
+            errors.append("metrics.deepeval must be an array of tables")
+        else:
+            if official and deepeval:
+                errors.append("official runs do not support unpinned DeepEval metrics; use versioned local deterministic checks")
+            from .deepeval_adapter import LLM_METRICS
+
+            supported = {"exact_match", "pattern_match", *LLM_METRICS}
+            for index, item in enumerate(deepeval, 1):
+                prefix = f"metrics.deepeval[{index}]"
+                name = item.get("name")
+                if name not in supported:
+                    errors.append(f"{prefix}.name is unsupported")
+                elif name in LLM_METRICS:
+                    errors.append(f"{prefix}.name requires an identity- and destination-verifying judge adapter")
+                threshold = item.get("threshold", 0.5)
+                if (
+                    not isinstance(threshold, (int, float))
+                    or isinstance(threshold, bool)
+                    or not math.isfinite(float(threshold))
+                    or not 0 <= float(threshold) <= 1
+                ):
+                    errors.append(f"{prefix}.threshold must be a finite number from 0 to 1")
+                if "hard_fail" in item and not isinstance(item["hard_fail"], bool):
+                    errors.append(f"{prefix}.hard_fail must be boolean")
+                if "ignore_case" in item and not isinstance(item["ignore_case"], bool):
+                    errors.append(f"{prefix}.ignore_case must be boolean")
+                if name == "exact_match" and any("expected_output" not in case for case in suite.cases):
+                    errors.append(f"{prefix}.name requires expected_output in every case")
+                if name == "pattern_match":
+                    pattern = item.get("pattern")
+                    case_patterns = [case.get("pattern") for case in suite.cases]
+                    if pattern is None and not all(isinstance(value, str) and value for value in case_patterns):
+                        errors.append(f"{prefix}.pattern requires a suite pattern or a pattern in every case")
+                    elif pattern is not None and (not isinstance(pattern, str) or not pattern):
+                        errors.append(f"{prefix}.pattern must be non-empty text")
+                    else:
+                        try:
+                            if pattern is not None:
+                                re.compile(pattern)
+                        except re.error as exc:
+                            errors.append(f"{prefix}.pattern is not a valid regular expression: {exc}")
     pinned_dataset = config.get("dataset_sha256")
     pinned_rubric = config.get("rubric_sha256")
-    if pinned_dataset and pinned_dataset != sha256_file(suite.dataset_path):
+    actual_dataset_sha256 = dataset_sha256 or sha256_file(suite.dataset_path)
+    actual_rubric_sha256 = rubric_sha256 or sha256_file(suite.rubric_path)
+    if pinned_dataset and pinned_dataset != actual_dataset_sha256:
         errors.append("dataset_sha256 does not match dataset")
-    if pinned_rubric and pinned_rubric != sha256_file(suite.rubric_path):
+    if pinned_rubric and pinned_rubric != actual_rubric_sha256:
         errors.append("rubric_sha256 does not match rubric")
     for field in ("temperature",):
-        if field in config and (not isinstance(config[field], (int, float)) or not 0 <= float(config[field]) <= 2):
+        if field in config and (
+            not isinstance(config[field], (int, float))
+            or isinstance(config[field], bool)
+            or not math.isfinite(float(config[field]))
+            or not 0 <= float(config[field]) <= 2
+        ):
             errors.append(f"suite.{field} must be a number from 0 to 2")
     for field in ("max_tokens", "official_min_repetitions", "official_min_judge_repetitions"):
         if field in config and (not isinstance(config[field], int) or isinstance(config[field], bool) or config[field] < 1):
@@ -424,7 +618,12 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         confidence = statistics.get("confidence", 0.95)
         samples = statistics.get("bootstrap_samples", 10_000)
         seed = statistics.get("seed", 0)
-        if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 < float(confidence) < 1:
+        if (
+            not isinstance(confidence, (int, float))
+            or isinstance(confidence, bool)
+            or not math.isfinite(float(confidence))
+            or not 0 < float(confidence) < 1
+        ):
             errors.append("statistics.confidence must be between 0 and 1")
         if not isinstance(samples, int) or isinstance(samples, bool) or samples < 100:
             errors.append("statistics.bootstrap_samples must be an integer of at least 100")
@@ -463,10 +662,12 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                 elif official and target.get("system_prompt_sha256") != sha256_file(system_prompt_path):
                     errors.append("official target requires matching target.system_prompt_sha256")
     capabilities = target.get("capabilities", []) if isinstance(target, dict) else []
-    if capabilities and (not isinstance(capabilities, list) or not all(isinstance(item, str) and item for item in capabilities)):
+    capabilities_declared = isinstance(target, dict) and "capabilities" in target
+    capabilities_valid = isinstance(capabilities, list) and all(isinstance(item, str) and item for item in capabilities)
+    if capabilities_declared and not capabilities_valid:
         errors.append("target.capabilities must be an array of non-empty strings")
     if official and profile in TASK_PROFILES:
-        missing_capabilities = sorted(set(TASK_PROFILES[str(profile)]["inputs"]) - set(capabilities))
+        missing_capabilities = sorted(set(TASK_PROFILES[str(profile)]["inputs"]) - (set(capabilities) if capabilities_valid else set()))
         if missing_capabilities:
             errors.append(f"target.capabilities missing profile requirements: {missing_capabilities}")
     pricing = config.get("pricing")
@@ -475,13 +676,21 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         if not isinstance(pricing, dict) or not required_pricing <= set(pricing):
             errors.append(f"pricing is missing fields: {sorted(required_pricing - set(pricing or {}))}")
         elif not all(isinstance(pricing[field], str) and pricing[field].strip() for field in ("currency", "source", "effective_at")) or not all(
-            isinstance(pricing[field], (int, float)) and not isinstance(pricing[field], bool) and float(pricing[field]) >= 0
+            isinstance(pricing[field], (int, float))
+            and not isinstance(pricing[field], bool)
+            and math.isfinite(float(pricing[field]))
+            and float(pricing[field]) >= 0
             for field in ("input_per_million", "output_per_million")
         ):
             errors.append("pricing text fields must be non-empty and rates must be non-negative numbers")
         if isinstance(pricing, dict):
             for field in ("judge_input_per_million", "judge_output_per_million"):
-                if field in pricing and (not isinstance(pricing[field], (int, float)) or isinstance(pricing[field], bool) or float(pricing[field]) < 0):
+                if field in pricing and (
+                    not isinstance(pricing[field], (int, float))
+                    or isinstance(pricing[field], bool)
+                    or not math.isfinite(float(pricing[field]))
+                    or float(pricing[field]) < 0
+                ):
                     errors.append(f"pricing.{field} must be a non-negative number")
 
     governance = config.get("governance")
@@ -516,12 +725,18 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                 if isinstance(value, str) and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
                     errors.append(f"governance.{date_field} must be YYYY-MM-DD")
             threshold = governance.get("near_duplicate_threshold")
-            if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not 0.8 <= float(threshold) < 1:
+            if (
+                not isinstance(threshold, (int, float))
+                or isinstance(threshold, bool)
+                or not math.isfinite(float(threshold))
+                or not 0.8 <= float(threshold) < 1
+            ):
                 errors.append("governance.near_duplicate_threshold must be a number from 0.8 (inclusive) to 1 (exclusive)")
             semantic_threshold = governance.get("semantic_duplicate_threshold")
             if (
                 not isinstance(semantic_threshold, (int, float))
                 or isinstance(semantic_threshold, bool)
+                or not math.isfinite(float(semantic_threshold))
                 or not 0.8 <= float(semantic_threshold) <= 1
             ):
                 errors.append("governance.semantic_duplicate_threshold must be a number from 0.8 through 1")
@@ -530,6 +745,8 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
     cases_by_id: dict[str, dict[str, Any]] = {}
     seen_inputs: set[str] = set()
     normalized_inputs: list[tuple[str, str, str | None]] = []
+    from .metrics import metric_config_errors
+
     for index, case in enumerate(suite.cases, 1):
         prefix = f"case[{index}]"
         case_id = case.get("id")
@@ -561,6 +778,20 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                 max_audio_seconds=float((config.get("assets") or {}).get("max_audio_seconds", 3600)),
             )
         )
+        actual_modalities = _case_input_modalities(case)
+        official_media = sorted(actual_modalities & {"image", "audio", "video", "document"})
+        if official and official_media:
+            errors.append(
+                f"{prefix}.official media judging requires a capability-verifying, qualification-bound judge adapter: {official_media}"
+            )
+        if profile in TASK_PROFILES:
+            unsupported = sorted(actual_modalities - set(TASK_PROFILES[str(profile)]["inputs"]))
+            if unsupported:
+                errors.append(f"{prefix}.input modalities are not supported by suite.profile {profile!r}: {unsupported}")
+        if capabilities_declared and capabilities_valid:
+            missing = sorted(actual_modalities - set(capabilities))
+            if missing:
+                errors.append(f"{prefix}.input modalities are missing from target.capabilities: {missing}")
         messages = case.get("messages")
         if isinstance(messages, list) and messages and isinstance(messages[-1], dict) and messages[-1].get("content") != prompt:
             errors.append(f"{prefix}.input must exactly match the final user message content")
@@ -595,7 +826,12 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         text = json.dumps(case, ensure_ascii=False)
         if contains_secret_like(text):
             errors.append(f"{prefix} contains secret-like material")
-        if "weight" in case and (not isinstance(case["weight"], (int, float)) or isinstance(case["weight"], bool) or float(case["weight"]) <= 0):
+        if "weight" in case and (
+            not isinstance(case["weight"], (int, float))
+            or isinstance(case["weight"], bool)
+            or not math.isfinite(float(case["weight"]))
+            or float(case["weight"]) <= 0
+        ):
             errors.append(f"{prefix}.weight must be positive")
         metric_weights = case.get("metric_weights")
         if metric_weights is not None and (
@@ -612,6 +848,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"{prefix}.judge_gold_verdict must be pass or fail")
         if "performance_phase" in case and case["performance_phase"] not in {"cold", "warmup", "steady", "soak"}:
             errors.append(f"{prefix}.performance_phase is invalid")
+        errors.extend(f"{prefix}.{message}" for message in metric_config_errors(case))
         if case.get("scenario_reference_id") is not None and case.get("scenario_role") != "variant":
             errors.append(f"{prefix}.scenario_reference_id is only valid for scenario variants")
         if "split" in case and case["split"] not in SPLITS:
@@ -675,10 +912,19 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         if len(normalized_inputs) > 5_000:
             errors.append("near-duplicate validation is limited to 5,000 cases; use a reviewed indexed detector for larger suites")
         else:
-            # ponytail: quadratic by design for suites <=5k; replace with MinHash only when that ceiling is hit.
+            character_counts = [Counter(text) for _, text, _ in normalized_inputs]
+            # ponytail: the exact scan remains quadratic, but cheap upper bounds avoid expensive alignment for impossible matches.
             for index, (left_id, left, left_group) in enumerate(normalized_inputs):
-                for right_id, right, right_group in normalized_inputs[index + 1 :]:
+                for right_index, (right_id, right, right_group) in enumerate(normalized_inputs[index + 1 :], index + 1):
                     if left_group is not None and left_group == right_group:
+                        continue
+                    length_total = len(left) + len(right)
+                    if not length_total or 2 * min(len(left), len(right)) / length_total < float(near_threshold):
+                        continue
+                    left_chars = character_counts[index]
+                    right_chars = character_counts[right_index]
+                    smaller, larger = (left_chars, right_chars) if len(left_chars) <= len(right_chars) else (right_chars, left_chars)
+                    if 2 * sum(min(count, larger[character]) for character, count in smaller.items()) / length_total < float(near_threshold):
                         continue
                     ratio = difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
                     if float(near_threshold) <= ratio < 1:
@@ -692,9 +938,21 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append("official runs require passed calibration evidence")
         if calibration.get("independent_review") != "passed":
             errors.append("official runs require passed independent calibration review")
-        errors.extend(_calibration_evidence_errors(suite, calibration))
+        errors.extend(
+            _calibration_evidence_errors(
+                suite,
+                calibration,
+                dataset_sha256=actual_dataset_sha256,
+                rubric_sha256=actual_rubric_sha256,
+            )
+        )
         allowed_hosts = (suite.config.get("network") or {}).get("allowed_hosts")
-        if not isinstance(allowed_hosts, list) or not allowed_hosts or not all(isinstance(host, str) and host for host in allowed_hosts):
+        try:
+            canonical_hosts = [canonical_host(host) for host in allowed_hosts] if isinstance(allowed_hosts, list) else []
+        except ProtocolError as exc:
+            errors.append(str(exc))
+            canonical_hosts = []
+        if not canonical_hosts or len(canonical_hosts) != len(set(canonical_hosts)):
             errors.append("official runs require network.allowed_hosts")
         unresolved = [case.get("id") for case in suite.cases if (case.get("review") or {}).get("status") != "approved"]
         if unresolved:
@@ -718,7 +976,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
         ):
             errors.append("official semantic contamination evidence is incomplete or unpinned")
         else:
-            errors.extend(_semantic_integrity_errors(suite, integrity))
+            errors.extend(_semantic_integrity_errors(suite, integrity, dataset_sha256=actual_dataset_sha256))
         missing_provenance = [
             case.get("id")
             for case in suite.cases
@@ -888,7 +1146,13 @@ def dataset_card(suite: Suite) -> str:
     return "\n".join(sections)
 
 
-def promotion_readiness(suite: Suite, target_status: str) -> list[str]:
+def promotion_readiness(
+    suite: Suite,
+    target_status: str,
+    *,
+    dataset_sha256: str | None = None,
+    rubric_sha256: str | None = None,
+) -> list[str]:
     order = ["draft", "candidate", "calibrated", "approved", "deprecated", "retired"]
     if target_status not in SUITE_STATUSES:
         return [f"unknown target status: {target_status}"]
@@ -899,7 +1163,12 @@ def promotion_readiness(suite: Suite, target_status: str) -> list[str]:
     if target_status in {"deprecated", "retired"}:
         return []
 
-    errors = validate_suite(suite, official=False)
+    errors = validate_suite(
+        suite,
+        official=False,
+        dataset_sha256=dataset_sha256,
+        rubric_sha256=rubric_sha256,
+    )
     governance = suite.config.get("governance") or {}
     for field in (
         "owner",
@@ -932,7 +1201,15 @@ def promotion_readiness(suite: Suite, target_status: str) -> list[str]:
             errors.append("calibration.status=passed and calibration.evidence are required")
         if target_status == "approved" and calibration.get("independent_review") != "passed":
             errors.append("calibration.independent_review=passed is required")
-        errors.extend(_calibration_evidence_errors(suite, calibration, require_approval=target_status == "approved"))
+        errors.extend(
+            _calibration_evidence_errors(
+                suite,
+                calibration,
+                require_approval=target_status == "approved",
+                dataset_sha256=dataset_sha256,
+                rubric_sha256=rubric_sha256,
+            )
+        )
     if target_status == "approved":
         calibration = suite.config.get("calibration") or {}
         if calibration.get("independent_review") != "passed":
@@ -945,18 +1222,33 @@ def promotion_readiness(suite: Suite, target_status: str) -> list[str]:
             suite.dataset_path,
             suite.rubric_path,
         )
-        errors.extend(validate_suite(proposed, official=True))
+        errors.extend(
+            validate_suite(
+                proposed,
+                official=True,
+                dataset_sha256=dataset_sha256,
+                rubric_sha256=rubric_sha256,
+            )
+        )
     return list(dict.fromkeys(errors))
 
 
 def promote_suite(suite: Suite, target_status: str, *, actor: str, evidence: str) -> dict[str, Any]:
     if not actor.strip() or not evidence.strip():
         raise ProtocolError("promotion requires non-empty actor and evidence")
-    errors = promotion_readiness(suite, target_status)
+    current, source_raw, dataset_sha256, rubric_sha256 = _load_suite_snapshot(suite.root)
+    if current != suite:
+        raise ProtocolError("suite changed after loading; reload it before promotion")
+    errors = promotion_readiness(
+        current,
+        target_status,
+        dataset_sha256=dataset_sha256,
+        rubric_sha256=rubric_sha256,
+    )
     if errors:
         raise ProtocolError("\n".join(errors))
     path = suite.root / "suite.toml"
-    source = path.read_text(encoding="utf-8")
+    source = source_raw.decode("utf-8")
     updated, replacements = re.subn(
         r'(?m)^status\s*=\s*"[^"]+"\s*$',
         f'status = "{target_status}"',
@@ -975,8 +1267,8 @@ def promote_suite(suite: Suite, target_status: str, *, actor: str, evidence: str
         "actor": actor,
         "evidence": evidence,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "dataset_sha256": sha256_file(suite.dataset_path),
-        "rubric_sha256": sha256_file(suite.rubric_path),
+        "dataset_sha256": dataset_sha256,
+        "rubric_sha256": rubric_sha256,
     }
     append_jsonl(suite.root / "promotions.jsonl", record)
     return record
@@ -1016,12 +1308,6 @@ def wilson_gate_power(total: int, gate: float, true_rate: float, confidence: flo
         if wilson_interval(successes, total, confidence)[0] >= gate
     )
     return min(1.0, math.fsum(probabilities))
-
-
-def deterministic_checks(case: dict[str, Any], answer: str) -> dict[str, bool]:
-    from .metrics import deterministic_evaluation
-
-    return cast(dict[str, bool], deterministic_evaluation(case, answer)["checks"])
 
 
 def git_evidence(root: Path) -> dict[str, Any]:
@@ -1071,7 +1357,16 @@ def environment_evidence(root: Path) -> dict[str, Any]:
     }
 
 
+def require_mutable_output_root(root: Path) -> None:
+    resolved = root.resolve()
+    for candidate in (resolved, *resolved.parents):
+        bundle = candidate / "bundle.json"
+        if bundle.exists() or bundle.is_symlink():
+            raise ProtocolError("output root must be outside finalized run bundles")
+
+
 def new_run_dir(root: Path, suite: Suite, model_label: str) -> tuple[str, Path]:
+    require_mutable_output_root(root)
     now = datetime.now(timezone.utc)
     run_id = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     safe_model = re.sub(r"[^A-Za-z0-9_.-]+", "-", model_label).strip("-") or "model"
@@ -1132,11 +1427,15 @@ def summarize(rows: Iterable[dict[str, Any]], *, confidence: float = 0.95) -> tu
             {
                 "category": category,
                 "total": len(group),
+                "observations": sum(int(row["observations"]) for row in group),
                 "pass": passed,
                 "fail": failed,
                 "invalid": sum(row.get("status") == "invalid" for row in group),
                 "error": sum(row.get("status") == "error" for row in group),
+                "skipped": sum(row.get("status") == "skipped" for row in group),
                 "pass_rate": passed / valid if valid else 0.0,
+                "pass_rate_ci": {"lower": low, "upper": high, "confidence": confidence},
+                "pass_rate_ci95": {"lower": low, "upper": high} if confidence == 0.95 else None,
                 "ci95_lower": low,
                 "ci95_upper": high,
                 "confidence": confidence,
@@ -1151,7 +1450,7 @@ def apply_gates(suite: Suite, metrics: dict[str, Any], categories: list[dict[str
     for gate in suite.config.get("gates", []):
         category = gate.get("category")
         source = by_category.get(category, {}) if category else metrics
-        metric = str(gate.get("metric", "pass_rate_ci95.lower"))
+        metric = str(gate.get("metric", "pass_rate_ci.lower"))
         value: Any = source
         for part in metric.split("."):
             value = value.get(part) if isinstance(value, dict) else None
@@ -1164,7 +1463,7 @@ def apply_gates(suite: Suite, metrics: dict[str, Any], categories: list[dict[str
 def write_category_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = ["category", "total", "pass", "fail", "invalid", "error", "pass_rate", "ci95_lower", "ci95_upper", "confidence"]
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
     os.chmod(path, 0o600)

@@ -6,7 +6,7 @@ from typing import Any
 # `built_in=False` blocks official use until a pinned, identity-verifying
 # adapter and calibration evidence are attached.
 ADAPTER_CONTRACT_VERSION = "1.0.0"
-BENCHMARK_PRESET_VERSION = "1.0.0"
+BENCHMARK_PRESET_VERSION = "1.1.0"
 
 BENCHMARK_PRESETS: dict[str, dict[str, Any]] = {
     "smoke": {
@@ -38,7 +38,7 @@ BENCHMARK_PRESETS: dict[str, dict[str, Any]] = {
         "repetitions": 3,
         "judge_repetitions": 3,
         "mode": "candidate",
-        "performance_plan": "performance/plans/llm-serving-v1.toml",
+        "performance_plan": "performance/plans/llm-serving-v2.toml",
         "official_eligible": True,
     },
 }

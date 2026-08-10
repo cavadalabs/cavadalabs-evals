@@ -1,8 +1,0 @@
-[[models]]
-label = "local-model"
-endpoint = "http://127.0.0.1:8000/v1"
-request_model = "local-model"
-expected_reported_model = "local-model"
-revision = "replace-with-immutable-revision"
-api_key_env = "TARGET_API_KEY"
-modalities = ["text"]

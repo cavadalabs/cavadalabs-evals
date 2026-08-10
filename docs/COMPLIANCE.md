@@ -5,6 +5,10 @@ status per control: `automated_pass`, `automated_fail`, `manual_required`,
 `not_applicable`, `missing`, or `expired`. It never produces a combined
 compliance score.
 
+`automated_pass` means only that the catalog's specific automated assertion
+passed. It does not mean that the control as a whole, an organization, or a
+system complies with law or a standard.
+
 Behavioral tests can support accuracy, robustness, privacy, cybersecurity,
 record-keeping, and transparency evidence. They cannot establish legal basis,
 applicability, contracts, processor terms, ROPA, DPIA, FRIA, international
@@ -18,8 +22,9 @@ Profiles are selected by jurisdiction, role, use case, sector, affected people,
 and system classification; unrelated controls are marked not applicable with a
 reason rather than silently omitted.
 
-The catalog snapshot dated 2026-08-03 records that GDPR has applied since
-2018-05-25 and that the AI Act is generally applicable from 2026-08-02, while
-retaining Article 113's phase-specific exceptions as an explicit legal-review
-obligation. The authoritative EUR-Lex source and source version travel with
-each generated control record.
+`program/source-register.toml`, `standards/control_catalog.toml`, and
+`standards/evidence_crosswalk.toml` are engineering snapshots. They are not
+legal advice or authoritative copies. Before use, an accountable reviewer must
+verify the current official source, phased applicability, role, jurisdiction,
+license, interpretation, and effective date. Generated control records retain
+the source version used for the mapping.
