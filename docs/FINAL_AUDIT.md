@@ -58,10 +58,9 @@ or an asymmetric release identity.
 
 - Normative behavior rules: `PROTOCOL.md` and `AGENTS.md`.
 - Normative serving rules for new reference runs:
-  [Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md); the unanchored
-  historical-development [v1.1 protocol](../PERFORMANCE_PROTOCOL_V1_1.md) and commit-anchored
-  [v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) remain available for their
-  recorded bundle versions.
+  [Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md); commit-anchored
+  [v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) artifacts remain byte-frozen
+  for hash-only verification of their recorded bundles.
 - Program and suite status: `program/registry.toml` and each `suite.toml`.
 - Public result status: `results/registry.json`.
 - Publication decision: `docs/PUBLICATION_INVENTORY.md`.

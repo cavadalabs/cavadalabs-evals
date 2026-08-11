@@ -1,98 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.cavadalabs.com/evals/external-import/1.0.0",
-  "title": "CavadaLabs External Import Descriptor",
+  "title": "CavadaLabs External Benchmark Import",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["adapter_version", "artifact", "artifact_sha256", "source", "identity", "suite"],
+  "required": ["adapter_version", "source", "suite", "results"],
   "properties": {
-    "adapter_version": {"enum": ["lm-evaluation-harness-results/1.0.0", "vllm-bench-serve/1.0.0"]},
-    "artifact": {"type": "string", "minLength": 1},
-    "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "evaluation_repository_commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+    "adapter_version": {"const": "1.0.0"},
     "source": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["name", "version", "commit", "license", "dataset_sha256", "evaluator_sha256", "invocation"],
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "version": {"type": "string", "minLength": 1},
-        "commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+        "commit": {"type": "string", "minLength": 1},
         "license": {"type": "string", "minLength": 1},
         "dataset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "evaluator_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "invocation": {"type": "string", "minLength": 1}
       }
     },
-    "identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["model_id", "model_revision", "model_sha", "runtime_name", "runtime_version", "runtime_revision"],
-      "properties": {
-        "model_id": {"type": "string", "minLength": 1},
-        "model_revision": {"type": "string", "minLength": 1},
-        "model_sha": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "runtime_name": {"type": "string", "minLength": 1},
-        "runtime_version": {"type": "string", "minLength": 1},
-        "runtime_revision": {"type": "string", "minLength": 1}
-      }
-    },
-    "suite": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "version", "sha256"],
-      "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
-        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-      }
-    },
-    "outcomes": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["status", "reason"],
-        "properties": {
-          "status": {"enum": ["pass", "fail", "invalid", "error", "skipped"]},
-          "reason": {"type": "string", "minLength": 1}
-        }
-      }
-    },
-    "cell_id": {"type": "string", "minLength": 1},
-    "cell_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-    "endpoint_backend": {"enum": ["vllm", "openai", "openai-chat"]},
-    "outcome": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "reason"],
-      "properties": {
-        "status": {"enum": ["pass", "fail", "invalid", "error", "skipped"]},
-        "reason": {"type": "string", "minLength": 1}
-      }
-    }
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"adapter_version": {"const": "lm-evaluation-harness-results/1.0.0"}}},
-      "then": {
-        "required": ["evaluation_repository_commit", "outcomes"],
-        "properties": {
-          "source": {"properties": {"name": {"const": "lm-evaluation-harness"}}},
-          "cell_id": false,
-          "cell_sha256": false,
-          "endpoint_backend": false,
-          "outcome": false
-        }
-      },
-      "else": {
-        "required": ["cell_id", "cell_sha256", "endpoint_backend", "outcome"],
-        "properties": {
-          "source": {"properties": {"name": {"const": "vllm"}}},
-          "evaluation_repository_commit": false,
-          "outcomes": false
-        }
-      }
-    }
-  ]
+    "suite": {"type": "object"},
+    "results": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+  }
 }

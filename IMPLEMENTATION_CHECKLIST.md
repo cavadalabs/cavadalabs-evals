@@ -14,16 +14,14 @@ Status terms:
   evidence is not present here.
 - **Not demonstrated**: no accepted result or independent reproduction is
   registered in this repository.
-- **Planned**: the program registry names the capability, but an official
-  implementation or qualified adapter is absent.
 
 ## Current readiness
 
 | Area | Repository status | Evidence and boundary |
 |---|---|---|
-| Protocol design | Available | `PROTOCOL.md`, current [Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md), and `AGENTS.md` define separate behavior and serving-performance protocols; unanchored historical-development [v1.1](PERFORMANCE_PROTOCOL_V1_1.md) remains available for reduced development presets, while commit-anchored [v1.0](PERFORMANCE_PROTOCOL_V1_0.md) remains available for its recorded bundles. |
+| Protocol design | Available | `PROTOCOL.md`, current [Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md), and `AGENTS.md` define separate behavior and serving-performance protocols; commit-anchored [v1.0](PERFORMANCE_PROTOCOL_V1_0.md) remains byte-frozen for hash-only verification of recorded bundles. |
 | Behavior execution | Available, externally gated for official use | `src/cavada_eval/runner.py`, `src/cavada_eval/protocol.py`, and schemas implement validation, deterministic-first evaluation, blinded judging, immutable run directories, evidence preservation, and fail-closed official checks. No suite in `program/registry.toml` is currently `official_capable`. |
-| Statistical analysis | Available, externally gated | Distinct-case aggregation, Wilson intervals, paired comparisons, and pairwise A/B plus B/A judging are implemented. Valid claims still require a frozen sampling plan, adequate data, qualified judges, and independent statistical review. |
+| Statistical analysis | Available, externally gated | Distinct-case aggregation, Wilson intervals, and paired comparisons are implemented. Valid claims still require a frozen sampling plan, adequate data, qualified judges, and independent statistical review. |
 | Serving performance | Available, externally gated | `src/cavada_eval/performance.py` implements validated closed/open-loop campaigns and exact-cell comparison under [Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). Measurements are client-side serving evidence; calibrated utilization, power, energy, and production load-generator validation are absent. |
 | Hardware evidence | Schema and validation available | `schemas/performance-system-evidence.schema.json` records system configuration. Self-reported configuration is not calibrated telemetry and does not justify attributing a result to a GPU alone. |
 | Reports and exports | Available; presentation assurance not demonstrated | Behavior and performance runs can emit machine-readable artifacts, HTML, PDF, CSV/JSONL, and figures. Accessibility, visual quality, and publication suitability have not been independently audited. |
@@ -45,8 +43,7 @@ Status terms:
 - Run directories and finalized bundles are not overwritten. Official behavior
   runs cannot be resumed; a failed official attempt requires a new run.
 - Official pass-rate gates use their declared confidence-bound metric.
-- Behavior comparisons require compatible verified bundles. Pairwise judging
-  retains both orders without revealing target identities.
+- Behavior comparisons require compatible verified bundles.
 - Performance comparisons revalidate immutable inputs and compare exact shared
   cells from matching plan and workload hashes.
 - Official public behavior and performance exports require a verified source
@@ -64,9 +61,7 @@ and organizational reviews.
 - `cavada-core-assistant-text-v1@0.8.1` is a draft development suite using the
   public synthetic dataset
   `suites/cavada-core-assistant-text-v1/dataset-0.8.0.jsonl`.
-- `memo4345-v1` and `security-privacy-smoke-v1` are candidate suites, not
-  official suites.
-- The other suite families in `program/registry.toml` are planned.
+- `security-privacy-smoke-v1` is a candidate suite, not an official suite.
 - Every registry entry currently has `official_capable = false`.
 - The public results registry has no accepted baseline or independent
   reproduction. Repository fixtures and mock runs are test evidence, not model
@@ -85,9 +80,6 @@ and organizational reviews.
   tags, and signed/timestamped provenance where claimed.
 - For strict hardware or energy claims: calibrated synchronized collectors,
   validated network and load-generator capacity, and a frozen reference plan.
-- For rich media, code, agents, MCP, side effects, or optional model-based
-  metrics: a qualified adapter, bounded sandbox where required, lawful data, and
-  modality-specific calibration.
 
 ## Verification entry points
 

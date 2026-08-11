@@ -16,9 +16,6 @@ cross-suite validation.
   larger explicit budget. Run directories are immutable and cannot be resumed.
 - **Bundle verification failed:** treat the bundle as untrusted. Do not edit it;
   rerun from the immutable suite or restore it from the governed evidence store.
-- **Optional DeepEval import failed:** install the `deepeval` extra (or sync the
-  locked source checkout with that extra). CavadaLabs disables telemetry, cloud
-  sync, dotenv, and key-file loading before importing it.
 
 Never work around a failed official preflight. Candidate runs may diagnose the
 problem, but cannot be relabeled as official evidence.

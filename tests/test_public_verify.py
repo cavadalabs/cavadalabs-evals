@@ -14,12 +14,13 @@ from cavada_eval.cli import EXIT_INTEGRITY, main
 from cavada_eval.performance import (
     PerformanceRuntime,
     _campaign_summary,
-    _cell_metrics,
+    _cell_metrics_v2,
     _expand_cells,
+    _performance_reports,
     _write_cells_csv,
     load_performance_plan,
 )
-from cavada_eval.performance_release import PERMITTED_CLAIM, _public_cells, _public_observations
+from cavada_eval.performance_release import PERMITTED_CLAIM, _public_cells, _public_observations, _public_presentation_manifest
 from cavada_eval.protocol import PROTOCOL_VERSION, REPORT_VERSION, ProtocolError, sha256_bytes, sha256_file, wilson_interval, write_category_csv
 from cavada_eval.public_verify import verify_public_bundle
 from cavada_eval.system_evidence import system_configuration_id
@@ -127,20 +128,24 @@ def _behavior_bundle(root: Path) -> Path:
 
 def _performance_bundle(root: Path) -> Path:
     root.mkdir()
-    (root / "protocol_snapshot.md").write_bytes((ROOT / "PERFORMANCE_PROTOCOL_V1_0.md").read_bytes())
+    (root / "protocol_snapshot.md").write_bytes((ROOT / "PERFORMANCE_PROTOCOL_V2.md").read_bytes())
     workload = root / "workload.jsonl"
     workload.write_text(json.dumps({"id": "ctx-8", "context_tokens": 8, "repeat_text": " datum", "repeat_count": 8}) + "\n", encoding="utf-8")
     plan_path = root / "plan.toml"
     plan_path.write_text(
-        f'''plan_version = "1.0.0"
-revision = "1.0.0"
-name = "public-verifier-v1"
+        f'''plan_version = "2.0.0"
+revision = "2.0.0"
+name = "public-verifier-v2"
 description = "Minimal public verifier fixture."
-profile = "llm-serving-v1"
+profile = "llm-serving-v2"
 data_classification = "synthetic"
+[load_generator]
+minimum_dispatch_rate_fraction = 0.98
+maximum_dispatch_lag_p95_ms = 100
+maximum_dispatch_lag_ms = 1000
 [workload]
-id = "public-verifier-v1"
-revision = "1.0.0"
+id = "public-verifier-v2"
+revision = "2.0.0"
 path = "workload.jsonl"
 sha256 = "{sha256_file(workload)}"
 mode = "iso-token"
@@ -218,6 +223,12 @@ concurrency = [1]
         "batch_started_monotonic_ns": 1_000_000_000,
         "started_monotonic_ns": 1_000_000_000,
         "finished_monotonic_ns": 2_000_000_000,
+        "dispatch_monotonic_ns": 1_000_000_000,
+        "first_token_monotonic_ns": 1_010_000_000,
+        "completed_monotonic_ns": 1_020_000_000,
+        "dispatch_lag_ms": 0.0,
+        "scheduled_ttft_ms": 10.0,
+        "scheduled_e2e_ms": 20.0,
         "status": "success",
         "reported_model": "test-model",
         "input_tokens": 8.0,
@@ -233,16 +244,16 @@ concurrency = [1]
         "response_bytes": 200,
     }
     observations = _public_observations([observation])
-    metric = _cell_metrics(observations, cell, plan, 1.0, 1002, None)
+    metric = _cell_metrics_v2(observations, cell, plan, 1.0, 1002, None)
     metric["block"] = 1
     cells = _public_cells({(1, str(cell["cell_key"])): metric}, {})
     (root / "observations.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in observations), encoding="utf-8")
     (root / "cells.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in cells), encoding="utf-8")
-    _write_cells_csv(root / "cells.csv", cells, protocol_version="1.0.0")
+    _write_cells_csv(root / "cells.csv", cells)
     now = datetime.now(timezone.utc)
     manifest = {
-        "publication_version": "1.0.0",
-        "performance_protocol_version": "1.0.0",
+        "publication_version": "2.0.0",
+        "performance_protocol_version": "2.0.0",
         "protocol_sha256": sha256_file(root / "protocol_snapshot.md"),
         "run_id": "performance-run-1",
         "evaluation_started_at": (now - timedelta(minutes=2)).isoformat(),
@@ -261,6 +272,11 @@ concurrency = [1]
             "open_loop_arrival_distribution": "fixed",
             "execution_seed": 1,
             "minimum_p99_observations": 1,
+            "load_generator": {
+                "minimum_dispatch_rate_fraction": 0.98,
+                "maximum_dispatch_lag_p95_ms": 100,
+                "maximum_dispatch_lag_ms": 1000,
+            },
         },
         "workload": {
             "id": plan.config["workload"]["id"],
@@ -274,7 +290,7 @@ concurrency = [1]
         "runtime": runtime,
         "system_evidence": None,
         "source": {"commit": "", "dirty": True, "status_sha256": "0" * 64},
-        "cells": {"total": 1, "completed": 1, "with_errors": 0, "skipped": 0, "slo_passed": 1, "slo_failed": 0},
+        "cells": {"total": 1, "completed": 1, "with_errors": 0, "invalid_loadgen": 0, "skipped": 0, "slo_passed": 1, "slo_failed": 0},
         "warmups": {"total": 0, "successes": 0, "errors": 0},
         "request_reconciliation": {
             "planned": 1,
@@ -297,8 +313,10 @@ concurrency = [1]
             "Performance results do not establish response quality or universal deployment capacity.",
         ],
     }
-    _write_json(root / "summary.json", _campaign_summary(manifest, cells, observations))
+    summary = _campaign_summary(manifest, cells, observations)
+    _write_json(root / "summary.json", summary)
     _write_json(root / "public_manifest.json", manifest)
+    _performance_reports(root, _public_presentation_manifest(manifest), summary, cells)
     write_bundle(root)
     return root
 
@@ -393,10 +411,16 @@ def _attach_public_system_evidence(bundle: Path) -> None:
         "sha256": sha256_file(bundle / "system_evidence.json"),
         "projection": "public",
     }
+    _reseal_performance_manifest(bundle, manifest)
+
+
+def _reseal_performance_manifest(bundle: Path, manifest: dict[str, Any]) -> None:
     cells = [json.loads(line) for line in (bundle / "cells.jsonl").read_text(encoding="utf-8").splitlines()]
     observations = [json.loads(line) for line in (bundle / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
-    _write_json(bundle / "summary.json", _campaign_summary(manifest, cells, observations))
+    summary = _campaign_summary(manifest, cells, observations)
+    _write_json(bundle / "summary.json", summary)
     _write_json(bundle / "public_manifest.json", manifest)
+    _performance_reports(bundle, _public_presentation_manifest(manifest), summary, cells)
     write_bundle(bundle)
 
 
@@ -417,7 +441,7 @@ def _reseal_performance_cells(
     mutation(cells[0], manifest)
     (bundle / "cells.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in cells), encoding="utf-8")
     observations = [json.loads(line) for line in (bundle / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
-    _write_cells_csv(bundle / "cells.csv", cells, protocol_version=str(manifest["performance_protocol_version"]))
+    _write_cells_csv(bundle / "cells.csv", cells)
     _write_json(bundle / "summary.json", _campaign_summary(manifest, cells, observations))
     _write_json(bundle / "public_manifest.json", manifest)
     write_bundle(bundle)
@@ -555,7 +579,7 @@ def test_verify_public_performance_bundle_and_reject_resealed_mutations(tmp_path
             "official": False,
             "assurance": "approved",
             "release": {
-                "release_version": "1.0.0",
+                "release_version": "2.0.0",
                 "release_id": "release-1",
                 "approval_sha256": "1" * 64,
                 "approver_id": "reviewer-1",
@@ -567,8 +591,7 @@ def test_verify_public_performance_bundle_and_reject_resealed_mutations(tmp_path
             },
         }
     )
-    _write_json(manifest_path, manifest)
-    write_bundle(bundle)
+    _reseal_performance_manifest(bundle, manifest)
 
     with pytest.raises(ProtocolError, match="development.*incoherent"):
         verify_public_bundle(bundle)
@@ -579,7 +602,6 @@ def test_verify_official_public_performance_rejects_mutable_runtime_revisions(
     tmp_path: Path, field: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bundle = _performance_bundle(tmp_path / f"performance-mutable-{field}")
-    monkeypatch.setattr("cavada_eval.public_verify.PERFORMANCE_PROTOCOL_VERSION", "1.0.0")
     manifest = json.loads((bundle / "public_manifest.json").read_text(encoding="utf-8"))
     now = datetime.now(timezone.utc)
     manifest.update(
@@ -587,7 +609,7 @@ def test_verify_official_public_performance_rejects_mutable_runtime_revisions(
             "official": True,
             "assurance": "approved",
             "release": {
-                "release_version": "1.0.0",
+                "release_version": "2.0.0",
                 "release_id": "release-1",
                 "approval_sha256": "1" * 64,
                 "approver_id": "reviewer-1",
@@ -600,11 +622,7 @@ def test_verify_official_public_performance_rejects_mutable_runtime_revisions(
         }
     )
     manifest["runtime"][field] = "latest"
-    cells = [json.loads(line) for line in (bundle / "cells.jsonl").read_text(encoding="utf-8").splitlines()]
-    observations = [json.loads(line) for line in (bundle / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
-    _write_json(bundle / "summary.json", _campaign_summary(manifest, cells, observations))
-    _write_json(bundle / "public_manifest.json", manifest)
-    write_bundle(bundle)
+    _reseal_performance_manifest(bundle, manifest)
 
     with pytest.raises(ProtocolError, match="runtime revisions are not content-addressed"):
         verify_public_bundle(bundle)
@@ -736,8 +754,7 @@ def test_verify_public_performance_binds_load_generator_revision_to_source(tmp_p
     evidence_path = bundle / "system_evidence.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["source"]["commit"] = "1" * 40
-    _write_json(manifest_path, manifest)
-    write_bundle(bundle)
+    _reseal_performance_manifest(bundle, manifest)
     assert verify_public_bundle(bundle)["semantic_valid"] is True
 
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))

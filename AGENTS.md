@@ -26,7 +26,7 @@ When creating or running a benchmark:
 
 ## LLM serving performance runs
 
-1. Follow `PERFORMANCE_PROTOCOL_V2.md` for current/reference runs; validate the complete plan, workload, and runtime before starting or contacting an endpoint. `PERFORMANCE_PROTOCOL_V1_1.md` is an unanchored historical-development snapshot; `PERFORMANCE_PROTOCOL_V1_0.md` remains the commit-anchored historical contract for its recorded bundles.
+1. Follow `PERFORMANCE_PROTOCOL_V2.md` for current producer, export, public-verification, comparison, and reference runs; validate the complete plan, workload, and runtime before starting or contacting an endpoint. `PERFORMANCE_PROTOCOL_V1_0.md` is the byte-frozen historical contract for its recorded bundles; no v1.1 release exists.
 2. Keep inference engines outside this repository. Never execute a stored launch command automatically.
 3. If explicitly asked to start an engine, use its documented command, record immutable revisions and a credential-free command, verify readiness, and stop only the process you started.
 4. Never modify an existing performance plan or workload for a run. Create a new version and preserve exact hashes.
@@ -36,6 +36,6 @@ When creating or running a benchmark:
 8. Preserve raw streaming events and all failures. Enforce token, request, duration, timeout, context, output, and in-flight limits.
 9. Compare only verified runs with identical plan/workload hashes and exact shared cells. Report skipped cells and every block.
 10. Do not attribute results solely to a GPU or model, and do not claim quality, safety, compliance, utilization, or energy from client-side performance measurements.
-11. Prefer the versioned `smoke`, `quick`, `standard`, or `reference` preset; `full` is only a CLI alias for `reference`.
+11. Behavior presets are `smoke`, `quick`, `standard`, and `reference`; serving Performance accepts only `reference`.
 12. Use `run --preset ...` for behavior quality/safety and `perf run --preset ...` for serving performance. Never describe one as the other.
 13. Only the complete `reference` preset can be considered for an official run, and all other official gates still apply.

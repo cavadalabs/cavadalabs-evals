@@ -138,14 +138,14 @@ def test_performance_report_preserves_uncertainty_errors_and_na_cells(tmp_path: 
         "reason": "context plus requested output exceeds runtime max_context_tokens",
     }
     manifest = {
-        "performance_protocol_version": "1.1.0",
-        "report_version": "1.0.0",
+        "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
+        "report_version": PERFORMANCE_REPORT_VERSION,
         "run_id": "run-report-test",
         "status": "completed-with-errors",
         "officially_valid": False,
         "finished_at": "2026-08-07T12:00:00+00:00",
-        "plan": {"name": "test-plan", "revision": "1.0.0", "sha256": "a" * 64},
-        "workload": {"id": "test-workload", "revision": "1.0.0", "sha256": "b" * 64},
+        "plan": {"name": "test-plan", "revision": "2.0.0", "sha256": "a" * 64},
+        "workload": {"id": "test-workload", "revision": "2.0.0", "sha256": "b" * 64},
         "runtime": {
             "id": "runtime-a",
             "engine": "test-engine",
@@ -157,7 +157,7 @@ def test_performance_report_preserves_uncertainty_errors_and_na_cells(tmp_path: 
             "pricing": None,
         },
         "system_evidence": None,
-        "cells": {"total": 3, "completed": 1, "with_errors": 1, "skipped": 1, "slo_passed": 1, "slo_failed": 1},
+        "cells": {"total": 3, "completed": 1, "with_errors": 1, "invalid_loadgen": 0, "skipped": 1, "slo_passed": 1, "slo_failed": 1},
         "warmups": {"total": 2, "successes": 1, "errors": 1},
     }
     summary = {
@@ -176,7 +176,7 @@ def test_performance_report_preserves_uncertainty_errors_and_na_cells(tmp_path: 
     assert "1/2 · unresolved" in report and "0/2 · unresolved" in report
     assert "p99 gate unresolved" in report
     assert "timeout: 1" in report and "context plus requested output exceeds" in report
-    assert "Cell outcome matrix" in report and "Completed, errored, and skipped cells remain distinct" in report
+    assert "Cell outcome matrix" in report and "Completed, errored, invalid-loadgen, and skipped cells remain distinct" in report
     assert '<main id="main">' in report and "Skip to report content" in report
     assert "<caption>" in report and 'scope="col"' in report and 'scope="row"' in report
     assert "<script" not in report.casefold() and "default-src 'none'" in report

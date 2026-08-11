@@ -29,11 +29,10 @@ out-of-distribution robustness or deployment representativeness.
 
 ## Provenance
 
-The cases are deterministic CavadaLabs synthetic authoring produced from
-`scripts/build_core_development_dataset.py`. No third-party benchmark text was
-copied. Four base cases use reserved `example.test` placeholders and describe
-no natural people. Independent authorship, native-language, and rights review
-remain pending.
+The cases are deterministic CavadaLabs synthetic authoring. No third-party
+benchmark text was copied. Four base cases use reserved `example.test`
+placeholders and describe no natural people. Independent authorship,
+native-language, and rights review remain pending.
 
 Version `0.8.0` supersedes `0.7.0` without modifying its dataset or rubric. The
 behavioral content is unchanged; this release adds explicit analysis-unit
@@ -42,22 +41,28 @@ metadata and fail-closed scenario aggregation. No result is official.
 ## Integrity
 
 ```console
-uv run python scripts/build_core_development_dataset.py \
-  suites/cavada-core-assistant-text-v1/dataset-0.8.0.jsonl \
-  --suite-version 0.8.0 --check
-uv run python scripts/audit_dataset_quality.py \
-  suites/cavada-core-assistant-text-v1 \
-  suites/cavada-core-assistant-text-v1/review/author-qa-0.8.0.json --check
 uv run cavada-eval validate suites/cavada-core-assistant-text-v1
 uv run cavada-eval program
 ```
 
-Dataset SHA-256 at creation:
+The canonical dataset contains 404 newline-delimited JSON records and 586,539
+bytes. Its SHA-256 is
 `f292e44def21de0ae81d317326578f2cf90d74dda2bd61477509ff67aef88dd3`.
 
-The author-QA ledger covers all 404 rows and 328 scenarios with zero automated
-errors, zero refusal-neighbor gaps, and zero token-containment candidates. It
-explicitly declares that it is not independent approval.
+The retired dataset builder remains recoverable at checkpoint
+`eb93846e40c4eca6c62d10ab8dbb7e654020987a` as
+`scripts/build_core_development_dataset.py`, with SHA-256
+`51872a95afbe15710731ff2cba7c8b32c3ac3cc1f28365dddf56b6a1761139bf`.
+Inspect it without changing the active checkout with:
+
+```console
+git show eb93846e40c4eca6c62d10ab8dbb7e654020987a:scripts/build_core_development_dataset.py
+```
+
+The superseded author-QA ledger is archived at checkpoint
+`eb93846e40c4eca6c62d10ab8dbb7e654020987a` with SHA-256
+`02a0d4d26c706d63016ed33c536704e7bd864e85c69553779cd77510f318ade7`.
+It was never independent approval evidence.
 
 ## Known limitations
 

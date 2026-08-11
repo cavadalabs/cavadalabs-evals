@@ -9,9 +9,8 @@ suite validation -> generation -> deterministic metrics -> optional engines
 ```
 
 The protocol core owns schemas, lifecycle, status semantics, hashes, statistics,
-gates, artifacts, reports, and verification. Target, judge, metric, external
-benchmark, storage, and signing integrations are adapters. An adapter must
-declare supported modalities and never silently transform unsupported content.
+gates, artifacts, reports, and verification. Target and judge transports must
+declare their capabilities and never silently transform unsupported content.
 
 The built-in bundle mechanism provides a closed file set, SHA-256 hashes, and
 optional shared-key HMAC integrity. It is not an organizational asymmetric

@@ -27,7 +27,6 @@ from cavada_eval.protocol import (
     semantic_duplicate_candidates,
     sha256_file,
     summarize,
-    validate_suite,
     wilson_interval,
 )
 from cavada_eval.runner import _judge_result, _manifest_endpoint, run
@@ -45,7 +44,8 @@ def test_benchmark_presets_are_canonical_and_group_safe() -> None:
     assert selected == stratified_cases(cases, 4)
     assert len(selected) <= 4 and {case["category"] for case in selected} == {"alpha", "beta"}
     assert ({"a", "a-variant"} <= {case["id"] for case in selected}) or not ({"a", "a-variant"} & {case["id"] for case in selected})
-    assert canonical_preset("full") == "reference"
+    with pytest.raises(ValueError, match="unsupported benchmark preset"):
+        canonical_preset("full")
     assert benchmark_preset("quick")["max_cases"] == 100
     assert benchmark_preset("reference")["performance_plan"] == "performance/plans/llm-serving-v2.toml"
 
@@ -208,23 +208,10 @@ def test_official_media_suite_requires_capability_verified_judge_adapter(tmp_pat
         encoding="utf-8",
     )
 
-    load_suite(root)
-    with pytest.raises(ProtocolError, match="capability-verifying, qualification-bound judge adapter"):
+    with pytest.raises(ProtocolError) as caught:
         load_suite(root, official=True)
-
-
-def test_official_suite_rejects_unpinned_deepeval_engine(tmp_path: Path) -> None:
-    loaded = load_suite(make_suite(tmp_path, status="approved"))
-    suite = Suite(
-        loaded.root,
-        {**loaded.config, "metrics": {"deepeval": [{"name": "exact_match", "threshold": 1.0}]}},
-        tuple({**case, "expected_output": "expected"} for case in loaded.cases),
-        loaded.rubric,
-        loaded.dataset_path,
-        loaded.rubric_path,
-    )
-
-    assert any("do not support unpinned DeepEval" in error for error in validate_suite(suite, official=True))
+    assert "suite.profile must be one of" in str(caught.value)
+    assert "capability-verifying, qualification-bound judge adapter" in str(caught.value)
 
 
 def test_official_suite_requires_pinned_semantic_contamination_evidence(tmp_path: Path) -> None:
@@ -496,12 +483,12 @@ def test_secret_like_dataset_content_is_rejected(tmp_path: Path) -> None:
         load_suite(root)
 
 
-def test_preflight_rejects_invalid_regex_gate_and_metric_engine_config(tmp_path: Path) -> None:
+def test_preflight_rejects_deferred_metric_gate_and_metric_engine_config(tmp_path: Path) -> None:
     regex_root = make_suite(tmp_path / "regex")
     case = json.loads((regex_root / "dataset.jsonl").read_text())
     case["required_regex"] = ["["]
     (regex_root / "dataset.jsonl").write_text(json.dumps(case) + "\n")
-    with pytest.raises(ProtocolError, match=r"required_regex\[1\].*valid regular expression"):
+    with pytest.raises(ProtocolError, match=r"unsupported deterministic metric fields.*required_regex"):
         load_suite(regex_root)
 
     gate_root = make_suite(tmp_path / "gate")
@@ -512,8 +499,8 @@ def test_preflight_rejects_invalid_regex_gate_and_metric_engine_config(tmp_path:
 
     metric_root = make_suite(tmp_path / "metric")
     metric_config = metric_root / "suite.toml"
-    metric_config.write_text(metric_config.read_text() + '\n[metrics]\ndeepeval = [{name = "toxicity"}]\n')
-    with pytest.raises(ProtocolError, match="identity- and destination-verifying judge adapter"):
+    metric_config.write_text(metric_config.read_text() + '\n[metrics]\nexternal = []\n')
+    with pytest.raises(ProtocolError, match="suite.metrics is not supported"):
         load_suite(metric_root)
 
 
@@ -742,6 +729,7 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
         "figures/category_scores.svg",
         "figures/latency.svg",
     } <= set(manifest["artifacts"])
+    assert "engine_results.jsonl" not in manifest["artifacts"]
     assert verify_bundle(run_dir)["valid"] is True
     control_report = generate_control_report(
         run_dir,
@@ -750,13 +738,3 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
     )
     ai_record = next(item for item in control_report["controls"] if item["control_id"] == "AI-ACT-12")
     assert ai_record["source_application"].startswith("Generally applicable since 2026-08-02")
-
-
-def test_imported_memo_semantic_regressions() -> None:
-    dataset = Path("suites/memo4345-v1/dataset.jsonl")
-    rows = {row["id"]: row for row in map(json.loads, dataset.read_text().splitlines())}
-    assert rows["memo4345-0004"]["expected_behavior"] == "abstain"
-    assert rows["memo4345-0361"]["expected_behavior"] == "safe_complete"
-    assert rows["memo4345-0362"]["expected_behavior"] == "safe_complete"
-    assert rows["memo4345-0812"]["expected_behavior"] == "safe_complete"
-    assert rows["memo4345-0912"]["expected_behavior"] == "refuse"

@@ -45,17 +45,8 @@ from .system_evidence import load_system_evidence
 
 PERFORMANCE_PROTOCOL_VERSION = "2.0.0"
 PERFORMANCE_PROTOCOL_FILENAME = "PERFORMANCE_PROTOCOL_V2.md"
-PERFORMANCE_PROTOCOL_FILES = {
-    "1.0.0": "PERFORMANCE_PROTOCOL_V1_0.md",
-    "1.1.0": "PERFORMANCE_PROTOCOL_V1_1.md",
-    PERFORMANCE_PROTOCOL_VERSION: PERFORMANCE_PROTOCOL_FILENAME,
-}
-SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS = frozenset(PERFORMANCE_PROTOCOL_FILES)
-LEGACY_PERFORMANCE_PLAN_VERSION = "1.0.0"
 PERFORMANCE_PLAN_VERSION = "2.0.0"
-SUPPORTED_PERFORMANCE_PLAN_VERSIONS = frozenset({LEGACY_PERFORMANCE_PLAN_VERSION, PERFORMANCE_PLAN_VERSION})
 PERFORMANCE_RUNTIME_VERSION = "1.0.0"
-LEGACY_PERFORMANCE_REPORT_VERSION = "1.0.0"
 PERFORMANCE_REPORT_VERSION = "2.0.0"
 _PERFORMANCE_COMPARISON_SOURCE_BINDING = "recorded source bundle SHA-256; source bundles are required for independent source revalidation"
 MAX_WORKLOAD_BYTES = 32 * 1024 * 1024
@@ -87,14 +78,6 @@ _LEDGER_IDENTITY_FIELDS = (
     "batch_started_monotonic_ns",
     "started_monotonic_ns",
 )
-
-
-def _performance_versions(plan_version: str) -> tuple[str, str]:
-    if plan_version == PERFORMANCE_PLAN_VERSION:
-        return PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_REPORT_VERSION
-    if plan_version == LEGACY_PERFORMANCE_PLAN_VERSION:
-        return "1.1.0", LEGACY_PERFORMANCE_REPORT_VERSION
-    raise ProtocolError(f"unsupported performance plan version: {plan_version}")
 
 
 def _v2_schedule_evidence(
@@ -154,16 +137,15 @@ class PerformanceRuntime:
 
 
 def canonical_performance_protocol_path(version: str, *, repo_root: Path | None = None) -> Path:
-    filename = PERFORMANCE_PROTOCOL_FILES.get(version)
-    if filename is None:
+    if version != PERFORMANCE_PROTOCOL_VERSION:
         raise ProtocolError(f"unsupported performance protocol version: {version}")
     root = repo_root.resolve() if repo_root is not None else Path(__file__).resolve().parents[2]
     packaged = Path(__file__).resolve().parent / "_resources"
     if repo_root is None and packaged.is_dir():
         root = packaged
-    path = root / filename
+    path = root / PERFORMANCE_PROTOCOL_FILENAME
     if path.is_symlink() or not path.is_file():
-        raise ProtocolError(f"missing canonical performance protocol: {filename}")
+        raise ProtocolError(f"missing canonical performance protocol: {PERFORMANCE_PROTOCOL_FILENAME}")
     return path
 
 
@@ -572,10 +554,8 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
         raise ProtocolError(f"cannot load performance plan: {exc}") from exc
     if not _finite_json(config):
         raise ProtocolError("performance plan contains non-finite values")
-    plan_version = config.get("plan_version")
-    expected_profile = "llm-serving-v2" if plan_version == PERFORMANCE_PLAN_VERSION else "llm-serving-v1"
-    if plan_version not in SUPPORTED_PERFORMANCE_PLAN_VERSIONS or config.get("profile") != expected_profile:
-        raise ProtocolError("performance plan requires a supported matching plan_version/profile")
+    if config.get("plan_version") != PERFORMANCE_PLAN_VERSION or config.get("profile") != "llm-serving-v2":
+        raise ProtocolError("performance plan requires plan_version 2.0.0 and profile llm-serving-v2")
     plan_fields = {
         "plan_version",
         "revision",
@@ -590,8 +570,7 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
         "slo",
         "scenarios",
     }
-    if plan_version == PERFORMANCE_PLAN_VERSION:
-        plan_fields.add("load_generator")
+    plan_fields.add("load_generator")
     _reject_unknown(config, plan_fields, "performance plan")
     if contains_secret_like(config):
         raise ProtocolError("performance plan contains secret-like material")
@@ -601,7 +580,7 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
     if not _semantic_version(config["revision"]):
         raise ProtocolError("performance plan revision must be a semantic version")
     if config["data_classification"] not in {"public", "synthetic"}:
-        raise ProtocolError("performance protocol v1 only permits public or synthetic workloads")
+        raise ProtocolError("performance v2 only permits public or synthetic workloads")
     if config["name"][0] not in "abcdefghijklmnopqrstuvwxyz0123456789" or any(
         character not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for character in config["name"]
     ):
@@ -691,22 +670,21 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
     if execution.get("open_loop_arrival_distribution", "fixed") not in {"fixed", "poisson"}:
         raise ProtocolError("execution.open_loop_arrival_distribution must be fixed or poisson")
 
-    if plan_version == PERFORMANCE_PLAN_VERSION:
-        load_generator = _object(config.get("load_generator"), "load_generator")
-        _reject_unknown(
-            load_generator,
-            {"minimum_dispatch_rate_fraction", "maximum_dispatch_lag_p95_ms", "maximum_dispatch_lag_ms"},
-            "load_generator",
-        )
-        fidelity = load_generator.get("minimum_dispatch_rate_fraction")
-        if not isinstance(fidelity, (int, float)) or isinstance(fidelity, bool) or not math.isfinite(float(fidelity)) or not 0 < float(fidelity) <= 1:
-            raise ProtocolError("load_generator.minimum_dispatch_rate_fraction must be from 0 (exclusive) to 1")
-        for field in ("maximum_dispatch_lag_p95_ms", "maximum_dispatch_lag_ms"):
-            value = load_generator.get(field)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
-                raise ProtocolError(f"load_generator.{field} must be non-negative")
-        if float(load_generator["maximum_dispatch_lag_p95_ms"]) > float(load_generator["maximum_dispatch_lag_ms"]):
-            raise ProtocolError("load-generator p95 dispatch lag cannot exceed its maximum lag")
+    load_generator = _object(config.get("load_generator"), "load_generator")
+    _reject_unknown(
+        load_generator,
+        {"minimum_dispatch_rate_fraction", "maximum_dispatch_lag_p95_ms", "maximum_dispatch_lag_ms"},
+        "load_generator",
+    )
+    fidelity = load_generator.get("minimum_dispatch_rate_fraction")
+    if not isinstance(fidelity, (int, float)) or isinstance(fidelity, bool) or not math.isfinite(float(fidelity)) or not 0 < float(fidelity) <= 1:
+        raise ProtocolError("load_generator.minimum_dispatch_rate_fraction must be from 0 (exclusive) to 1")
+    for field in ("maximum_dispatch_lag_p95_ms", "maximum_dispatch_lag_ms"):
+        value = load_generator.get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
+            raise ProtocolError(f"load_generator.{field} must be non-negative")
+    if float(load_generator["maximum_dispatch_lag_p95_ms"]) > float(load_generator["maximum_dispatch_lag_ms"]):
+        raise ProtocolError("load-generator p95 dispatch lag cannot exceed its maximum lag")
 
     limits = _object(config.get("limits"), "limits")
     _reject_unknown(
@@ -1037,8 +1015,7 @@ def performance_run_preflight(
 ) -> tuple[dict[str, Any] | None, bytes | None, dict[str, Any]]:
     if official:
         require_matching_source_checkout(repo_root, __file__)
-    protocol_version, _ = _performance_versions(str(plan.config["plan_version"]))
-    protocol_path = canonical_performance_protocol_path(protocol_version, repo_root=repo_root)
+    protocol_path = canonical_performance_protocol_path(PERFORMANCE_PROTOCOL_VERSION, repo_root=repo_root)
     if not protocol_path.is_file() or protocol_path.is_symlink():
         raise ProtocolError(f"performance run requires a regular {protocol_path.name} snapshot")
     evidence: dict[str, Any] | None = None
@@ -1093,7 +1070,7 @@ def performance_plan_summary(plan: PerformancePlan, runtime: PerformanceRuntime 
     planned_contexts = sorted({int(cell["context_tokens"]) for cell in cells})
     planned_outputs = sorted({int(cell["output_tokens"]) for cell in cells})
     result = {
-        "performance_protocol_version": _performance_versions(str(plan.config["plan_version"]))[0],
+        "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
         "plan": plan.config["name"],
         "plan_revision": plan.config["revision"],
         "plan_sha256": plan.sha256,
@@ -1282,8 +1259,9 @@ def _request_material(
 def _bootstrap_percentile(values: list[float], probability: float, samples: int, seed: int) -> dict[str, float | int]:
     if not values:
         return {"lower": 0.0, "upper": 0.0, "confidence": 0.95, "samples": samples, "seed": seed}
+    source = sorted(values)
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.
-    estimates = [percentile(rng.choices(values, k=len(values)), probability) for _ in range(samples)]
+    estimates = [percentile(rng.choices(source, k=len(source)), probability) for _ in range(samples)]
     return {
         "lower": percentile(estimates, 0.025),
         "upper": percentile(estimates, 0.975),
@@ -1663,23 +1641,6 @@ def _cell_metrics_v2(
     return metrics
 
 
-def _cell_metrics_for_protocol(
-    observations: list[dict[str, Any]],
-    cell: dict[str, Any],
-    plan: PerformancePlan,
-    window_seconds: float,
-    seed: int,
-    pricing: dict[str, Any] | None,
-    protocol_version: str,
-) -> dict[str, Any]:
-    plan_version = str(plan.config.get("plan_version"))
-    if protocol_version == PERFORMANCE_PROTOCOL_VERSION and plan_version == PERFORMANCE_PLAN_VERSION:
-        return _cell_metrics_v2(observations, cell, plan, window_seconds, seed, pricing)
-    if protocol_version in {"1.0.0", "1.1.0"} and plan_version == LEGACY_PERFORMANCE_PLAN_VERSION:
-        return _cell_metrics(observations, cell, plan, window_seconds, seed, pricing)
-    raise ProtocolError("performance protocol and plan versions are incompatible")
-
-
 def _performance_jsonl(path: Path, label: str) -> list[dict[str, Any]]:
     if not path.is_file() or path.is_symlink():
         raise ProtocolError(f"missing or unsafe performance {label} ledger")
@@ -1754,7 +1715,8 @@ def reconcile_performance_ledgers(
     observed_cells: dict[tuple[int, str], dict[str, Any]],
 ) -> dict[str, Any]:
     protocol_version = str(manifest.get("performance_protocol_version"))
-    v2 = protocol_version == PERFORMANCE_PROTOCOL_VERSION
+    if protocol_version != PERFORMANCE_PROTOCOL_VERSION:
+        raise ProtocolError(f"unsupported performance protocol version: {protocol_version}")
     requests = _performance_jsonl(run_dir / "requests.jsonl", "request")
     responses = _performance_jsonl(run_dir / "responses.jsonl", "response")
     warmups = _performance_jsonl(run_dir / "warmups.jsonl", "warm-up outcome")
@@ -1775,7 +1737,7 @@ def reconcile_performance_ledgers(
             or outcome.get("status") not in {"success", "error"}
         ):
             raise ProtocolError("performance response and outcome terminal states do not reconcile")
-        if v2 and any(
+        if any(
             response.get(field) != outcome.get(field)
             for field in (
                 "dispatch_monotonic_ns",
@@ -1879,7 +1841,7 @@ def reconcile_performance_ledgers(
             raise ProtocolError("performance request acceptance differs from network-contact evidence")
         if accepted and started_ns < scheduled_ns:
             raise ProtocolError("performance contacted request started before its scheduled time")
-        if v2:
+        if protocol_version == PERFORMANCE_PROTOCOL_VERSION:
             transport_value = response.get("transport")
             if transport_value is not None and not isinstance(transport_value, dict):
                 raise ProtocolError("performance transport monotonic timing evidence is malformed")
@@ -2044,19 +2006,12 @@ def reconcile_performance_ledgers(
         batch_started_ns = int(ordered[0]["batch_started_monotonic_ns"])
         scheduled = [int(item["scheduled_monotonic_ns"]) for item in ordered]
         if cell["arrival"] == "closed-loop":
-            if len(set(scheduled)) != 1 or v2 and scheduled[0] != batch_started_ns:
+            if len(set(scheduled)) != 1 or scheduled[0] != batch_started_ns:
                 raise ProtocolError("performance closed-loop schedule differs within a batch")
             continue
         offsets = _open_loop_offsets(plan, cell, block, phase, count=len(ordered) if phase == "warmup" else None)
         expected_scheduled_ns = [batch_started_ns + round(offset * 1_000_000_000) for offset in offsets]
-        if len(offsets) != len(ordered) or (
-            scheduled != expected_scheduled_ns
-            if v2
-            else any(
-                abs((value - scheduled[0]) - round((offset - offsets[0]) * 1_000_000_000)) > 1
-                for value, offset in zip(scheduled, offsets, strict=True)
-            )
-        ):
+        if len(offsets) != len(ordered) or scheduled != expected_scheduled_ns:
             raise ProtocolError("performance open-loop schedule differs from the preregistered arrival process")
 
     reconciliation = manifest.get("request_reconciliation")
@@ -2174,7 +2129,8 @@ def run_performance_campaign(
     plan, runtime = fresh_plan, fresh_runtime
     config = plan.config
     runtime_config = runtime.config
-    protocol_version, report_version = _performance_versions(str(config["plan_version"]))
+    protocol_version = PERFORMANCE_PROTOCOL_VERSION
+    report_version = PERFORMANCE_REPORT_VERSION
     system_evidence, system_evidence_raw, source_evidence = performance_run_preflight(
         plan,
         runtime,
@@ -2275,7 +2231,7 @@ def run_performance_campaign(
                 else {}
             ),
             **({"minimum_p99_observations": config["slo"]["minimum_p99_observations"]} if "minimum_p99_observations" in config["slo"] else {}),
-            **({"load_generator": config["load_generator"]} if protocol_version == PERFORMANCE_PROTOCOL_VERSION else {}),
+            "load_generator": config["load_generator"],
         },
         "workload": {
             "id": config["workload"]["id"],
@@ -2490,11 +2446,7 @@ def run_performance_campaign(
                 "error_type": rejection[0],
                 "error": rejection[1],
                 **({"fatal": True} if rejection[0] == "time-budget" else {}),
-                **(
-                    _v2_schedule_evidence(scheduled_ns, None, terminal_ns, success=False)
-                    if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-                    else {}
-                ),
+                **_v2_schedule_evidence(scheduled_ns, None, terminal_ns, success=False),
             }
             record("responses.jsonl", {**outcome, "terminal": True, "network_contacted": False, "response": None, "transport": None})
             return outcome
@@ -2561,11 +2513,7 @@ def run_performance_campaign(
                 "inter_chunk_ms": transport.get("inter_chunk_ms"),
                 "request_bytes": transport.get("request_bytes"),
                 "response_bytes": transport.get("response_bytes"),
-                **(
-                    _v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=True)
-                    if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-                    else {}
-                ),
+                **_v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=True),
             }
             if campaign_expired():
                 fatal_event.set()
@@ -2618,11 +2566,7 @@ def run_performance_campaign(
                     if reported_usage is not None and usage_accounted
                     else {}
                 ),
-                **(
-                    _v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=False)
-                    if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-                    else {}
-                ),
+                **_v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=False),
             }
             record(
                 "responses.jsonl",
@@ -2679,11 +2623,7 @@ def run_performance_campaign(
                     if reported_usage is not None and usage_accounted
                     else {}
                 ),
-                **(
-                    _v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=False)
-                    if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-                    else {}
-                ),
+                **_v2_schedule_evidence(scheduled_ns, transport, terminal_ns, success=False),
             }
             record(
                 "responses.jsonl",
@@ -2699,12 +2639,8 @@ def run_performance_campaign(
 
     def execute_batch(cell: dict[str, Any], count: int, block: int, phase: str, *, open_loop: bool) -> tuple[list[dict[str, Any]], float]:
         rows = rows_by_context[int(cell["context_tokens"])]
-        if protocol_version == PERFORMANCE_PROTOCOL_VERSION:
-            batch_started_ns = time.perf_counter_ns()
-            started = batch_started_ns / 1_000_000_000
-        else:
-            started = time.perf_counter()
-            batch_started_ns = time.perf_counter_ns()
+        batch_started_ns = time.perf_counter_ns()
+        started = batch_started_ns / 1_000_000_000
         results: list[dict[str, Any]] = []
         offsets = _open_loop_offsets(plan, cell, block, phase, count=count if phase == "warmup" else None) if open_loop else None
         if offsets is not None:
@@ -2720,11 +2656,7 @@ def run_performance_campaign(
                     scheduled = started + offset
                     if open_loop and scheduled > now:
                         break
-                    scheduled_ns = (
-                        batch_started_ns + round(offset * 1_000_000_000)
-                        if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-                        else int(scheduled * 1_000_000_000)
-                    )
+                    scheduled_ns = batch_started_ns + round(offset * 1_000_000_000)
                     pending.add(
                         executor.submit(
                             one_request,
@@ -2785,14 +2717,13 @@ def run_performance_campaign(
                 count = _measured_request_count(plan, cell, block)
                 observations, window = execute_batch(cell, count, block, "measured", open_loop=cell["arrival"] == "open-loop")
                 runtime_pricing = runtime_config.get("pricing")
-                metrics = _cell_metrics_for_protocol(
+                metrics = _cell_metrics_v2(
                     observations,
                     cell,
                     plan,
                     window,
                     int(execution["seed"]) + block * 1000 + cell_index,
                     runtime_pricing if isinstance(runtime_pricing, dict) else None,
-                    protocol_version,
                 )
                 metrics["block"] = block
                 record("cells.jsonl", metrics)
@@ -2813,7 +2744,7 @@ def run_performance_campaign(
 
     completed_cells = [cell for cell in all_cell_metrics if cell.get("status") != "skipped"]
     invalid_loadgen = sum(cell.get("status") == "invalid-loadgen" for cell in all_cell_metrics)
-    if protocol_version == PERFORMANCE_PROTOCOL_VERSION and invalid_loadgen:
+    if invalid_loadgen:
         manifest["status"] = "invalid-loadgen"
     else:
         manifest["status"] = (
@@ -2842,7 +2773,7 @@ def run_performance_campaign(
         "total": len(all_cell_metrics),
         "completed": sum(cell.get("status") == "completed" for cell in all_cell_metrics),
         "with_errors": sum(cell.get("status") == "completed-with-errors" for cell in all_cell_metrics),
-        **({"invalid_loadgen": invalid_loadgen} if protocol_version == PERFORMANCE_PROTOCOL_VERSION else {}),
+        "invalid_loadgen": invalid_loadgen,
         "skipped": sum(cell.get("status") == "skipped" for cell in all_cell_metrics),
         "slo_passed": sum(cell.get("slo_passed") is True for cell in all_cell_metrics),
         "slo_failed": sum(cell.get("slo_passed") is False for cell in all_cell_metrics),
@@ -2874,7 +2805,7 @@ def run_performance_campaign(
     manifest["officially_valid"] = bool(official and manifest["status"] == "completed" and engagement_valid_through_finish)
     summary = _campaign_summary(manifest, all_cell_metrics, all_observations)
     atomic_json(run_dir / "summary.json", summary)
-    _write_cells_csv(run_dir / "cells.csv", all_cell_metrics, protocol_version=protocol_version)
+    _write_cells_csv(run_dir / "cells.csv", all_cell_metrics)
     _performance_reports(run_dir, manifest, summary, all_cell_metrics)
     manifest["artifacts"] = sorted(path.relative_to(run_dir).as_posix() for path in run_dir.rglob("*") if path.is_file())
     atomic_json(run_dir / "manifest.json", manifest)
@@ -2886,8 +2817,7 @@ def run_performance_campaign(
 
 
 def _campaign_summary(manifest: dict[str, Any], cells: list[dict[str, Any]], observations: list[dict[str, Any]]) -> dict[str, Any]:
-    completed_statuses = {"completed"} if manifest.get("performance_protocol_version") == PERFORMANCE_PROTOCOL_VERSION else {"completed", "completed-with-errors"}
-    completed = [cell for cell in cells if cell.get("status") in completed_statuses]
+    completed = [cell for cell in cells if cell.get("status") == "completed"]
     best = max(completed, key=lambda row: float(row["goodput_requests_per_second"]), default=None)
     return {
         "performance_protocol_version": manifest["performance_protocol_version"],
@@ -2913,8 +2843,7 @@ def _campaign_summary(manifest: dict[str, Any], cells: list[dict[str, Any]], obs
     }
 
 
-def _write_cells_csv(path: Path, cells: list[dict[str, Any]], *, protocol_version: str) -> None:
-    v2 = protocol_version == PERFORMANCE_PROTOCOL_VERSION
+def _write_cells_csv(path: Path, cells: list[dict[str, Any]]) -> None:
     fields = [
         "block",
         "cell_key",
@@ -2925,35 +2854,29 @@ def _write_cells_csv(path: Path, cells: list[dict[str, Any]], *, protocol_versio
         "concurrency",
         "request_rate",
         "status",
-        *(
-            [
-                "reason",
-                "error_types",
-                "warnings",
-                "goodput_requests",
-                "input_tokens_total",
-                "output_tokens_total",
-                "load_generator_valid",
-                "load_generator_invalid_reasons",
-                "offered_requests",
-                "dispatched_requests",
-                "completed_requests",
-                "offered_requests_per_second",
-                "dispatched_requests_per_second",
-                "completed_requests_per_second",
-                "dispatch_rate_fidelity",
-                "client_queue_p95_ms",
-                "dispatch_lag_p95_ms",
-                "dispatch_lag_max_ms",
-                "scheduled_ttft_p95_ms",
-                "scheduled_e2e_p99_ms",
-                "serving_slo_passed",
-                "measurement_window_seconds",
-                "throughput_window_seconds",
-            ]
-            if v2
-            else []
-        ),
+        "reason",
+        "error_types",
+        "warnings",
+        "goodput_requests",
+        "input_tokens_total",
+        "output_tokens_total",
+        "load_generator_valid",
+        "load_generator_invalid_reasons",
+        "offered_requests",
+        "dispatched_requests",
+        "completed_requests",
+        "offered_requests_per_second",
+        "dispatched_requests_per_second",
+        "completed_requests_per_second",
+        "dispatch_rate_fidelity",
+        "client_queue_p95_ms",
+        "dispatch_lag_p95_ms",
+        "dispatch_lag_max_ms",
+        "scheduled_ttft_p95_ms",
+        "scheduled_e2e_p99_ms",
+        "serving_slo_passed",
+        "measurement_window_seconds",
+        "throughput_window_seconds",
         "observations",
         "successes",
         "errors",
@@ -3008,8 +2931,7 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
     figures = run_dir / "figures"
     figures.mkdir(mode=0o700, parents=True, exist_ok=True)
     ordered = sorted(cells, key=lambda row: (int(row.get("block", 0)), str(row.get("scenario_id", "")), str(row.get("cell_key", ""))))
-    v2 = manifest.get("performance_protocol_version") == PERFORMANCE_PROTOCOL_VERSION
-    evaluated_statuses = {"completed", "completed-with-errors", *({"invalid-loadgen"} if v2 else set())}
+    evaluated_statuses = {"completed", "completed-with-errors", "invalid-loadgen"}
     evaluated = [cell for cell in ordered if cell.get("status") in evaluated_statuses]
     runtime_value = manifest.get("runtime")
     runtime = runtime_value if isinstance(runtime_value, dict) else {}
@@ -3086,8 +3008,6 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
         return retained
 
     def load_generator_cells(row: dict[str, Any]) -> str:
-        if not v2:
-            return ""
         open_loop = row.get("arrival") == "open-loop"
         queue_p95 = diagnostic_metric(row, "client_queue_ms", "p95", 2) if open_loop else "N/A"
         arrival_window = number(row.get("measurement_window_seconds"), 3) if open_loop else "N/A"
@@ -3225,10 +3145,10 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
 <td>{html.escape(metric(row, 'e2e_ms', 'p99', 2))}</td><td>{html.escape(interval(row, 'e2e_ms', 'p99_ci', 2))}</td><td>{html.escape(metric(row, 'tpot_ms', 'p50', 3))}</td>
 <td>{html.escape(bootstrap_samples(row))}</td><td>{html.escape(p99_support(row))}</td><td>{html.escape(direct_metric(row, 'output_tokens_per_second', 2))}</td>
 <td>{html.escape(direct_metric(row, 'goodput_requests_per_second', 3))}</td><td>{html.escape(number(row.get('error_rate'), 4))}</td>
-{f'<td>{verdict(row.get("serving_slo_passed"))}</td>' if v2 else ''}<td>{verdict(row.get('slo_passed'))}</td><td>{html.escape(number(row.get('estimated_cost'), 6))}</td><td>{html.escape(' · '.join(warnings(row)) or '—')}</td>
+<td>{verdict(row.get("serving_slo_passed"))}</td><td>{verdict(row.get('slo_passed'))}</td><td>{html.escape(number(row.get('estimated_cost'), 6))}</td><td>{html.escape(' · '.join(warnings(row)) or '—')}</td>
 </tr>"""
         for row in evaluated
-    ) or f'<tr><td colspan="{28 if v2 else 19}">No evaluated cells.</td></tr>'
+    ) or '<tr><td colspan="28">No evaluated cells.</td></tr>'
     matrix_rows = "".join(
         f"<tr><td>{row.get('block', '')}</td><th scope=\"row\"><code>{html.escape(str(row.get('cell_key', '')))}</code></th><td>{badge(row.get('status'))}</td><td>{row.get('successes', 'N/A')}</td><td>{row.get('errors', 'N/A')}</td><td>{html.escape(error_types(row))}</td><td>{html.escape(outcome_detail(row))}</td></tr>"
         for row in ordered
@@ -3285,17 +3205,9 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
         '<th scope="col">Offered req/s</th><th scope="col">Dispatched req/s</th><th scope="col">Completed req/s</th>'
         '<th scope="col">Rate fidelity</th><th scope="col">Client queue p95 ms</th><th scope="col">Dispatch lag p95 ms</th>'
         '<th scope="col">Arrival window s</th><th scope="col">Throughput window s</th>'
-        if v2
-        else ""
     )
-    invalid_card = (
-        f'<div class="card">Invalid load generator<strong>{int(counts.get("invalid_loadgen", 0)):,}</strong></div>' if v2 else ""
-    )
-    outcome_caption = (
-        "Completed, errored, invalid-loadgen, and skipped cells remain distinct"
-        if v2
-        else "Completed, errored, and skipped cells remain distinct"
-    )
+    invalid_card = f'<div class="card">Invalid load generator<strong>{int(counts.get("invalid_loadgen", 0)):,}</strong></div>'
+    outcome_caption = "Completed, errored, invalid-loadgen, and skipped cells remain distinct"
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
@@ -3311,7 +3223,7 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
 <div class="notice"><strong>Availability:</strong> {no_success_count:,} evaluated cells had no successful observations. Their performance metrics are reported as <strong>N/A</strong> and omitted from curves, while errors remain visible.</div>
 <p>Warm-up errors: {int(warmups.get('errors', 0)):,} of {int(warmups.get('total', 0)):,}. Skipped cells: {int(counts.get('skipped', 0)):,}. Client-side measurements and protocol scope are described under <a href="#limitations">limitations</a>.</p>
 <h3>Evidence identity</h3><dl><dt>Protocol / report</dt><dd>{html.escape(str(manifest.get('performance_protocol_version', 'unknown')))} / {html.escape(str(manifest.get('report_version', 'unknown')))}</dd><dt>Plan</dt><dd>{html.escape(str(plan.get('name', 'unknown')))}@{html.escape(str(plan.get('revision', 'unknown')))} · <code>{html.escape(str(plan.get('sha256', 'unknown')))}</code></dd><dt>Workload</dt><dd>{html.escape(str(workload.get('id', 'unknown')))}@{html.escape(str(workload.get('revision', 'unknown')))} · <code>{html.escape(str(workload.get('sha256', 'unknown')))}</code></dd><dt>Runtime</dt><dd>Engine {html.escape(str(runtime.get('engine', 'unknown')))}; model revision <code>{html.escape(str(runtime.get('model_revision', 'unknown')))}</code>; {html.escape(str(runtime.get('gpu_count', 'unknown')))} × {html.escape(str(runtime.get('gpu_model', 'unknown')))}; dtype {html.escape(str(runtime.get('dtype', 'unknown')))}; quantization {html.escape(str(runtime.get('quantization', 'unknown')))}</dd><dt>System evidence</dt><dd>{html.escape(str(system.get('configuration_id', 'not recorded')))}{f" · collected {html.escape(str(system.get('collected_at')))}" if system else ''}</dd><dt>Source</dt><dd>commit <code>{html.escape(str(source.get('commit', 'not recorded')))}</code>; dirty: {html.escape(str(source.get('dirty', 'not recorded')))}</dd>{public_provenance}</dl></section>
-<section id="measurements" aria-labelledby="measurements-title"><h2 id="measurements-title">Measured cells</h2><p>Latency estimates show their retained 95% bootstrap intervals. “Bootstrap” is the resample count; p99 support is successful observations / required minimum. Exact machine-readable evidence remains in <a href="cells.csv">cells.csv</a> and <a href="summary.json">summary.json</a>.</p><div class="table-wrap"><table><caption>Performance measurements; N/A means the field is not applicable or its evidence is unavailable.</caption><thead><tr><th scope="col">Block</th><th scope="col">Cell</th><th scope="col">Scenario</th><th scope="col">Load</th><th scope="col">Status</th>{load_generator_headers}<th scope="col">Success / N</th><th scope="col">TTFT p95 ms</th><th scope="col">TTFT p95 CI</th><th scope="col">E2E p99 ms</th><th scope="col">E2E p99 CI</th><th scope="col">TPOT p50 ms</th><th scope="col">Bootstrap</th><th scope="col">p99 support</th><th scope="col">Output tok/s</th><th scope="col">Good req/s</th><th scope="col">Error rate</th>{'<th scope="col">Contact SLO</th>' if v2 else ''}<th scope="col">{'Final SLO' if v2 else 'SLO'}</th><th scope="col">{html.escape(cost_heading)}</th><th scope="col">Warnings</th></tr></thead><tbody>{result_rows}</tbody></table></div></section>
+<section id="measurements" aria-labelledby="measurements-title"><h2 id="measurements-title">Measured cells</h2><p>Latency estimates show their retained 95% bootstrap intervals. “Bootstrap” is the resample count; p99 support is successful observations / required minimum. Exact machine-readable evidence remains in <a href="cells.csv">cells.csv</a> and <a href="summary.json">summary.json</a>.</p><div class="table-wrap"><table><caption>Performance measurements; N/A means the field is not applicable or its evidence is unavailable.</caption><thead><tr><th scope="col">Block</th><th scope="col">Cell</th><th scope="col">Scenario</th><th scope="col">Load</th><th scope="col">Status</th>{load_generator_headers}<th scope="col">Success / N</th><th scope="col">TTFT p95 ms</th><th scope="col">TTFT p95 CI</th><th scope="col">E2E p99 ms</th><th scope="col">E2E p99 CI</th><th scope="col">TPOT p50 ms</th><th scope="col">Bootstrap</th><th scope="col">p99 support</th><th scope="col">Output tok/s</th><th scope="col">Good req/s</th><th scope="col">Error rate</th><th scope="col">Contact SLO</th><th scope="col">Final SLO</th><th scope="col">{html.escape(cost_heading)}</th><th scope="col">Warnings</th></tr></thead><tbody>{result_rows}</tbody></table></div></section>
 <section id="charts" aria-labelledby="charts-title"><h2 id="charts-title">Comparable-family charts</h2><p>Each figure holds block, scenario, arrival mode, and every non-axis dimension fixed. A single available point is shown as a marker; missing values do not create zero-valued points or connecting lines.</p>{chart_sections}</section>
 <section id="outcomes" aria-labelledby="outcomes-title"><h2 id="outcomes-title">Cell outcome matrix</h2><div class="table-wrap"><table><caption>{outcome_caption}.</caption><thead><tr><th scope="col">Block</th><th scope="col">Cell</th><th scope="col">Outcome</th><th scope="col">Successes</th><th scope="col">Errors</th><th scope="col">Error types</th><th scope="col">Reason / warning</th></tr></thead><tbody>{matrix_rows}</tbody></table></div></section>
 <section id="warnings" aria-labelledby="warnings-title"><h2 id="warnings-title">Warnings</h2>{warning_section}</section>
@@ -3350,14 +3262,10 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
         *public_pdf_provenance,
         "",
         "# TABLE 1. MEASURED CELLS (N/A = NOT APPLICABLE OR UNAVAILABLE)",
-        "| Block | status | successes/N | errors | Contact SLO | Final SLO |" if v2 else "| Block | status | successes/N | errors | SLO |",
+        "| Block | status | successes/N | errors | Contact SLO | Final SLO |",
     ]
     for row in evaluated:
-        slo_values = (
-            f"{verdict(row.get('serving_slo_passed'))} | {verdict(row.get('slo_passed'))}"
-            if v2
-            else verdict(row.get("slo_passed"))
-        )
+        slo_values = f"{verdict(row.get('serving_slo_passed'))} | {verdict(row.get('slo_passed'))}"
         pdf_lines.extend(
             (
                 f"| {row.get('block', '')} | {row.get('status', '')} | {row.get('successes', 0)}/{row.get('observations', 0)} | {row.get('errors', 0)} | {slo_values} |",
@@ -3369,21 +3277,20 @@ def _performance_reports(run_dir: Path, manifest: dict[str, Any], summary: dict[
                 f"  {cost_heading}: {number(row.get('estimated_cost'), 6)}; warnings: {'; '.join(warnings(row)) or 'none'}",
             )
         )
-        if v2:
-            open_loop = row.get("arrival") == "open-loop"
-            queue_p95 = diagnostic_metric(row, "client_queue_ms", "p95", 2) if open_loop else "N/A"
-            arrival_window = number(row.get("measurement_window_seconds"), 3) if open_loop else "N/A"
-            pdf_lines.append(
-                "  Load generator: "
-                f"offered {number(row.get('offered_requests_per_second'), 3)} req/s; "
-                f"dispatched {number(row.get('dispatched_requests_per_second'), 3)} req/s; "
-                f"completed {number(row.get('completed_requests_per_second'), 3)} req/s; "
-                f"fidelity {number(row.get('dispatch_rate_fidelity'), 4)}; "
-                f"queue p95 {queue_p95} ms; "
-                f"dispatch lag p95 {diagnostic_metric(row, 'dispatch_lag_ms', 'p95', 2)} ms; "
-                f"arrival window {arrival_window} s; "
-                f"throughput window {number(row.get('throughput_window_seconds'), 3)} s"
-            )
+        open_loop = row.get("arrival") == "open-loop"
+        queue_p95 = diagnostic_metric(row, "client_queue_ms", "p95", 2) if open_loop else "N/A"
+        arrival_window = number(row.get("measurement_window_seconds"), 3) if open_loop else "N/A"
+        pdf_lines.append(
+            "  Load generator: "
+            f"offered {number(row.get('offered_requests_per_second'), 3)} req/s; "
+            f"dispatched {number(row.get('dispatched_requests_per_second'), 3)} req/s; "
+            f"completed {number(row.get('completed_requests_per_second'), 3)} req/s; "
+            f"fidelity {number(row.get('dispatch_rate_fidelity'), 4)}; "
+            f"queue p95 {queue_p95} ms; "
+            f"dispatch lag p95 {diagnostic_metric(row, 'dispatch_lag_ms', 'p95', 2)} ms; "
+            f"arrival window {arrival_window} s; "
+            f"throughput window {number(row.get('throughput_window_seconds'), 3)} s"
+        )
     pdf_lines.extend(("", "# TABLE 2. ERROR / SKIPPED MATRIX", "| Block | outcome | successes | errors | error types / reason |"))
     for row in ordered:
         pdf_lines.extend(
@@ -3457,7 +3364,7 @@ def verify_performance_source_bundle(
                 "authenticity": "unverified",
                 "bundle_signature": verification["signature"],
             }
-        if protocol_version not in SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS:
+        if protocol_version != PERFORMANCE_PROTOCOL_VERSION:
             raise ProtocolError(f"unsupported performance protocol version: {protocol_version}")
         current_manifest, *_ = _performance_comparison_input_snapshot(snapshot, signing_key_env)
         official = current_manifest.get("officially_valid") is True
@@ -3522,10 +3429,10 @@ def _performance_comparison_input_snapshot(
     if not isinstance(manifest.get("run_id"), str) or not manifest["run_id"]:
         raise ProtocolError(f"performance comparison requires a run id: {run_dir}")
     protocol_version = manifest.get("performance_protocol_version")
-    if not isinstance(protocol_version, str) or protocol_version not in SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS:
+    if protocol_version != PERFORMANCE_PROTOCOL_VERSION:
         raise ProtocolError(f"unsupported performance protocol version: {run_dir}")
     status = manifest.get("status")
-    allowed_statuses = {"completed", "completed-with-errors", *({"invalid-loadgen"} if protocol_version == PERFORMANCE_PROTOCOL_VERSION else set())}
+    allowed_statuses = {"completed", "completed-with-errors", "invalid-loadgen"}
     if status not in allowed_statuses:
         raise ProtocolError(f"performance comparison requires a finalized completed run: {run_dir}")
     if (
@@ -3576,18 +3483,11 @@ def _performance_comparison_input_snapshot(
             else {}
         ),
         **({"minimum_p99_observations": plan_config["slo"]["minimum_p99_observations"]} if "minimum_p99_observations" in plan_config.get("slo", {}) else {}),
-        **({"load_generator": plan_config["load_generator"]} if plan_config.get("plan_version") == PERFORMANCE_PLAN_VERSION else {}),
+        "load_generator": plan_config.get("load_generator"),
     }
     if plan != expected_plan or plan_config.get("plan_version") != manifest.get("plan_version"):
         raise ProtocolError(f"performance plan metadata differs from its snapshot: {run_dir}")
-    if plan_config.get("plan_version") == PERFORMANCE_PLAN_VERSION:
-        if protocol_version != PERFORMANCE_PROTOCOL_VERSION or manifest.get("report_version") != PERFORMANCE_REPORT_VERSION:
-            raise ProtocolError(f"performance v2 protocol, plan, and report versions differ: {run_dir}")
-    elif (
-        plan_config.get("plan_version") != LEGACY_PERFORMANCE_PLAN_VERSION
-        or protocol_version not in {"1.0.0", "1.1.0"}
-        or manifest.get("report_version") != LEGACY_PERFORMANCE_REPORT_VERSION
-    ):
+    if plan_config.get("plan_version") != PERFORMANCE_PLAN_VERSION or manifest.get("report_version") != PERFORMANCE_REPORT_VERSION:
         raise ProtocolError(f"performance runs require identical protocol, plan, and report versions: {run_dir}")
 
     runtime = load_performance_runtime(runtime_snapshot)
@@ -3712,7 +3612,7 @@ def _performance_comparison_input_snapshot(
             skipped[key] = str(skip_reason)
             continue
         cell_status = row.get("status")
-        allowed_cell_statuses = {"completed", "completed-with-errors", *({"invalid-loadgen"} if protocol_version == PERFORMANCE_PROTOCOL_VERSION else set())}
+        allowed_cell_statuses = {"completed", "completed-with-errors", "invalid-loadgen"}
         if cell_status not in allowed_cell_statuses:
             raise ProtocolError(f"performance cell {key} is not finalized: {cell_status!r} in {run_dir}")
         observations = row.get("observations")
@@ -3754,14 +3654,13 @@ def _performance_comparison_input_snapshot(
     for key, row in completed.items():
         observations_for_cell = observations_by_cell.get(key, [])
         try:
-            recalculated = _cell_metrics_for_protocol(
+            recalculated = _cell_metrics_v2(
                 observations_for_cell,
                 expected[key],
                 snapshot_plan,
                 _measurement_window(observations_for_cell),
                 seeds[key],
                 pricing if isinstance(pricing, dict) else None,
-                protocol_version,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProtocolError(f"performance cell {key} observations are malformed: {run_dir}") from exc
@@ -3772,11 +3671,7 @@ def _performance_comparison_input_snapshot(
         "total": len(rows),
         "completed": sum(row.get("status") == "completed" for row in completed.values()),
         "with_errors": sum(row.get("status") == "completed-with-errors" for row in completed.values()),
-        **(
-            {"invalid_loadgen": sum(row.get("status") == "invalid-loadgen" for row in completed.values())}
-            if protocol_version == PERFORMANCE_PROTOCOL_VERSION
-            else {}
-        ),
+        "invalid_loadgen": sum(row.get("status") == "invalid-loadgen" for row in completed.values()),
         "skipped": len(skipped),
         "slo_passed": sum(row["slo_passed"] is True for row in completed.values()),
         "slo_failed": sum(row["slo_passed"] is False for row in completed.values()),
@@ -3787,7 +3682,7 @@ def _performance_comparison_input_snapshot(
         raise ProtocolError(f"performance cell summary does not reconcile: {run_dir}")
     expected_campaign_status = (
         "invalid-loadgen"
-        if protocol_version == PERFORMANCE_PROTOCOL_VERSION and any(row.get("status") == "invalid-loadgen" for row in completed.values())
+        if any(row.get("status") == "invalid-loadgen" for row in completed.values())
         else "completed-with-errors"
         if any(row.get("status") == "completed-with-errors" for row in completed.values()) or manifest.get("warmups", {}).get("errors", 0)
         else "completed"
@@ -3806,6 +3701,24 @@ def _performance_comparison_input_snapshot(
         raise ProtocolError(f"invalid performance summary: {run_dir}") from exc
     if source_summary != _campaign_summary(manifest, list(rows.values()), ledger["observations"]):
         raise ProtocolError(f"performance aggregate summary differs from immutable observations: {run_dir}")
+    with tempfile.TemporaryDirectory(prefix="cavada-performance-report-") as temporary:
+        reconstructed = Path(temporary)
+        try:
+            _performance_reports(reconstructed, manifest, source_summary, list(rows.values()))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProtocolError(f"performance presentation cannot be reconstructed from immutable evidence: {run_dir}") from exc
+        expected_names = {path.relative_to(reconstructed).as_posix() for path in reconstructed.rglob("*") if path.is_file()}
+        actual_names = {
+            relative
+            for path in run_dir.rglob("*")
+            if path.is_file()
+            and ((relative := path.relative_to(run_dir).as_posix()) in {"report.html", "report.pdf"} or relative.startswith("figures/"))
+        }
+        if actual_names != expected_names or any(
+            (run_dir / name).is_symlink() or (run_dir / name).read_bytes() != (reconstructed / name).read_bytes()
+            for name in expected_names
+        ):
+            raise ProtocolError(f"performance presentation differs from immutable evidence: {run_dir}")
 
     evidence_metadata = manifest.get("system_evidence")
     evidence_snapshot = run_dir / "system_evidence_snapshot.json"
@@ -4163,11 +4076,7 @@ def _verify_performance_comparison_snapshot(
         result.get("plan_version"),
         result.get("report_version"),
     )
-    if version_contract not in {
-        ("1.0.0", LEGACY_PERFORMANCE_PLAN_VERSION, LEGACY_PERFORMANCE_REPORT_VERSION),
-        ("1.1.0", LEGACY_PERFORMANCE_PLAN_VERSION, LEGACY_PERFORMANCE_REPORT_VERSION),
-        (PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_PLAN_VERSION, PERFORMANCE_REPORT_VERSION),
-    }:
+    if version_contract != (PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_PLAN_VERSION, PERFORMANCE_REPORT_VERSION):
         raise ProtocolError("performance comparison version contract is unsupported")
     if result.get("source_binding") != _PERFORMANCE_COMPARISON_SOURCE_BINDING:
         raise ProtocolError("performance comparison source binding is malformed")
@@ -4295,7 +4204,7 @@ def _verify_performance_comparison_snapshot(
         "valid": True,
         "semantic_valid": True,
         "type": "performance-comparison",
-        "authenticity": "verified-source-bundles",
+        "authenticity": "unverified",
         "source_revalidation": "complete",
     }
 
@@ -4330,11 +4239,7 @@ def compare_performance_runs(
     if len(versions) != 1:
         raise ProtocolError("performance runs require identical protocol, plan, and report versions")
     version_contract = next(iter(versions))
-    if version_contract not in {
-        ("1.0.0", LEGACY_PERFORMANCE_PLAN_VERSION, LEGACY_PERFORMANCE_REPORT_VERSION),
-        ("1.1.0", LEGACY_PERFORMANCE_PLAN_VERSION, LEGACY_PERFORMANCE_REPORT_VERSION),
-        (PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_PLAN_VERSION, PERFORMANCE_REPORT_VERSION),
-    }:
+    if version_contract != (PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_PLAN_VERSION, PERFORMANCE_REPORT_VERSION):
         raise ProtocolError(f"unsupported performance comparison versions: {version_contract}")
     if len({item["protocol_sha256"] for item in manifests}) != 1:
         raise ProtocolError("performance runs require identical performance protocol snapshots")

@@ -72,7 +72,7 @@ def bootstrap_mean_interval(
     seed: int = 0,
 ) -> dict[str, float | int]:
     _resampling_parameters(confidence, samples, seed)
-    source = _finite_values(values)
+    source = sorted(_finite_values(values))
     if not source:
         return {"lower": 0.0, "upper": 0.0, "confidence": confidence, "samples": samples, "seed": seed}
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.
@@ -95,7 +95,7 @@ def stratified_bootstrap_mean_interval(
     seed: int = 0,
 ) -> dict[str, float | int]:
     _resampling_parameters(confidence, samples, seed)
-    groups = {name: finite for name, values in strata.items() if (finite := _finite_values(values))}
+    groups = {name: sorted(finite) for name, values in sorted(strata.items()) if (finite := _finite_values(values))}
     if not groups:
         return bootstrap_mean_interval([], confidence=confidence, samples=samples, seed=seed)
     rng = random.Random(seed)  # noqa: S311 -- deterministic statistical resampling, not cryptography.

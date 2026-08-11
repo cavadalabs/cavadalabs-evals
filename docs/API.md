@@ -30,8 +30,8 @@ latter is validated and snapshotted before network access.
 `compare_performance_runs(...)` accepts two or more verified campaigns with
 identical protocol, plan, and workload evidence and exact shared cells. See
 the current [Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md) before
-embedding these functions. The unanchored historical-development v1.1 contract remains available in
-[Performance Protocol v1.1](../PERFORMANCE_PROTOCOL_V1_1.md).
+embedding these functions. The [Performance Protocol v1.0](../PERFORMANCE_PROTOCOL_V1_0.md) contract is
+retained only for hash-only verification of recorded historical bundles.
 
 Modules use strict type checking. All Python symbols, including the examples
 above, may change before 1.0; prefer the CLI for automation. Protocol, schema,

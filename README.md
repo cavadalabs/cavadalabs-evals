@@ -1,32 +1,23 @@
 # CavadaLabs Evals
 
-Local-first, auditable evaluation protocol for text, RAG, structured outputs,
-conversations, agents, tools, images, audio, video, and documents. The core uses
-Python's standard library; optional metric engines remain adapters so historical
-artifacts do not depend on a vendor database or framework.
+Local-first, auditable evidence engine for development text-behavior evaluations
+and LLM serving benchmarks. The core uses Python's standard library so artifacts
+do not depend on a vendor database or framework.
 
 ## Status
 
-The engine is an active pre-1.0 developer preview. The MEMO4345 suite remains
-`candidate`; it cannot produce an official result until independent calibration
-and the required governance evidence exist. `official` means conformance to the
-versioned protocol, never universal safety, correctness, or legal certification.
-
-The supported flagship is the generation-only `llm-serving-v2` reference
-benchmark. The general assistant suite is a development draft, MEMO4345 and the
-security/privacy smoke suite are candidates, and registry entries marked
-`planned` are roadmap declarations rather than evaluated capabilities. The
-public results registry intentionally contains no baseline until a real run is
-approved; independent reproductions remain separate evidence.
+This is an active pre-1.0 developer preview. The supported surfaces are the
+development-only text behavior engine and the generation-only `llm-serving-v2`
+reference benchmark. The public results registry contains no accepted baseline
+or independent reproduction. `official` means conformance to the versioned
+protocol, never universal safety, correctness, or legal certification.
 
 ## Installation
 
 Python 3.11 or newer is required. From a source checkout, install the locked
-development environment with `uv sync --frozen`. DeepEval is optional and is
-packaged as the `deepeval` extra; contributors can install it with
-`uv sync --frozen --extra deepeval`. Once a distribution is published, install
-the dependency-free core with `python -m pip install cavadalabs-evals`, or add
-DeepEval with `python -m pip install "cavadalabs-evals[deepeval]"`.
+development environment with `uv sync --frozen`. Once a distribution is
+published, install the dependency-free package with
+`python -m pip install cavadalabs-evals`.
 
 ## Quick start
 
@@ -52,11 +43,11 @@ uv run cavada-eval estimate suites/customer-support-v1 --repetitions 3 --judge-r
 Run a development benchmark:
 
 ```bash
-uv run cavada-eval run suites/memo4345-v1 \
+uv run cavada-eval run suites/cavada-core-assistant-text-v1 \
   --mode smoke \
   --endpoint http://127.0.0.1:8097/chat \
-  --model-label ministral-14b \
-  --expected-model ministral-3-14b-vision-local \
+  --model-label local-model \
+  --expected-model local-model-reported-id \
   --model-revision local-build-id \
   --judge-endpoint http://127.0.0.1:8013/v1 \
   --judge-model ministral-8b-judge \
@@ -87,12 +78,12 @@ uv run cavada-eval run suites/cavada-core-assistant-text-v1 \
 uses a separate generation-only workload and measures serving performance; it
 does not score response correctness or safety.
 
-| Preset | Behavior cases | Target / judge repetitions | Performance scope | Official eligibility |
-| --- | ---: | ---: | --- | --- |
-| `smoke` | up to 25 | 1 / 1 | historical-development v1.1 endpoint check | no |
-| `quick` | up to 100 | 1 / 1 | historical-development v1.1, 98 requests | no |
-| `standard` | up to 1,000 | 2 / 2 | historical-development v1.1, 825 requests | no |
-| `reference` (`full`) | all | 3 / 3 | current v2 complete reference plan | only with every official gate |
+| Behavior preset | Cases | Target / judge repetitions | Official eligibility |
+| --- | ---: | ---: | --- |
+| `smoke` | up to 25 | 1 / 1 | no |
+| `quick` | up to 100 | 1 / 1 | no |
+| `standard` | up to 1,000 | 2 / 2 | no |
+| `reference` | all | 3 / 3 | only with every official gate |
 
 Reduced behavior subsets are selected deterministically across categories,
 risks, severities, languages, and splits without separating scenario groups.
@@ -102,34 +93,30 @@ it into a reference or official result.
 Useful commands:
 
 ```text
-init doctor list profiles program validate audit estimate run redteam
-annotations annotations-ingest annotations-agreement annotations-adjudicate
-judge-qualify pilot-audit compare pairwise report verify promote export controls
-import-external retention-record
+init doctor list program validate estimate run
+judge-qualify pilot-audit compare verify promote export controls
+retention-record
 perf validate | perf run | perf compare | perf export
 ```
 
 Run a generation-only serving benchmark against an externally managed engine:
 
 ```bash
-uv run cavada-eval perf validate --preset quick \
-  --runtime /secure/path/runtime.toml
-uv run cavada-eval perf run /secure/path/runtime.toml --preset quick
 uv run cavada-eval perf validate --preset reference \
   --runtime /secure/path/runtime.toml \
   --system-evidence /secure/path/system-evidence.json
+uv run cavada-eval perf run /secure/path/runtime.toml --preset reference
 ```
 
-Validation is offline. `quick` is a historical-development v1.1 run and is never
-official; use the current v2 `reference` preset only for official-capable work,
-following the additional evidence and execution steps in
+Validation is offline. Performance commands accept only the current v2
+`reference` preset. Follow the additional evidence and execution steps in
 [docs/PERFORMANCE.md](docs/PERFORMANCE.md). The reference plan covers closed-loop
 users, open-loop offered load, concurrency 1–64, input contexts through
 128k/256k, and requested outputs through 8k. Its normative rules are in
-[Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). The unanchored
-historical-development [v1.1 protocol](PERFORMANCE_PROTOCOL_V1_1.md) and commit-anchored
-[v1.0 protocol](PERFORMANCE_PROTOCOL_V1_0.md) remain available for bundles that
-record those versions.
+[Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). The commit-anchored
+[v1.0 protocol](PERFORMANCE_PROTOCOL_V1_0.md), plans, workload, schemas, and
+golden fixture remain byte-frozen for hash-only verification; current producer,
+export, public-verification, and comparison paths do not accept v1.0.
 
 Inference engines remain external. Client-side serving measurements do not
 establish model quality, hardware utilization, or energy use.
@@ -172,7 +159,6 @@ asset_inventory.json          content hashes and safe media metadata
 requests.jsonl                restricted request ledger
 raw_responses.jsonl           restricted raw SUT outputs
 judgments.jsonl               restricted raw judge evidence
-engine_results.jsonl          optional metric-engine evidence
 case_results.jsonl            observation results
 metrics.json                  aggregate statistics, performance and gates
 category_results.csv          tabular category results
@@ -197,14 +183,14 @@ in `docs/PERFORMANCE.md`; judge latency is never included in serving results.
   review, a present and hash-verified semantic-contamination evidence file,
   network allowlists, clean Git
   state, and verified model revisions;
-- local media is checked for path escape, symlinks, type mismatch, size, image
-  pixels, WAV duration, active file formats, and active PDF content;
+- referenced local assets are checked for path escape, symlinks, type mismatch,
+  size, and active content; this trust-boundary validation is not a claim that
+  media benchmark support is maintained;
 - reports are static, escaped, self-contained, and contain no active JavaScript;
 - official runs require an exact approved engagement; public exports require
   independent post-run statistical, security, privacy/legal, disclosure, and
   release decisions;
-- optional DeepEval telemetry, dotenv loading, legacy key files, update checks,
-  error reporting, and cloud synchronization are disabled before import;
+- automatic error reporting is disabled;
 - custom suite Python is never executed directly.
 
 Read [PROTOCOL.md](PROTOCOL.md), [SECURITY.md](SECURITY.md),

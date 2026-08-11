@@ -13,13 +13,10 @@ import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from .artifacts import verify_bundle, write_bundle
 from .calibration import qualify_judge_run
 from .comparison import compare_runs
 from .compliance import generate_control_report
-from .external import import_external_results
-from .pairwise import pairwise_runs
 from .performance import (
     PERFORMANCE_PROTOCOL_FILENAME,
     compare_performance_runs,
@@ -35,7 +32,7 @@ from .performance import (
 )
 from .performance_release import export_public_performance
 from .pilot import audit_pilot_campaign
-from .profiles import benchmark_preset, canonical_preset, preset_summary, profile_summary, stratified_cases
+from .profiles import BENCHMARK_PRESETS, benchmark_preset, canonical_preset, stratified_cases
 from .program import load_program_registry
 from .protocol import ProtocolError, audit_suite, contains_secret_like, load_suite, promote_suite, require_mutable_output_root, sha256_bytes, sha256_file
 from .public_verify import verify_public_bundle
@@ -85,7 +82,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--judge-revision", default="")
     command.add_argument("--target-key-env", default="TARGET_API_KEY")
     command.add_argument("--judge-key-env", default="JUDGE_API_KEY")
-    command.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    command.add_argument("--preset", choices=("smoke", "quick", "standard", "reference"))
     command.add_argument("--repetitions", type=int)
     command.add_argument("--judge-repetitions", type=int)
     command.add_argument("--max-cases", type=int)
@@ -129,7 +126,6 @@ def parser() -> argparse.ArgumentParser:
     listing = commands.add_parser("list", help="List local suites")
     listing.add_argument("--suites-root")
 
-    commands.add_parser("profiles", help="List benchmark profiles and built-in official support")
     commands.add_parser("presets", help="List the versioned smoke, quick, standard, and reference execution presets")
 
     program = commands.add_parser("program", help="Validate and show the modular evaluation program registry")
@@ -138,34 +134,6 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate suite schema and integrity")
     validate.add_argument("suite")
     validate.add_argument("--official", action="store_true")
-
-    annotations = commands.add_parser("annotations", help="Export an identity-blinded human annotation package")
-    annotations.add_argument("suite")
-    annotations.add_argument("run_dir")
-    annotations.add_argument("output")
-    annotations.add_argument("linkage_output")
-
-    annotations_ingest = commands.add_parser("annotations-ingest", help="Validate and preserve a completed reviewer package")
-    annotations_ingest.add_argument("package")
-    annotations_ingest.add_argument("linkage")
-    annotations_ingest.add_argument("output")
-    annotations_ingest.add_argument("--reviewer-id", required=True)
-    annotations_ingest.add_argument("--qualification-evidence", required=True)
-    annotations_ingest.add_argument("--conflicts", required=True)
-
-    annotations_agreement = commands.add_parser("annotations-agreement", help="Compute blinded reviewer agreement and disagreements")
-    annotations_agreement.add_argument("left")
-    annotations_agreement.add_argument("right")
-    annotations_agreement.add_argument("output")
-
-    annotations_adjudicate = commands.add_parser("annotations-adjudicate", help="Validate and preserve completed adjudications")
-    annotations_adjudicate.add_argument("agreement")
-    annotations_adjudicate.add_argument("left")
-    annotations_adjudicate.add_argument("right")
-    annotations_adjudicate.add_argument("output")
-    annotations_adjudicate.add_argument("--adjudicator-id", required=True)
-    annotations_adjudicate.add_argument("--qualification-evidence", required=True)
-    annotations_adjudicate.add_argument("--conflicts", required=True)
 
     judge_qualify = commands.add_parser("judge-qualify", help="Apply preregistered gates to a verified judge calibration run")
     judge_qualify.add_argument("run")
@@ -177,23 +145,14 @@ def parser() -> argparse.ArgumentParser:
     pilot_audit.add_argument("campaign")
     pilot_audit.add_argument("output")
 
-    audit = commands.add_parser("audit", help="Print suite composition, coverage, and hashes")
-    audit.add_argument("suite")
-
     estimate = commands.add_parser("estimate", help="Estimate calls before execution without network access")
     estimate.add_argument("suite")
-    estimate.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    estimate.add_argument("--preset", choices=("smoke", "quick", "standard", "reference"))
     estimate.add_argument("--repetitions", type=int)
     estimate.add_argument("--judge-repetitions", type=int)
 
     execute = commands.add_parser("run", help="Run an immutable benchmark")
     _run_arguments(execute)
-
-    resume = commands.add_parser("resume", help="Reject resume attempts because run directories are immutable")
-    resume.add_argument("legacy_arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
-
-    redteam = commands.add_parser("redteam", help="Run a tagged fixed red-team suite without changing scoring semantics")
-    _run_arguments(redteam)
 
     compare = commands.add_parser("compare", help="Create a paired statistical comparison of compatible runs")
     compare.add_argument("baseline")
@@ -202,22 +161,6 @@ def parser() -> argparse.ArgumentParser:
     compare.add_argument("--bootstrap-samples", type=int, default=10_000)
     compare.add_argument("--seed", type=int, default=0)
     compare.add_argument("--non-inferiority-margin", type=float)
-
-    pairwise = commands.add_parser("pairwise", help="Run blind A/B and B/A judge comparisons for two compatible runs")
-    pairwise.add_argument("baseline")
-    pairwise.add_argument("candidate")
-    pairwise.add_argument("suite")
-    pairwise.add_argument("--output", required=True)
-    pairwise.add_argument("--judge-endpoint", required=True)
-    pairwise.add_argument("--judge-model", required=True)
-    pairwise.add_argument("--expected-judge-model", required=True)
-    pairwise.add_argument("--judge-revision", required=True)
-    pairwise.add_argument("--judge-key-env", default="JUDGE_API_KEY")
-    pairwise.add_argument("--timeout", type=float, default=90)
-    pairwise.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
-
-    report = commands.add_parser("report", help="Verify a run and print its generated report paths")
-    report.add_argument("run")
 
     verify = commands.add_parser("verify", help="Verify artifact integrity and supported semantic projections")
     verify.add_argument("run")
@@ -243,10 +186,6 @@ def parser() -> argparse.ArgumentParser:
     controls.add_argument("--records")
     controls.add_argument("--output", required=True)
 
-    external = commands.add_parser("import-external", help="Validate and bundle results from a pinned external benchmark adapter")
-    external.add_argument("source")
-    external.add_argument("output")
-
     retention = commands.add_parser("retention-record", help="Create a hashed lifecycle evidence record without mutating a finalized run")
     retention.add_argument("run")
     retention.add_argument("output")
@@ -258,7 +197,7 @@ def parser() -> argparse.ArgumentParser:
     perf_commands = perf.add_subparsers(dest="perf_command", required=True)
     perf_validate = perf_commands.add_parser("validate", help="Validate a performance plan without network access")
     perf_validate.add_argument("plan", nargs="?")
-    perf_validate.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    perf_validate.add_argument("--preset", choices=("reference",))
     perf_validate.add_argument("--runtime")
     perf_validate.add_argument("--system-evidence")
     perf_validate.add_argument("--execution-record")
@@ -267,7 +206,7 @@ def parser() -> argparse.ArgumentParser:
     perf_run = perf_commands.add_parser("run", help="Run a validated performance campaign against an external endpoint")
     perf_run.add_argument("plan", nargs="?")
     perf_run.add_argument("runtime")
-    perf_run.add_argument("--preset", choices=("smoke", "quick", "standard", "reference", "full"))
+    perf_run.add_argument("--preset", choices=("reference",))
     perf_run.add_argument("--output-root")
     perf_run.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
     perf_run.add_argument("--signing-key-id", default="")
@@ -306,17 +245,9 @@ def _doctor(repo: Path) -> dict[str, object]:
         except (OSError, json.JSONDecodeError) as exc:
             schema_errors.append(f"{path.name}: {exc}")
     telemetry = {
-        "DEEPEVAL_TELEMETRY_OPT_OUT": os.getenv("DEEPEVAL_TELEMETRY_OPT_OUT"),
-        "DEEPEVAL_DISABLE_DOTENV": os.getenv("DEEPEVAL_DISABLE_DOTENV"),
-        "DEEPEVAL_DISABLE_LEGACY_KEYFILE": os.getenv("DEEPEVAL_DISABLE_LEGACY_KEYFILE"),
-        "DEEPEVAL_UPDATE_WARNING_OPT_IN": os.getenv("DEEPEVAL_UPDATE_WARNING_OPT_IN"),
         "ERROR_REPORTING": os.getenv("ERROR_REPORTING"),
     }
     expected = {
-        "DEEPEVAL_TELEMETRY_OPT_OUT": "true",
-        "DEEPEVAL_DISABLE_DOTENV": "1",
-        "DEEPEVAL_DISABLE_LEGACY_KEYFILE": "1",
-        "DEEPEVAL_UPDATE_WARNING_OPT_IN": "false",
         "ERROR_REPORTING": "false",
     }
     unsafe = [name for name, value in telemetry.items() if value is not None and value.casefold() != expected[name]]
@@ -404,7 +335,7 @@ def _execute(args: argparse.Namespace) -> int:
         allow_external_judge=args.allow_external_judge,
         signing_key_env=args.signing_key_env,
         signing_key_id=args.signing_key_id,
-        mode="redteam" if args.command == "redteam" else mode,
+        mode=mode,
         preset=preset_name,
         max_target_calls=args.max_target_calls,
         max_judge_calls=args.max_judge_calls,
@@ -434,10 +365,6 @@ def _execute(args: argparse.Namespace) -> int:
     if metrics.get("error") and not (metrics.get("pass") or metrics.get("fail")):
         return EXIT_TRANSPORT
     return EXIT_GATE_FAILURE
-
-
-def _resume(_args: argparse.Namespace) -> int:
-    raise ProtocolError("runs are immutable and cannot be resumed; start a new run")
 
 
 def _public_behavior_summary(raw: bytes, gates: list[dict[str, object]]) -> dict[str, object]:
@@ -663,11 +590,8 @@ def main(argv: list[str] | None = None) -> int:
                         rows.append({"path": str(path), "status": "invalid", "error": str(exc)})
             print(json.dumps(rows, indent=2, ensure_ascii=False))
             return EXIT_PASS
-        if args.command == "profiles":
-            print(json.dumps(profile_summary(), indent=2))
-            return EXIT_PASS
         if args.command == "presets":
-            print(json.dumps(preset_summary(), indent=2))
+            print(json.dumps([benchmark_preset(name) for name in BENCHMARK_PRESETS], indent=2))
             return EXIT_PASS
         if args.command == "program":
             registry_path = Path(args.registry)
@@ -810,39 +734,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "validate":
             print(json.dumps(audit_suite(load_suite(args.suite, official=args.official)), ensure_ascii=False, indent=2))
             return EXIT_PASS
-        if args.command == "annotations":
-            result = export_annotation_package(
-                load_suite(args.suite), Path(args.run_dir), Path(args.output), Path(args.linkage_output)
-            )
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return EXIT_PASS
-        if args.command == "annotations-ingest":
-            result = ingest_annotations(
-                Path(args.package),
-                Path(args.linkage),
-                Path(args.output),
-                reviewer_id=args.reviewer_id,
-                qualification_evidence=args.qualification_evidence,
-                conflicts=args.conflicts,
-            )
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return EXIT_PASS
-        if args.command == "annotations-agreement":
-            result = annotation_agreement(Path(args.left), Path(args.right), Path(args.output))
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return EXIT_PASS
-        if args.command == "annotations-adjudicate":
-            result = ingest_adjudications(
-                Path(args.agreement),
-                Path(args.left),
-                Path(args.right),
-                Path(args.output),
-                adjudicator_id=args.adjudicator_id,
-                qualification_evidence=args.qualification_evidence,
-                conflicts=args.conflicts,
-            )
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-            return EXIT_PASS
         if args.command == "judge-qualify":
             result = qualify_judge_run(
                 Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output)
@@ -853,9 +744,6 @@ def main(argv: list[str] | None = None) -> int:
             result = audit_pilot_campaign(Path(args.campaign), Path(args.output))
             print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
             return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
-        if args.command == "audit":
-            print(json.dumps(audit_suite(load_suite(args.suite)), ensure_ascii=False, indent=2))
-            return EXIT_PASS
         if args.command == "estimate":
             suite = load_suite(args.suite)
             preset_name = canonical_preset(args.preset)
@@ -885,10 +773,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return EXIT_PASS
-        if args.command in {"run", "redteam"}:
+        if args.command == "run":
             return _execute(args)
-        if args.command == "resume":
-            return _resume(args)
         if args.command == "compare":
             result = compare_runs(
                 Path(args.baseline),
@@ -912,32 +798,6 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(value, dict)
             ]
             return EXIT_PASS if all(bool(value.get("passed")) for value in non_inferiority) else EXIT_GATE_FAILURE
-        if args.command == "pairwise":
-            pairwise_result = pairwise_runs(
-                Path(args.baseline),
-                Path(args.candidate),
-                load_suite(args.suite),
-                Path(args.output),
-                judge_endpoint=args.judge_endpoint,
-                judge_model=args.judge_model,
-                expected_judge_model=args.expected_judge_model,
-                judge_revision=args.judge_revision,
-                judge_key_env=args.judge_key_env,
-                timeout=args.timeout,
-                signing_key_env=args.signing_key_env,
-            )
-            print(json.dumps(pairwise_result["metrics"], indent=2))
-            if pairwise_result["metrics"]["error"]:
-                return EXIT_TRANSPORT
-            return EXIT_PASS if pairwise_result["metrics"]["invalid"] == 0 else EXIT_GATE_FAILURE
-        if args.command == "report":
-            run_dir = Path(args.run)
-            verification = verify_bundle(run_dir)
-            if not verification["valid"]:
-                raise ProtocolError("run bundle verification failed")
-            paths = [str(run_dir / name) for name in ("report.html", "report.pdf", "report_public.html", "report_public.pdf") if (run_dir / name).is_file()]
-            print(json.dumps({"verification": verification, "reports": paths}, indent=2))
-            return EXIT_PASS
         if args.command == "verify":
             run = Path(args.run)
             if (run / "comparison.json").is_file():
@@ -975,8 +835,10 @@ def main(argv: list[str] | None = None) -> int:
                 if args.source_run:
                     raise ProtocolError("--source-run is only valid for performance comparisons")
                 result = verify_bundle(run, signing_key_env=args.signing_key_env)
-            if result["valid"] and (run / "report.html").is_file():
-                result = {**result, "report_html": str(run / "report.html")}
+            if result["valid"]:
+                reports = [str(run / name) for name in ("report.html", "report.pdf", "report_public.html", "report_public.pdf") if (run / name).is_file()]
+                if reports:
+                    result = {**result, "reports": reports}
             print(json.dumps(result, indent=2))
             return EXIT_PASS if result["valid"] else EXIT_INTEGRITY
         if args.command == "promote":
@@ -998,10 +860,6 @@ def main(argv: list[str] | None = None) -> int:
                 catalog = repo / catalog
             report = generate_control_report(Path(args.run), catalog, Path(args.output), records_path=Path(args.records) if args.records else None)
             print(json.dumps(report["status_counts"], indent=2))
-            return EXIT_PASS
-        if args.command == "import-external":
-            imported = import_external_results(Path(args.source), Path(args.output))
-            print(json.dumps(imported, indent=2))
             return EXIT_PASS
         if args.command == "retention-record":
             record = retention_record(Path(args.run), Path(args.output), action=args.action, actor=args.actor, evidence=args.evidence)

@@ -1,8 +1,8 @@
 # Source, license, and adapter policy
 
-`source-register.toml` records the exact external material reviewed for the
-CavadaLabs Evaluation Program. Registration is not permission to copy, publish,
-transfer, train on, or call a source. A source may enter an official suite only
+This policy governs external material reviewed for the CavadaLabs Evaluation
+Program. Mention is not permission to copy, publish, transfer, train on, or call
+a source. A source may enter an official suite only
 when its declared use, exact version, license, attribution, data rights,
 transfer path, security controls, and suite-specific validity have all been
 approved.
@@ -23,8 +23,8 @@ Rules:
    endorsement, legal compliance, or complete control coverage.
 7. Preserve notices and trademark requirements. “Mapped to” never means
    “endorsed by.”
-8. Re-review the register by `review_due`, before every adapter upgrade, and
-   immediately after a license, API, ownership, or terms change.
+8. Re-review sources before every adapter upgrade and immediately after a
+   license, API, ownership, or terms change.
 
 Approval meanings:
 

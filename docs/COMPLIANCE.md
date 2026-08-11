@@ -22,9 +22,8 @@ Profiles are selected by jurisdiction, role, use case, sector, affected people,
 and system classification; unrelated controls are marked not applicable with a
 reason rather than silently omitted.
 
-`program/source-register.toml`, `standards/control_catalog.toml`, and
-`standards/evidence_crosswalk.toml` are engineering snapshots. They are not
-legal advice or authoritative copies. Before use, an accountable reviewer must
+`standards/control_catalog.toml` is an engineering snapshot, not legal advice
+or an authoritative copy. Before use, an accountable reviewer must
 verify the current official source, phased applicability, role, jurisdiction,
 license, interpretation, and effective date. Generated control records retain
 the source version used for the mapping.

@@ -4,11 +4,13 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from cavada_eval.artifacts import verify_bundle, write_bundle
-from cavada_eval.performance import verify_performance_source_bundle
-from cavada_eval.protocol import sha256_file
+from cavada_eval.performance import load_performance_plan, verify_performance_source_bundle
+from cavada_eval.performance_release import export_public_performance
+from cavada_eval.protocol import ProtocolError, sha256_file
 
 ROOT = Path(__file__).parents[1]
 FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "performance-v1.0-source"
@@ -17,7 +19,6 @@ PROVENANCE_SHA256 = "81c7743a3aad2b6b68920bbdb21cf9dd7bbdc0a29979ca3797e3fa61dd1
 BUNDLE_SHA256 = "e17a15176850513123541116a23a4e7f81917578ebeebab2ce73a2a5587f31c2"
 MANIFEST_SCHEMAS = (
     ROOT / "schemas" / "performance-manifest.schema.json",
-    ROOT / "schemas" / "performance-manifest-1.1.0.schema.json",
     ROOT / "schemas" / "performance-manifest-2.0.0.schema.json",
 )
 
@@ -136,3 +137,10 @@ def test_historical_v1_claims_cannot_promote_hash_only_evidence(tmp_path: Path) 
     result = verify_performance_source_bundle(forged)
     assert result["assurance"] == "legacy-hash-only"
     assert (result["semantic_valid"], result["official"], result["rankable"]) == (False, False, False)
+
+
+def test_historical_v1_is_verifier_only(tmp_path: Path) -> None:
+    with pytest.raises(ProtocolError, match="plan_version 2.0.0"):
+        load_performance_plan(BUNDLE / "plan_snapshot.toml")
+    with pytest.raises(ProtocolError, match="unsupported performance protocol version"):
+        export_public_performance(BUNDLE, tmp_path / "public.tar.gz")

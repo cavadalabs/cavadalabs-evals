@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cavada_eval.cli import EXIT_CONFIGURATION, EXIT_GATE_FAILURE, EXIT_INTEGRITY, _doctor, main, parser
+from cavada_eval.cli import EXIT_GATE_FAILURE, EXIT_INTEGRITY, _doctor, main, parser
 from cavada_eval.protocol import ProtocolError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,17 +103,21 @@ def test_estimate_counts_every_configured_judge(monkeypatch: pytest.MonkeyPatch,
     assert '"maximum_judge_calls": 18' in capsys.readouterr().out
 
 
-def test_resume_command_fails_closed_without_reading_or_mutating_a_run(capsys: pytest.CaptureFixture[str]) -> None:
-    result = main(
-        [
-            "resume",
-            "missing-run",
-            "suite",
-        ]
+def test_deferred_workflows_are_absent_from_cli() -> None:
+    subcommands = next(action.choices for action in parser()._actions if isinstance(action.choices, dict))
+    deferred = (
+        "annotations",
+        "annotations-ingest",
+        "annotations-agreement",
+        "annotations-adjudicate",
+        "resume",
+        "redteam",
+        "profiles",
+        "audit",
+        "report",
     )
-
-    assert result == EXIT_CONFIGURATION
-    assert "runs are immutable and cannot be resumed" in capsys.readouterr().err
+    for command in deferred:
+        assert command not in subcommands
 
 
 def test_run_accepts_an_explicit_output_root() -> None:
@@ -133,11 +137,14 @@ def test_run_accepts_an_explicit_output_root() -> None:
             "judge",
             "--output-root",
             "artifacts",
+            "--mode",
+            "redteam",
             "--non-inferiority-margin",
             "0.05",
         ]
     )
     assert args.output_root == "artifacts"
+    assert args.mode == "redteam"
     assert args.non_inferiority_margin == 0.05
 
 
@@ -227,7 +234,7 @@ def test_verify_routes_comparison_bundles_through_semantic_verification(
     assert main(["verify", str(comparison), "--source-run", str(left), "--source-run", str(right)]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["semantic_valid"] is True
-    assert result["report_html"] == str(comparison / "report.html")
+    assert result["reports"] == [str(comparison / "report.html")]
 
     monkeypatch.setattr(
         "cavada_eval.cli.verify_performance_comparison",
@@ -256,7 +263,7 @@ def test_verify_routes_historical_performance_source_through_its_compatibility_v
         "rankable": False,
         "authenticity": "unverified",
         "bundle_signature": "absent",
-        "report_html": str(source / "report.html"),
+        "reports": [str(source / "report.html"), str(source / "report.pdf")],
     }
 
 
@@ -281,26 +288,24 @@ def test_current_performance_documentation_links_to_v2(document: str, target: st
     assert (source.parent / target).resolve().is_file()
 
 
-def test_historical_performance_protocols_and_development_presets_remain_explicit() -> None:
+def test_current_performance_surface_keeps_only_v2_and_frozen_v1_verification() -> None:
     assert (ROOT / "PERFORMANCE_PROTOCOL.md").is_file()
     assert (ROOT / "PERFORMANCE_PROTOCOL_V1_0.md").is_file()
-    assert (ROOT / "PERFORMANCE_PROTOCOL_V1_1.md").is_file()
+    assert not (ROOT / "PERFORMANCE_PROTOCOL_V1_1.md").exists()
     docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8").casefold()
-    assert "unanchored historical-development" in docs_index and "[v1.1 protocol]" in docs_index
-    assert "commit-anchored\n   [v1.0 protocol]" in docs_index
+    assert "v1.0" in docs_index and "hash-only" in docs_index and "verifier" in docs_index
 
-    presets = (ROOT / "performance" / "README.md").read_text(encoding="utf-8").splitlines()
-    for preset in ("`smoke`", "`quick`", "`standard`"):
-        row = next(line.casefold() for line in presets if line.startswith(f"| {preset}"))
-        assert "historical-development v1.1" in row
+    performance_guide = (ROOT / "performance" / "README.md").read_text(encoding="utf-8")
+    assert "--preset reference" in performance_guide
+    assert all(f"--preset {retired}" not in performance_guide for retired in ("smoke", "quick", "standard", "full"))
 
 
-def test_performance_guide_orders_offline_quick_before_reference_and_states_scope() -> None:
+def test_performance_guide_validates_reference_before_run_and_states_scope() -> None:
     guide = (ROOT / "docs" / "PERFORMANCE.md").read_text(encoding="utf-8")
-    validate_quick = "uv run cavada-eval perf validate --preset quick"
-    run_quick = "uv run cavada-eval perf run /secure/path/runtime.toml --preset quick"
+    validate_reference = "uv run cavada-eval perf validate --preset reference"
     run_reference = "uv run cavada-eval perf run /secure/path/runtime.toml --preset reference"
-    assert guide.index(validate_quick) < guide.index(run_quick) < guide.index(run_reference)
+    assert guide.index(validate_reference) < guide.index(run_reference)
+    assert all(f"--preset {retired}" not in guide for retired in ("smoke", "quick", "standard", "full"))
     assert "validate locally without contacting the endpoint" in guide
 
     package_guide = (ROOT / "performance" / "README.md").read_text(encoding="utf-8").casefold()

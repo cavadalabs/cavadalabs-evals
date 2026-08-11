@@ -16,9 +16,7 @@ As of 2026-08-07, no registered suite is official-capable.
 | Suite or group | Registry status | Official-capable | Current boundary |
 |---|---|---|---|
 | `cavada-core-assistant-text-v1@0.8.1` | draft / development | no | Public synthetic EN/IT development data; no private holdout, independent labels, calibration, or approval. |
-| `memo4345-v1@1.0.0` | candidate | no | Candidate imported dataset; publication rights and governance remain unresolved. |
 | `security-privacy-smoke-v1@0.1.1` | candidate | no | Synthetic smoke screening only; not representative or independently calibrated. |
-| Fifteen additional suite families | planned | no | Registry entries describe intended scope; qualified data and adapters are not present. |
 
 The public result registry is empty. Test fixtures, mock endpoint runs, generated
 reports, and development datasets are not official model results.
@@ -26,10 +24,9 @@ reports, and development datasets are not official model results.
 ## Shared program rules
 
 - Behavior runs follow `PROTOCOL.md`; new reference serving-performance runs
-  follow [Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). The legacy
-  [v1.1 protocol](PERFORMANCE_PROTOCOL_V1_1.md) and historical
-  [v1.0 protocol](PERFORMANCE_PROTOCOL_V1_0.md) remain available only for
-  bundles that record those versions.
+  follow [Performance Protocol v2](PERFORMANCE_PROTOCOL_V2.md). The historical
+  [v1.0 protocol](PERFORMANCE_PROTOCOL_V1_0.md) and released inputs remain
+  byte-frozen for hash-only verification of recorded bundles.
 - Protocol, engine, schema, suite, dataset, rubric, judge, adapter, metric,
   report, and result versions remain independent.
 - Released datasets, rubrics, plans, and workloads are immutable. Corrections
@@ -44,7 +41,7 @@ reports, and development datasets are not official model results.
 The detailed lifecycle, compatibility, independence, complaints, appeals,
 correction, revocation, and disclosure rules are in `program/POLICY.md`.
 
-## First planned high-assurance suite
+## Current development behavior suite
 
 `cavada-core-assistant-text-v1@0.8.1` evaluates a fixed general-purpose text
 assistant configuration in English and Italian. It excludes RAG, tools, MCP,
@@ -53,10 +50,10 @@ media, code execution, and professional fitness in high-impact domains.
 Its active
 `suites/cavada-core-assistant-text-v1/dataset-0.8.0.jsonl` contains 404 public
 synthetic development cases representing 328 independent primary scenarios;
-variants do not increase the analysis-unit count. The repository records
-deterministic author QA, but the data are public, share one authoring process,
-and are not representative, independently reviewed, calibrated, or private
-holdout evidence.
+variants do not increase the analysis-unit count. A deterministic author-QA
+ledger is archived at checkpoint `eb93846e40c4eca6c62d10ab8dbb7e654020987a`;
+the data are public, share one authoring process, and are not representative,
+independently reviewed, calibrated, or private holdout evidence.
 
 Repository design artifacts include:
 
@@ -104,41 +101,17 @@ or calibrated evidence and cannot support an official claim.
 
 ## Platform boundaries
 
-The repository provides code paths and schemas for text evaluation, bounded
-PNG/JPEG and WAV inputs, deterministic structured/retrieval/tool-trace metrics,
-external result import, and OpenAI-compatible serving performance. Their exact
-support and restrictions are documented in `docs/ADAPTERS.md`,
-`docs/MULTIMODAL.md`, and `docs/PERFORMANCE.md`.
-
-The following remain external or planned for official use:
-
-- an OS-level sandbox for untrusted code, tools, parsers, and custom metrics;
-- system-specific RAG, agent-side-effect, and MCP harnesses;
-- qualified OCR, VQA, ASR, diarization, image/audio/video, safety, privacy, and
-  fairness models with licensed calibration data;
-- cryptographic C2PA verification and safe media-preview generation;
-- calibrated synchronized GPU, VRAM, power, energy, and thermal telemetry;
-- production KMS, RBAC, DLP, immutable storage, audit, backup, restore, and
-  incident-response systems;
-- organizational signing, protected repository controls, immutable tags, and
-  independently controlled reproduction infrastructure.
-
-An adapter or planned profile is not official merely because it is listed. It
-must be code-backed, versioned, validated, legally usable, qualified for the
-declared modality, and approved for the exact evaluation.
+The maintained benchmark surface is the text behavior engine and
+OpenAI-compatible LLM serving under Performance Protocol v2. Media parsers and
+capability validators are trust-boundary checks, not supported benchmark
+modalities. Hardware telemetry, production storage and signing, sandboxed side
+effects, and independently controlled reproduction infrastructure remain
+external.
 
 ## Maintenance
 
 Approved suites require an auditable schedule for result expiry, holdout and
-canary rotation, judge and adapter requalification, contamination and
+canary rotation, judge requalification, contamination and
 saturation monitoring, incidents, complaints, appeals, corrections,
 revocations, and repeated independent reproduction. Changes create new
 immutable versions; historical evidence is not overwritten.
-
-## Reference policy
-
-The source register and standards crosswalk are engineering indexes, not legal
-opinions or licensed standards mappings. They must be checked for currency,
-applicability, licensing, and interpretation by accountable reviewers at the
-time of use. A reference does not create endorsement, accreditation,
-certification, or legal compliance.

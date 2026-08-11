@@ -9,7 +9,7 @@ an adjudicator must resolve disagreements, the final file must be hash-pinned,
 and passing thresholds must be preregistered. The scored qualification set must
 then be separated from these visible examples.
 
-A blind annotation export must contain only randomized package IDs, scenario
+Any future blind review package must contain only randomized package IDs, scenario
 evidence, response aliases, applicable rubric sections, and required form
 fields. It must exclude provider/model names, endpoint metadata, prices,
 latencies, other reviewers’ labels, target scores, and split names that reveal
@@ -28,13 +28,7 @@ Required reviewer evidence:
 All files containing identities or restricted cases belong in approved
 restricted storage, not this repository.
 
-`author-qa-0.5.0.json` preserves the failed audit that found two factuality
-shortcuts. `author-qa-0.5.1.json` preserves the corrected 320-case ledger.
-`author-qa-0.6.0.json` preserves the 360-case refusal-neighbor release.
-`author-qa-0.7.0.json` preserves the 404-case distribution-shift release.
-`author-qa-0.8.0.json` is the active ledger; it verifies 328 independent
-scenarios, 76 variants, and complete benign refusal-neighbor coverage.
-Reproduce them with
-`scripts/audit_dataset_quality.py`. They record author and machine checks only;
-their `not-independent` declaration prevents them from being mistaken for
-approval evidence.
+Superseded author-QA ledgers, including the 0.8.0 machine check, are archived at
+checkpoint `eb93846e40c4eca6c62d10ab8dbb7e654020987a`. They were never
+independent approval evidence and are intentionally absent from the active
+checkout.

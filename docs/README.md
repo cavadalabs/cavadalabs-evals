@@ -11,19 +11,17 @@ Choose the shortest path for the work you are doing.
 ## Benchmark LLM serving
 
 1. Read the current normative [performance protocol v2](../PERFORMANCE_PROTOCOL_V2.md).
-   The unanchored historical-development
-   [v1.1 protocol](../PERFORMANCE_PROTOCOL_V1_1.md) and commit-anchored
-   [v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) apply only to bundles that
-   record those versions.
+   The commit-anchored [v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) and its
+   released inputs remain byte-frozen for the hash-only legacy verifier; current
+   producer, export, public-verification, and comparison paths accept v2 only.
 2. Follow the operator workflow in [performance](PERFORMANCE.md).
 3. Record server, accelerator, engine, load-generator, and network facts using [system evidence](SYSTEM_EVIDENCE.md).
 4. Use [performance result publication](PERFORMANCE_RELEASE.md) to create a sanitized, verifiable export; never publish a run directory.
 
-## Author a suite or adapter
+## Work with the maintained text suite
 
 - [Architecture](ARCHITECTURE.md) explains the artifact flow and trust boundaries.
-- [Adapters](ADAPTERS.md) defines supported import and execution boundaries.
-- [Multimodal](MULTIMODAL.md) lists capabilities that fail closed until an adapter supplies the required evidence.
+- [Execution boundaries](ADAPTERS.md) defines the supported transport boundary.
 - [Python API](API.md) documents the deliberately small embedded surface.
 
 ## Review, govern, and publish

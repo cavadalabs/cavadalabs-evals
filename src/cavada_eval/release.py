@@ -133,7 +133,6 @@ _REQUIRED_RUN_ARTIFACTS = {
     "requests.jsonl",
     "raw_responses.jsonl",
     "judgments.jsonl",
-    "engine_results.jsonl",
     "case_results.jsonl",
     "metrics.json",
     "category_results.csv",
@@ -367,7 +366,7 @@ def reconcile_behavior_evidence(
             if judge_terminal and len(selected) != expected_judgments_per_observation:
                 errors.append(f"case result {key[0]}/{key[1]} does not have the exact judge evidence count")
                 continue
-            if status == "fail" and reason in {"deterministic check failed", "metric engine hard check failed"} and selected:
+            if status == "fail" and reason == "deterministic check failed" and selected:
                 errors.append(f"deterministic case result {key[0]}/{key[1]} unexpectedly has judge evidence")
                 continue
             if not judge_terminal:
@@ -762,15 +761,13 @@ def _payload_binding_errors(
     return errors
 
 
-def _deterministic_engine_errors(
+def _deterministic_result_errors(
     suite_config: dict[str, Any],
     cases: list[dict[str, Any]],
     requests: list[dict[str, Any]],
     responses: list[dict[str, Any]],
     results: list[dict[str, Any]],
-    engine_rows: list[dict[str, Any]],
 ) -> list[str]:
-    from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
     from .metrics import deterministic_evaluation
     from .runner import _get, _target_answer
 
@@ -795,36 +792,13 @@ def _deterministic_engine_errors(
 
     response_by_observation = indexed(responses, "target response ledger")
     result_by_observation = indexed(results, "case result ledger")
-    engine_by_observation = indexed(engine_rows, "engine result ledger")
     judge_observations = {
         key
         for row in requests
         if row.get("kind") == "judge" and (key := observation(row)) is not None
     }
     target_value = suite_config.get("target")
-    metrics_value = suite_config.get("metrics")
     target: dict[str, Any] = target_value if isinstance(target_value, dict) else {}
-    metrics: dict[str, Any] = metrics_value if isinstance(metrics_value, dict) else {}
-    deep_value = metrics.get("deepeval", []) if isinstance(metrics, dict) else []
-    deep_config = deep_value if isinstance(deep_value, list) and all(isinstance(item, dict) for item in deep_value) else []
-    if deep_value != deep_config:
-        errors.append("canonical suite DeepEval configuration is malformed")
-    expected_engine_keys: set[tuple[str, int]] = set()
-    identity_fields = {
-        "case_id",
-        "category",
-        "risk_domain",
-        "severity",
-        "language",
-        "locale",
-        "split",
-        "operating_condition",
-        "distribution_shift_reference_id",
-        "scenario_id",
-        "case_review_status",
-        "performance_phase",
-        "repetition",
-    }
     for key, result in result_by_observation.items():
         case = case_by_id.get(key[0])
         response = response_by_observation.get(key)
@@ -852,48 +826,18 @@ def _deterministic_engine_errors(
             continue
         try:
             answer, _ = _target_answer(Suite(Path(), suite_config, (), "", Path(), Path()), raw)
-            retrieval = _get(raw, str(target.get("retrieved_ids_field", "retrieved_ids"))) or []
             tools = _get(raw, str(target.get("tools_field", "tool_calls"))) or []
-            deterministic = deterministic_evaluation(case, answer, target_raw=raw, retrieved_ids=retrieval, tool_calls=tools)
+            deterministic = deterministic_evaluation(case, answer, tool_calls=tools)
         except ProtocolError as exc:
             errors.append(f"deterministic evaluation cannot be reconstructed: {exc}")
             continue
         if result.get("deterministic") != deterministic:
             errors.append("case result deterministic projection differs from the canonical case and target response")
+        if result.get("reason") == "metric engine hard check failed" or "engine_results" in result:
+            errors.append("case result contains unsupported metric-engine evidence")
         if not deterministic["hard_pass"]:
-            if result.get("status") != "fail" or result.get("reason") != "deterministic check failed" or key in judge_observations or key in engine_by_observation:
-                errors.append("failed hard deterministic checks do not match the terminal case and judge/engine ledgers")
-            continue
-        if not deep_config:
-            continue
-        expected_engine_keys.add(key)
-        engine_row = engine_by_observation.get(key)
-        if engine_row is None:
-            errors.append("DeepEval configuration lacks exact engine evidence for a deterministic-pass observation")
-            continue
-        if set(engine_row) != identity_fields | {"results"} or any(engine_row.get(field) != result.get(field) for field in identity_fields):
-            errors.append("engine result identity or case projection differs from case_results.jsonl")
-        try:
-            expected_results = evaluate_deepeval_metrics(cast(list[dict[str, Any]], deep_config), case, answer, official=True)
-        except ProtocolError as exc:
-            errors.append(f"official DeepEval evidence cannot be recalculated offline: {exc}")
-            continue
-        if engine_row.get("results") != expected_results:
-            errors.append("DeepEval evidence differs from the exact configured metric projection")
-            continue
-        hard_failed = any(item.get("hard_fail") is True and item.get("success") is not True for item in expected_results)
-        if hard_failed:
-            if (
-                result.get("status") != "fail"
-                or result.get("reason") != "metric engine hard check failed"
-                or result.get("engine_results") != expected_results
-                or key in judge_observations
-            ):
-                errors.append("failed hard engine checks do not match the terminal case and judge ledgers")
-        elif result.get("reason") == "metric engine hard check failed" or "engine_results" in result:
-            errors.append("case result claims a hard engine failure not present in exact engine evidence")
-    if set(engine_by_observation) != expected_engine_keys:
-        errors.append("engine result ledger does not exactly match configured deterministic-pass observations")
+            if result.get("status") != "fail" or result.get("reason") != "deterministic check failed" or key in judge_observations:
+                errors.append("failed hard deterministic checks do not match the terminal case and judge ledgers")
     return errors
 
 
@@ -1335,6 +1279,8 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
         artifacts = {}
     if not _REQUIRED_RUN_ARTIFACTS <= set(artifacts):
         errors.append("official run is missing required evidence or report artifacts")
+    if "engine_results.jsonl" in artifacts:
+        errors.append("official run contains unsupported metric-engine evidence")
     snapshot_hashes = {
         "protocol_snapshot.md": manifest.get("protocol_sha256"),
         "suite_snapshot.toml": suite.get("suite_config_sha256"),
@@ -1381,7 +1327,6 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
     requests = _read_jsonl(run_dir / "requests.jsonl")
     responses = _read_jsonl(run_dir / "raw_responses.jsonl")
     judgments = _read_jsonl(run_dir / "judgments.jsonl")
-    engine_results = _read_jsonl(run_dir / "engine_results.jsonl")
     results = _read_jsonl(run_dir / "case_results.jsonl")
     events = _read_jsonl(run_dir / "events.jsonl")
     errors.extend(
@@ -1396,7 +1341,7 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
             responses,
         )
     )
-    errors.extend(_deterministic_engine_errors(suite_config, snapshot_cases, requests, responses, results, engine_results))
+    errors.extend(_deterministic_result_errors(suite_config, snapshot_cases, requests, responses, results))
     if any("status" in row or "error" in row for row in requests + responses + judgments):
         errors.append("official request, response, and judgment ledgers must contain only successful terminal evidence")
     if any(not _usable(row.get("request_id")) or not isinstance(row.get("payload"), dict) or not row["payload"] for row in requests):
@@ -1811,6 +1756,21 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
         or summary_target.get("revision") != target.get("revision")
     ):
         errors.append("summary report projection differs from the immutable manifest or metrics")
+    from .reporting import generate_reports
+
+    with TemporaryDirectory(prefix="cavada-behavior-report-") as temporary:
+        expected_root = Path(temporary)
+        shutil.copyfile(run_dir / "suite_snapshot.toml", expected_root / "suite_snapshot.toml")
+        report_metrics = {**metrics, "slices": expected_slices, "slice_disparities": expected_disparities}
+        expected_files = set(generate_reports(expected_root, manifest, report_metrics, categories, results))
+        actual_files = {
+            path.relative_to(run_dir).as_posix()
+            for path in run_dir.rglob("*")
+            if path.is_file()
+            and (path.relative_to(run_dir).as_posix() in expected_files or path.relative_to(run_dir).as_posix().startswith("figures/"))
+        }
+        if actual_files != expected_files or any((run_dir / name).read_bytes() != (expected_root / name).read_bytes() for name in expected_files):
+            errors.append("behavior presentation differs from immutable evidence")
     return errors
 
 

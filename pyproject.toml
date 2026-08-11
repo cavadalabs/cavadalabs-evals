@@ -21,9 +21,6 @@ classifiers = [
 ]
 dependencies = []
 
-[project.optional-dependencies]
-deepeval = ["deepeval>=3,<4"]
-
 [project.urls]
 Homepage = "https://github.com/cavadalabs/cavadalabs-evals"
 Documentation = "https://github.com/cavadalabs/cavadalabs-evals#readme"
@@ -48,11 +45,12 @@ packages = ["src/cavada_eval"]
 "performance" = "cavada_eval/_resources/performance"
 "program" = "cavada_eval/_resources/program"
 "standards" = "cavada_eval/_resources/standards"
-"suites" = "cavada_eval/_resources/suites"
+"suites/cavada-core-assistant-text-v1" = "cavada_eval/_resources/suites/cavada-core-assistant-text-v1"
+"suites/security-privacy-smoke-v1" = "cavada_eval/_resources/suites/security-privacy-smoke-v1"
+"suites/template" = "cavada_eval/_resources/suites/template"
 "PROTOCOL.md" = "cavada_eval/_resources/PROTOCOL.md"
 "PERFORMANCE_PROTOCOL.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL.md"
 "PERFORMANCE_PROTOCOL_V1_0.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_0.md"
-"PERFORMANCE_PROTOCOL_V1_1.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_1.md"
 "PERFORMANCE_PROTOCOL_V2.md" = "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V2.md"
 "IMPLEMENTATION_CHECKLIST.md" = "cavada_eval/_resources/IMPLEMENTATION_CHECKLIST.md"
 "OFFICIAL_EVALUATION_PROGRAM.md" = "cavada_eval/_resources/OFFICIAL_EVALUATION_PROGRAM.md"
@@ -60,7 +58,6 @@ packages = ["src/cavada_eval"]
 "docs/COMPLIANCE.md" = "cavada_eval/_resources/docs/COMPLIANCE.md"
 "docs/THREAT_MODEL.md" = "cavada_eval/_resources/docs/THREAT_MODEL.md"
 ".github/workflows/ci.yml" = "cavada_eval/_resources/.github/workflows/ci.yml"
-"uv.lock" = "cavada_eval/_resources/uv.lock"
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/.codex-internal/**", "/dist/**", "/runs/**", "/tmp/**"]
@@ -68,7 +65,7 @@ exclude = ["/.codex-internal/**", "/dist/**", "/runs/**", "/tmp/**"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "-q -p no:deepeval"
+addopts = "-q"
 
 [tool.ruff]
 line-length = 160

@@ -14,8 +14,9 @@ from urllib.parse import urlsplit
 
 from .artifacts import verify_bundle, write_bundle
 from .performance import (
+    PERFORMANCE_PLAN_VERSION,
     PERFORMANCE_PROTOCOL_VERSION,
-    SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS,
+    PERFORMANCE_REPORT_VERSION,
     _campaign_summary,
     _finite_json,
     _performance_comparison_input_snapshot,
@@ -30,16 +31,6 @@ from .release import _evidence_error, _read_object, _time, _usable
 from .system_evidence import load_system_evidence, public_system_evidence
 
 PERFORMANCE_PUBLICATION_VERSION = "2.0.0"
-_PERFORMANCE_PUBLICATION_VERSIONS = {
-    "1.0.0": "1.0.0",
-    "1.1.0": "1.0.0",
-    "2.0.0": PERFORMANCE_PUBLICATION_VERSION,
-}
-_PERFORMANCE_PLAN_REPORT_VERSIONS = {
-    "1.0.0": ("1.0.0", "1.0.0"),
-    "1.1.0": ("1.0.0", "1.0.0"),
-    "2.0.0": ("2.0.0", "2.0.0"),
-}
 PERMITTED_CLAIM = "Bounded LLM serving performance under the named protocol, plan, workload, runtime, hardware configuration, and network conditions."
 _RUNTIME_FIELDS = (
     "runtime_version",
@@ -161,10 +152,11 @@ _INTERVAL_FIELDS = ("lower", "upper", "confidence", "samples", "seed")
 
 
 def _public_presentation_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    protocol_version = str(manifest["performance_protocol_version"])
+    if manifest.get("performance_protocol_version") != PERFORMANCE_PROTOCOL_VERSION:
+        raise ProtocolError("public performance presentation requires protocol 2.0.0")
     return {
         **manifest,
-        "report_version": _PERFORMANCE_PLAN_REPORT_VERSIONS[protocol_version][1],
+        "report_version": PERFORMANCE_REPORT_VERSION,
         "finished_at": manifest["evaluation_finished_at"],
         "officially_valid": manifest["official"],
         "rankable": manifest["official"],
@@ -209,7 +201,9 @@ def _release_approval(run_dir: Path, manifest: dict[str, Any], path: Path, now: 
     execution_record = execution_record_value if isinstance(execution_record_value, dict) else {}
     engagement_value = manifest.get("engagement")
     engagement = engagement_value if isinstance(engagement_value, dict) else {}
-    publication_version = _performance_publication_version(manifest.get("performance_protocol_version"))
+    if manifest.get("performance_protocol_version") != PERFORMANCE_PROTOCOL_VERSION:
+        raise ProtocolError("performance release approval requires protocol 2.0.0")
+    publication_version = PERFORMANCE_PUBLICATION_VERSION
     expected = {
         "release_version": publication_version,
         "status": "approved",
@@ -292,13 +286,6 @@ def _number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and _finite_json(float(value)) and value >= 0
 
 
-def _performance_publication_version(protocol_version: Any) -> str:
-    try:
-        return _PERFORMANCE_PUBLICATION_VERSIONS[str(protocol_version)]
-    except KeyError as exc:
-        raise ProtocolError(f"unsupported performance protocol version: {protocol_version}") from exc
-
-
 def _contains_nested_text(value: Any) -> bool:
     if isinstance(value, str):
         return True
@@ -322,12 +309,10 @@ def _project_distribution(value: Any, label: str, *, intervals: bool) -> dict[st
     return projected
 
 
-def _public_observations(rows: list[dict[str, Any]], protocol_version: str = "1.0.0") -> list[dict[str, Any]]:
-    version = _performance_publication_version(protocol_version)
-    fields = _OBSERVATION_FIELDS_V2 if version == PERFORMANCE_PUBLICATION_VERSION else _OBSERVATION_FIELDS
+def _public_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     public: list[dict[str, Any]] = []
     for row in rows:
-        item = {field: row[field] for field in fields if field in row}
+        item = {field: row[field] for field in _OBSERVATION_FIELDS_V2 if field in row}
         status = item.get("status")
         if (
             status not in {"success", "error"}
@@ -347,27 +332,26 @@ def _public_observations(rows: list[dict[str, Any]], protocol_version: str = "1.
             or not _finite_json(item)
         ):
             raise ProtocolError("public performance observations require finite terminal measurements with monotonic timing")
-        if version == PERFORMANCE_PUBLICATION_VERSION:
-            dispatch = item.get("dispatch_monotonic_ns")
-            if (
-                not isinstance(item.get("completed_monotonic_ns"), int)
-                or isinstance(item.get("completed_monotonic_ns"), bool)
-                or item["completed_monotonic_ns"] < item["started_monotonic_ns"]
-                or item["finished_monotonic_ns"] < item["completed_monotonic_ns"]
-            ):
-                raise ProtocolError("public performance observations require reconstructible v2 dispatch timing")
-            if dispatch is None:
-                if status == "success" or "dispatch_monotonic_ns" in item or "dispatch_lag_ms" in item:
-                    raise ProtocolError("public performance observations have incomplete v2 dispatch timing")
-            elif (
-                not isinstance(dispatch, int)
-                or isinstance(dispatch, bool)
-                or not item["started_monotonic_ns"] <= dispatch <= item["completed_monotonic_ns"]
-                or item.get("dispatch_lag_ms") != round((dispatch - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
-            ):
-                raise ProtocolError("public performance observations require reconstructible v2 dispatch timing")
+        dispatch = item.get("dispatch_monotonic_ns")
+        if (
+            not isinstance(item.get("completed_monotonic_ns"), int)
+            or isinstance(item.get("completed_monotonic_ns"), bool)
+            or item["completed_monotonic_ns"] < item["started_monotonic_ns"]
+            or item["finished_monotonic_ns"] < item["completed_monotonic_ns"]
+        ):
+            raise ProtocolError("public performance observations require reconstructible v2 dispatch timing")
+        if dispatch is None:
+            if status == "success" or "dispatch_monotonic_ns" in item or "dispatch_lag_ms" in item:
+                raise ProtocolError("public performance observations have incomplete v2 dispatch timing")
+        elif (
+            not isinstance(dispatch, int)
+            or isinstance(dispatch, bool)
+            or not item["started_monotonic_ns"] <= dispatch <= item["completed_monotonic_ns"]
+            or item.get("dispatch_lag_ms") != round((dispatch - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
+        ):
+            raise ProtocolError("public performance observations require reconstructible v2 dispatch timing")
         if status == "success":
-            dispatch_ns = cast(int, dispatch) if version == PERFORMANCE_PUBLICATION_VERSION else 0
+            dispatch_ns = cast(int, dispatch)
             if (
                 "error_type" in item
                 or item.get("fatal") is not None
@@ -395,21 +379,18 @@ def _public_observations(rows: list[dict[str, Any]], protocol_version: str = "1.
                 or item.get("decode_tokens_per_second") != expected_decode
             ):
                 raise ProtocolError("public performance token timing differs from latency and provider usage")
-            if version == PERFORMANCE_PUBLICATION_VERSION:
-                first_token = item.get("first_token_monotonic_ns")
-                if (
-                    not isinstance(first_token, int)
-                    or isinstance(first_token, bool)
-                    or not dispatch_ns <= first_token <= item["completed_monotonic_ns"]
-                    or item.get("scheduled_ttft_ms")
-                    != round((first_token - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
-                    or item.get("scheduled_e2e_ms")
-                    != round((item["completed_monotonic_ns"] - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
-                    or item.get("ttft_ms") != round((first_token - dispatch_ns) / 1_000_000, 3)
-                    or item.get("e2e_ms")
-                    != round((item["completed_monotonic_ns"] - dispatch_ns) / 1_000_000, 3)
-                ):
-                    raise ProtocolError("public successful performance observation has unreconstructible scheduled timing")
+            first_token = item.get("first_token_monotonic_ns")
+            if (
+                not isinstance(first_token, int)
+                or isinstance(first_token, bool)
+                or not dispatch_ns <= first_token <= item["completed_monotonic_ns"]
+                or item.get("scheduled_ttft_ms") != round((first_token - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
+                or item.get("scheduled_e2e_ms")
+                != round((item["completed_monotonic_ns"] - item["scheduled_monotonic_ns"]) / 1_000_000, 3)
+                or item.get("ttft_ms") != round((first_token - dispatch_ns) / 1_000_000, 3)
+                or item.get("e2e_ms") != round((item["completed_monotonic_ns"] - dispatch_ns) / 1_000_000, 3)
+            ):
+                raise ProtocolError("public successful performance observation has unreconstructible scheduled timing")
         else:
             has_input = "input_tokens" in item
             has_output = "output_tokens" in item
@@ -450,100 +431,103 @@ def _public_observations(rows: list[dict[str, Any]], protocol_version: str = "1.
 def _public_cells(
     rows: dict[tuple[int, str], dict[str, Any]],
     skipped: dict[tuple[int, str], str],
-    protocol_version: str = "1.0.0",
 ) -> list[dict[str, Any]]:
-    version = _performance_publication_version(protocol_version)
-    fields = _CELL_FIELDS_V2 if version == PERFORMANCE_PUBLICATION_VERSION else _CELL_FIELDS
     public: list[dict[str, Any]] = []
     for _, row in sorted(rows.items()):
-        item = {field: row[field] for field in fields if field in row}
+        item = {field: row[field] for field in _CELL_FIELDS_V2 if field in row}
         item["slo_gates"] = _project_object(item.get("slo_gates"), ("ttft_p95", "e2e_p99", "error_rate"), "SLO gates")
         item["p99_resolution"] = _project_object(
             item.get("p99_resolution"),
             ("successful_observations", "minimum", "resolved"),
             "p99 resolution",
         )
-        interval_distributions = ["ttft_ms", "e2e_ms", "tpot_ms", "decode_tokens_per_second", "client_queue_ms"]
-        if version == PERFORMANCE_PUBLICATION_VERSION:
-            interval_distributions.extend(("dispatch_lag_ms", "scheduled_ttft_ms", "scheduled_e2e_ms"))
+        interval_distributions = [
+            "ttft_ms",
+            "e2e_ms",
+            "tpot_ms",
+            "decode_tokens_per_second",
+            "client_queue_ms",
+            "dispatch_lag_ms",
+            "scheduled_ttft_ms",
+            "scheduled_e2e_ms",
+        ]
         for field in interval_distributions:
-            if version == PERFORMANCE_PUBLICATION_VERSION and field in {"dispatch_lag_ms", "scheduled_ttft_ms", "scheduled_e2e_ms"} and item.get(field) is None:
+            if field in {"dispatch_lag_ms", "scheduled_ttft_ms", "scheduled_e2e_ms"} and item.get(field) is None:
                 item[field] = None
             else:
                 item[field] = _project_distribution(item.get(field), field, intervals=True)
         for field in ("input_tokens", "actual_output_tokens"):
             item[field] = _project_distribution(item.get(field), field, intervals=False)
-        if version == PERFORMANCE_PUBLICATION_VERSION:
-            required = {
-                "offered_requests",
-                "dispatched_requests",
-                "completed_requests",
-                "offered_requests_per_second",
-                "dispatched_requests_per_second",
-                "completed_requests_per_second",
-                "dispatch_rate_fidelity",
-                "load_generator_valid",
-                "load_generator_gates",
-                "load_generator_invalid_reasons",
-                "serving_slo_passed",
-                "throughput_window_seconds",
-            }
-            if not required <= item.keys():
-                raise ProtocolError("public performance v2 cell is missing load-generator evidence")
-            gates = item["load_generator_gates"]
-            reasons = item["load_generator_invalid_reasons"]
-            open_loop = item.get("arrival") == "open-loop"
-            gate_fields = {
-                "schedule_complete",
-                "clock_monotonic",
-                "dispatch_rate_fidelity",
-                "dispatch_lag_p95",
-                "dispatch_lag_max",
-            }
-            if open_loop:
-                if (
-                    not isinstance(gates, dict)
-                    or set(gates) != gate_fields
-                    or any(not isinstance(value, bool) for value in gates.values())
-                    or not isinstance(item["load_generator_valid"], bool)
-                    or item["load_generator_valid"] is not all(gates.values())
-                    or not isinstance(reasons, list)
-                    or any(not isinstance(reason, str) or not reason for reason in reasons)
-                    or bool(reasons) is item["load_generator_valid"]
-                    or not _number(item["throughput_window_seconds"])
-                    or float(item["throughput_window_seconds"]) <= 0
-                ):
-                    raise ProtocolError("public performance v2 load-generator gates are malformed")
-            elif (
-                item["load_generator_valid"] is not None
-                or gates != {}
-                or reasons != []
-                or any(
-                    item.get(field) is not None
-                    for field in (
-                        "offered_requests",
-                        "dispatched_requests",
-                        "completed_requests",
-                        "offered_requests_per_second",
-                        "dispatched_requests_per_second",
-                        "completed_requests_per_second",
-                        "dispatch_rate_fidelity",
-                        "dispatch_lag_ms",
-                        "scheduled_ttft_ms",
-                        "scheduled_e2e_ms",
-                    )
+        required = {
+            "offered_requests",
+            "dispatched_requests",
+            "completed_requests",
+            "offered_requests_per_second",
+            "dispatched_requests_per_second",
+            "completed_requests_per_second",
+            "dispatch_rate_fidelity",
+            "load_generator_valid",
+            "load_generator_gates",
+            "load_generator_invalid_reasons",
+            "serving_slo_passed",
+            "throughput_window_seconds",
+        }
+        if not required <= item.keys():
+            raise ProtocolError("public performance v2 cell is missing load-generator evidence")
+        gates = item["load_generator_gates"]
+        reasons = item["load_generator_invalid_reasons"]
+        open_loop = item.get("arrival") == "open-loop"
+        gate_fields = {
+            "schedule_complete",
+            "clock_monotonic",
+            "dispatch_rate_fidelity",
+            "dispatch_lag_p95",
+            "dispatch_lag_max",
+        }
+        if open_loop:
+            if (
+                not isinstance(gates, dict)
+                or set(gates) != gate_fields
+                or any(not isinstance(value, bool) for value in gates.values())
+                or not isinstance(item["load_generator_valid"], bool)
+                or item["load_generator_valid"] is not all(gates.values())
+                or not isinstance(reasons, list)
+                or any(not isinstance(reason, str) or not reason for reason in reasons)
+                or bool(reasons) is item["load_generator_valid"]
+                or not _number(item["throughput_window_seconds"])
+                or float(item["throughput_window_seconds"]) <= 0
+            ):
+                raise ProtocolError("public performance v2 load-generator gates are malformed")
+        elif (
+            item["load_generator_valid"] is not None
+            or gates != {}
+            or reasons != []
+            or any(
+                item.get(field) is not None
+                for field in (
+                    "offered_requests",
+                    "dispatched_requests",
+                    "completed_requests",
+                    "offered_requests_per_second",
+                    "dispatched_requests_per_second",
+                    "completed_requests_per_second",
+                    "dispatch_rate_fidelity",
+                    "dispatch_lag_ms",
+                    "scheduled_ttft_ms",
+                    "scheduled_e2e_ms",
                 )
-            ):
-                raise ProtocolError("public performance closed-loop cell cannot report load-generator evidence")
-            if not isinstance(item["serving_slo_passed"], bool):
-                raise ProtocolError("public performance v2 serving SLO evidence is malformed")
-            if item["load_generator_valid"] is False and (
-                item.get("status") != "invalid-loadgen"
-                or item.get("slo_passed") is not False
-                or item.get("goodput_requests") != 0
-                or item.get("goodput_requests_per_second") != 0
-            ):
-                raise ProtocolError("invalid load-generator evidence cannot pass SLO or contribute goodput")
+            )
+        ):
+            raise ProtocolError("public performance closed-loop cell cannot report load-generator evidence")
+        if not isinstance(item["serving_slo_passed"], bool):
+            raise ProtocolError("public performance v2 serving SLO evidence is malformed")
+        if item["load_generator_valid"] is False and (
+            item.get("status") != "invalid-loadgen"
+            or item.get("slo_passed") is not False
+            or item.get("goodput_requests") != 0
+            or item.get("goodput_requests_per_second") != 0
+        ):
+            raise ProtocolError("invalid load-generator evidence cannot pass SLO or contribute goodput")
         public.append(item)
     public.extend({"block": key[0], "cell_key": key[1], "status": "skipped", "reason": reason} for key, reason in sorted(skipped.items()))
     public.sort(key=lambda row: (int(row["block"]), str(row["cell_key"])))
@@ -630,14 +614,16 @@ def _export_public_performance_snapshot(
         run_dir, "CAVADA_EVAL_SIGNING_KEY"
     )
     protocol_version = str(manifest.get("performance_protocol_version"))
-    publication_version = _performance_publication_version(protocol_version)
+    if protocol_version != PERFORMANCE_PROTOCOL_VERSION:
+        raise ProtocolError(f"unsupported performance protocol version: {protocol_version}")
+    publication_version = PERFORMANCE_PUBLICATION_VERSION
     versions = (protocol_version, manifest.get("plan_version"), manifest.get("report_version"))
-    if protocol_version not in SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS or versions[1:] != _PERFORMANCE_PLAN_REPORT_VERSIONS.get(protocol_version):
+    if versions != (PERFORMANCE_PROTOCOL_VERSION, PERFORMANCE_PLAN_VERSION, PERFORMANCE_REPORT_VERSION):
         raise ProtocolError(f"unsupported performance publication versions: {versions}")
     observations = ledger["observations"]
     error_strings = ledger["errors"]
-    public_observations = _public_observations(observations, protocol_version)
-    public_cells = _public_cells(completed_cells, skipped_cells, protocol_version)
+    public_observations = _public_observations(observations)
+    public_cells = _public_cells(completed_cells, skipped_cells)
     source_summary_projection = _campaign_summary(manifest, public_cells, public_observations)
     source_summary = _read_object(run_dir / "summary.json", "performance summary")
     summary_contract = (
@@ -697,8 +683,6 @@ def _export_public_performance_snapshot(
         public_observations,
     )
     if official:
-        if manifest.get("performance_protocol_version") != PERFORMANCE_PROTOCOL_VERSION:
-            raise ProtocolError("official public performance export requires the current performance protocol")
         _require_official_reference_inputs(
             manifest.get("protocol_sha256"),
             plan.get("sha256"),
@@ -738,7 +722,7 @@ def _export_public_performance_snapshot(
             publication / "cells.jsonl",
             "".join(f"{json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}\n" for row in public_cells),
         )
-        _write_cells_csv(publication / "cells.csv", public_cells, protocol_version=protocol_version)
+        _write_cells_csv(publication / "cells.csv", public_cells)
         _copy_checked(
             run_dir / "protocol_snapshot.md",
             publication / "protocol_snapshot.md",
@@ -796,8 +780,7 @@ def _export_public_performance_snapshot(
         if not _finite_json(public_manifest):
             raise ProtocolError("public performance manifest contains non-finite values")
         atomic_json(publication / "public_manifest.json", public_manifest)
-        if publication_version == PERFORMANCE_PUBLICATION_VERSION:
-            _performance_reports(publication, _public_presentation_manifest(public_manifest), public_summary, public_cells)
+        _performance_reports(publication, _public_presentation_manifest(public_manifest), public_summary, public_cells)
         _reject_private_text(publication, _private_tokens(manifest, restricted_evidence, run_dir, error_strings))
         write_bundle(publication)
         if not verify_bundle(publication)["valid"]:

@@ -152,7 +152,7 @@ def _official_system_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _v2_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, official: bool) -> Path:
-    run = build_performance_run(tmp_path, monkeypatch, v2=True, open_loop=True)
+    run = build_performance_run(tmp_path, monkeypatch, open_loop=True)
     if official:
         manifest_path = run / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

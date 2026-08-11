@@ -219,9 +219,12 @@ def _suite_evidence_file(
     return path, raw, None
 
 
-def _read_jsonl(path: Path, raw: bytes | None = None) -> tuple[dict[str, Any], ...]:
+def _read_jsonl(path: Path, raw: bytes | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    lines = (path.read_bytes() if raw is None else raw).decode("utf-8").splitlines()
+    try:
+        lines = (path.read_bytes() if raw is None else raw).decode("utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ProtocolError(f"cannot read UTF-8 JSONL: {path}") from exc
     for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
@@ -232,7 +235,7 @@ def _read_jsonl(path: Path, raw: bytes | None = None) -> tuple[dict[str, Any], .
         if not isinstance(row, dict):
             raise ProtocolError(f"Invalid JSONL line {line_number}: expected object")
         rows.append(row)
-    return tuple(rows)
+    return rows
 
 
 def _load_suite_snapshot(path: str | Path, *, official: bool = False) -> tuple[Suite, bytes, str, str]:
@@ -250,7 +253,7 @@ def _load_suite_snapshot(path: str | Path, *, official: bool = False) -> tuple[S
     rubric_raw = rubric_path.read_bytes()
     dataset_sha256 = sha256_bytes(dataset_raw)
     rubric_sha256 = sha256_bytes(rubric_raw)
-    suite = Suite(root, config, _read_jsonl(dataset_path, dataset_raw), rubric_raw.decode("utf-8"), dataset_path, rubric_path)
+    suite = Suite(root, config, tuple(_read_jsonl(dataset_path, dataset_raw)), rubric_raw.decode("utf-8"), dataset_path, rubric_path)
     errors = validate_suite(
         suite,
         official=official,
@@ -506,8 +509,6 @@ def validate_suite(
     profile = config.get("profile", "text-generation")
     if profile not in TASK_PROFILES:
         errors.append(f"suite.profile must be one of {sorted(TASK_PROFILES)}")
-    elif official and not TASK_PROFILES[str(profile)]["built_in"]:
-        errors.append(f"official suite profile {profile!r} requires a pinned approved external adapter")
     if official:
         unknown = sorted(set(config) - OFFICIAL_SUITE_FIELDS)
         if unknown:
@@ -545,53 +546,8 @@ def validate_suite(
             if category is not None and (not isinstance(category, str) or not category or category not in categories):
                 errors.append(f"{prefix}.category must identify a dataset category")
 
-    metric_config = config.get("metrics")
-    if metric_config is not None and not isinstance(metric_config, dict):
-        errors.append("suite.metrics must be a table")
-    elif isinstance(metric_config, dict):
-        deepeval = metric_config.get("deepeval", [])
-        if not isinstance(deepeval, list) or not all(isinstance(item, dict) for item in deepeval):
-            errors.append("metrics.deepeval must be an array of tables")
-        else:
-            if official and deepeval:
-                errors.append("official runs do not support unpinned DeepEval metrics; use versioned local deterministic checks")
-            from .deepeval_adapter import LLM_METRICS
-
-            supported = {"exact_match", "pattern_match", *LLM_METRICS}
-            for index, item in enumerate(deepeval, 1):
-                prefix = f"metrics.deepeval[{index}]"
-                name = item.get("name")
-                if name not in supported:
-                    errors.append(f"{prefix}.name is unsupported")
-                elif name in LLM_METRICS:
-                    errors.append(f"{prefix}.name requires an identity- and destination-verifying judge adapter")
-                threshold = item.get("threshold", 0.5)
-                if (
-                    not isinstance(threshold, (int, float))
-                    or isinstance(threshold, bool)
-                    or not math.isfinite(float(threshold))
-                    or not 0 <= float(threshold) <= 1
-                ):
-                    errors.append(f"{prefix}.threshold must be a finite number from 0 to 1")
-                if "hard_fail" in item and not isinstance(item["hard_fail"], bool):
-                    errors.append(f"{prefix}.hard_fail must be boolean")
-                if "ignore_case" in item and not isinstance(item["ignore_case"], bool):
-                    errors.append(f"{prefix}.ignore_case must be boolean")
-                if name == "exact_match" and any("expected_output" not in case for case in suite.cases):
-                    errors.append(f"{prefix}.name requires expected_output in every case")
-                if name == "pattern_match":
-                    pattern = item.get("pattern")
-                    case_patterns = [case.get("pattern") for case in suite.cases]
-                    if pattern is None and not all(isinstance(value, str) and value for value in case_patterns):
-                        errors.append(f"{prefix}.pattern requires a suite pattern or a pattern in every case")
-                    elif pattern is not None and (not isinstance(pattern, str) or not pattern):
-                        errors.append(f"{prefix}.pattern must be non-empty text")
-                    else:
-                        try:
-                            if pattern is not None:
-                                re.compile(pattern)
-                        except re.error as exc:
-                            errors.append(f"{prefix}.pattern is not a valid regular expression: {exc}")
+    if "metrics" in config:
+        errors.append("suite.metrics is not supported; use versioned deterministic checks")
     pinned_dataset = config.get("dataset_sha256")
     pinned_rubric = config.get("rubric_sha256")
     actual_dataset_sha256 = dataset_sha256 or sha256_file(suite.dataset_path)
@@ -667,7 +623,7 @@ def validate_suite(
     if capabilities_declared and not capabilities_valid:
         errors.append("target.capabilities must be an array of non-empty strings")
     if official and profile in TASK_PROFILES:
-        missing_capabilities = sorted(set(TASK_PROFILES[str(profile)]["inputs"]) - (set(capabilities) if capabilities_valid else set()))
+        missing_capabilities = sorted(TASK_PROFILES[str(profile)] - (set(capabilities) if capabilities_valid else set()))
         if missing_capabilities:
             errors.append(f"target.capabilities missing profile requirements: {missing_capabilities}")
     pricing = config.get("pricing")
@@ -785,7 +741,7 @@ def validate_suite(
                 f"{prefix}.official media judging requires a capability-verifying, qualification-bound judge adapter: {official_media}"
             )
         if profile in TASK_PROFILES:
-            unsupported = sorted(actual_modalities - set(TASK_PROFILES[str(profile)]["inputs"]))
+            unsupported = sorted(actual_modalities - TASK_PROFILES[str(profile)])
             if unsupported:
                 errors.append(f"{prefix}.input modalities are not supported by suite.profile {profile!r}: {unsupported}")
         if capabilities_declared and capabilities_valid:

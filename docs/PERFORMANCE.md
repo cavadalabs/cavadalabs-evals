@@ -7,7 +7,7 @@ same measurement path across engines.
 
 The current reference plan and workload are revision 2 inputs under Performance
 Protocol v2.0. They are new immutable artifacts, not edits to the commit-anchored
-v1.0 plans, workload, or protocol used by reduced presets and historical runs.
+v1.0 plans, workload, or protocol retained for historical hash verification.
 
 ## 1. Describe the runtime
 
@@ -29,17 +29,12 @@ record the exact command/revisions, and stop only the process it started.
 ## 2. Validate without network access
 
 ```bash
-uv run cavada-eval perf validate --preset quick \
-  --runtime /secure/path/runtime.toml
-
-# Then validate the current reference inputs when preparing official-capable work:
 uv run cavada-eval perf validate --preset reference \
   --runtime /secure/path/runtime.toml \
   --system-evidence /secure/path/system-evidence.json
 ```
 
-Both commands validate locally without contacting the endpoint. `quick` is a
-historical-development v1.1 preset and can never be official. The current
+Use this command to validate locally without contacting the endpoint. The
 `reference` preset follows
 [Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md) and is the only
 official-capable preset; every other official gate still applies. The
@@ -111,21 +106,8 @@ approximate prompts as iso-token.
 
 ## 3. Run
 
-After the offline validation, run the non-official `quick` development campaign:
-
-```bash
-uv run cavada-eval perf run /secure/path/runtime.toml --preset quick
-```
-
-The historical-development v1.1 `smoke` and `standard` presets are optional checks:
-
-```bash
-uv run cavada-eval perf run /secure/path/runtime.toml --preset smoke
-uv run cavada-eval perf run /secure/path/runtime.toml --preset standard
-```
-
-Only when preparing official-capable work, run the full current v2 reference
-campaign (`full` is accepted as a CLI alias):
+After offline validation, run the current v2 reference campaign. Development
+runs omit `--official` and its governance inputs; official-capable work uses:
 
 ```bash
 uv run cavada-eval perf run /secure/path/runtime.toml --preset reference \
@@ -179,8 +161,8 @@ verification retain this category separately from errors, failures, and skips.
 The current reference plan deterministically schedules 78,911 requests and has
 a preregistered upper bound of about 3.93 billion input-plus-output tokens.
 Those are safety bounds, not a price quote; validate the exact plan and runtime
-before spending. Do not mutate it or present a smoke, quick, or standard
-campaign as the reference protocol. Any new plan is a new versioned measurement
+before spending. Do not mutate it or present a preserved v1 plan as the current
+reference protocol. Any new plan is a new versioned measurement
 input with its own hash and claim scope.
 
 At exit, the CLI prints JSON containing `run_dir`, campaign `status`,
@@ -260,7 +242,7 @@ execution; request construction never reopens a mutable source prompt.
   synchronized hardware collector when those measurements become required.
 
 See `PERFORMANCE_PROTOCOL_V2.md` for current normative rules. The commit-anchored
-v1.0 document remains available for historical bundles; the unanchored v1.1
-historical-development snapshot interprets only its development outputs.
+v1.0 contract and inputs remain byte-frozen for hash-only verification; current
+producer, export, public-verification, and comparison paths accept v2 only.
 Quality, safety, privacy, and compliance evaluations remain separate benchmark
 suites.

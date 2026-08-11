@@ -14,10 +14,9 @@ preregistered dispatch contract has status `invalid-loadgen`: its raw evidence
 remains diagnostic, but it is not valid serving-system evidence and cannot pass
 an SLO or contribute goodput.
 
-Protocol v1.0 artifacts retain their original definitions and verifier
-semantics. The unanchored v1.1 snapshot is historical-development only.
-Version 2.0 applies only to plans that declare `plan_version = "2.0.0"` and
-`profile = "llm-serving-v2"`.
+Protocol v1.0 artifacts retain their original definitions and hash-only verifier
+semantics. Version 2.0 applies only to plans that declare
+`plan_version = "2.0.0"` and `profile = "llm-serving-v2"`.
 
 This v2 artifact was amended before its first release: the repository preflight
 found no tag, immutable run or published registry entry that referenced its

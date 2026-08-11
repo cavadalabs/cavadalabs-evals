@@ -16,7 +16,6 @@ DECISIONS = {"ready", "blocked", "excluded", "reference-only"}
 INVENTORY_HEADER = ["Material", "Current declaration", "Decision", "Condition"]
 REQUIRED_ROWS = {
     "`suites/cavada-core-assistant-text-v1`",
-    "`suites/memo4345-v1`",
     "`suites/security-privacy-smoke-v1`",
     "`suites/template`",
     "Repository organization approval",

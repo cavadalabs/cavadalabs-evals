@@ -5,10 +5,10 @@ serving engine. `plans/` defines preregistered cells and gates; `workloads/`
 contains hash-pinned public or synthetic prompts. Machine/runtime descriptors
 belong outside the repository and start from `runtime.example.toml`.
 Current reference runs use
-[Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md). The unanchored
-historical-development [v1.1 protocol](../PERFORMANCE_PROTOCOL_V1_1.md), commit-anchored
-[v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md), and their inputs remain
-immutable for bundles that record those versions.
+[Performance Protocol v2](../PERFORMANCE_PROTOCOL_V2.md). The commit-anchored
+[v1.0 protocol](../PERFORMANCE_PROTOCOL_V1_0.md) and released v1 inputs remain
+byte-frozen for hash-only verification; current producer, export,
+public-verification, and comparison paths accept v2 only.
 The exact anchor and schema matrix is recorded in
 [version provenance](VERSION_PROVENANCE.md).
 
@@ -33,32 +33,25 @@ The exact anchor and schema matrix is recorded in
 - Prohibited use: response-quality, safety, factuality, privacy, fairness, legal
   compliance, or exact equal-token claims
 
-The commit-anchored v1 workload remains immutable for historical smoke, quick,
-standard, and reference runs. Changing any row requires a new workload
-revision, a new hash in a newly versioned plan, and updated documentation.
-Never edit commit-anchored inputs in place.
+The commit-anchored v1 inputs remain byte-frozen solely for hash-only
+verification of recorded bundles. Never edit them in place.
 
-## Built-in execution presets
+## Built-in performance preset
 
 | Preset | Plan | Intended use |
 | --- | --- | --- |
-| `smoke` | `llm-serving-smoke-v1.toml` | Historical-development v1.1 endpoint check |
-| `quick` | `llm-serving-quick-v1.toml` | Historical-development v1.1 98-request regression |
-| `standard` | `llm-serving-standard-v1.toml` | Historical-development v1.1 825-request campaign |
-| `reference` (`full`) | `llm-serving-v2.toml` | Current v2 reference; the only official-capable preset, with every other gate still required |
+| `reference` | `llm-serving-v2.toml` | Current v2 reference; official-capable only when every other gate also passes |
 
 Run a preset without manually selecting its plan:
 
 ```bash
-uv run cavada-eval perf validate --preset quick --runtime /secure/runtime.toml
-uv run cavada-eval perf run /secure/runtime.toml --preset quick
 uv run cavada-eval perf validate --preset reference --runtime /secure/runtime.toml \
   --system-evidence /secure/system-evidence.json
+uv run cavada-eval perf run /secure/runtime.toml --preset reference
 ```
 
-Validation is offline and does not contact the endpoint. The quick run is
-non-official; continue with `reference` only when preparing official-capable
-work and follow the remaining evidence steps in
+Validation is offline and does not contact the endpoint. Follow the remaining
+evidence steps in
 [the operator guide](../docs/PERFORMANCE.md). Preset plans are immutable inputs,
 not runtime overrides. Performance request counts are determined by cells,
 warm-up, load, duration, and repetitions; they are intentionally distinct from

@@ -11,7 +11,7 @@ Before the first public push, an organization owner must:
    organization plan supports them;
 3. protect `main` with pull requests, code-owner review, conversation
    resolution, signed commits where operationally supported, linear history,
-   and the `test`, `deepeval-adapter`, and `dependency-review` checks;
+   and the `test` and `dependency-review` checks;
 4. block force pushes and deletions and enable immutable releases;
 5. restrict tag creation matching `v*` to release maintainers;
 6. configure organizational signing identities and retain the GitHub/Sigstore
@@ -33,9 +33,6 @@ uv run python scripts/validate_results_registry.py
 uv run cavada-eval doctor
 uv run cavada-eval program
 uv run cavada-eval perf validate --preset reference
-audit_file=$(mktemp)
-uv export --quiet --frozen --no-dev --extra deepeval --no-emit-project --output-file "$audit_file"
-uvx pip-audit==2.10.1 --strict --progress-spinner off --disable-pip --requirement "$audit_file"
 uv build
 uv run python scripts/check_distribution.py
 wheel=$(realpath dist/*.whl)
@@ -49,11 +46,9 @@ uv run python scripts/generate_provenance.py --require-clean
 git status --short
 ```
 
-The core wheel intentionally declares zero unconditional runtime dependencies.
-The dependency audit above therefore exports and audits the complete locked
-`deepeval` extra instead of auditing unrelated packages from the development
-environment. The SBOM is generated from the built wheel's `METADATA`; provenance
-records the exact uv and build-backend versions.
+The wheel intentionally declares zero runtime dependencies. The SBOM is
+generated from the built wheel's `METADATA`; provenance records the exact uv
+and build-backend versions.
 
 Review the complete Git history for credentials, customer identifiers, internal
 hosts, personal data, private holdouts, licensed content, and restricted attack

@@ -24,8 +24,6 @@ from typing import Any, cast
 from .artifacts import verify_bundle, write_bundle
 from .assets import asset_inventory, content_text, encoded_content, encoded_messages, openai_content
 from .calibration import judge_evidence_errors
-from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
-from .deepeval_adapter import secure_import as load_deepeval
 from .metrics import METRIC_VERSION, deterministic_evaluation
 from .profiles import ADAPTER_CONTRACT_VERSION, BENCHMARK_PRESET_VERSION, canonical_preset, stratified_cases
 from .protocol import (
@@ -34,6 +32,7 @@ from .protocol import (
     SCHEMA_VERSION,
     ProtocolError,
     Suite,
+    _read_jsonl,
     append_jsonl,
     apply_gates,
     atomic_json,
@@ -347,27 +346,6 @@ def _reject_non_finite_json(constant: str) -> Any:
 
 def _strict_json_loads(value: str | bytes) -> Any:
     return json.loads(value, parse_constant=_reject_non_finite_json)
-
-
-def _read_jsonl(path: Path, raw: bytes | None = None) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if raw is None and not path.is_file():
-        return rows
-    try:
-        text = raw.decode("utf-8") if raw is not None else path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise ProtocolError(f"invalid {path.name}: expected UTF-8") from exc
-    for line_number, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ProtocolError(f"invalid {path.name} line {line_number}") from exc
-        if not isinstance(value, dict):
-            raise ProtocolError(f"invalid {path.name} line {line_number}: expected object")
-        rows.append(value)
-    return rows
 
 
 def _usage_tokens(raw: dict[str, Any], *, required: bool = False) -> tuple[float, float]:
@@ -1444,11 +1422,6 @@ def run(
     unresolved = [case["id"] for case in suite.cases if (case.get("review") or {}).get("status") != "approved"]
     if official and unresolved:
         raise ProtocolError(f"official runs require all cases approved; unresolved={len(unresolved)}")
-    deep_config = (suite.config.get("metrics") or {}).get("deepeval", [])
-    if deep_config:
-        if not isinstance(deep_config, list) or not all(isinstance(item, dict) for item in deep_config):
-            raise ProtocolError("metrics.deepeval must be an array of tables")
-        load_deepeval()
     if (
         not isinstance(repetitions, int)
         or isinstance(repetitions, bool)
@@ -1991,7 +1964,6 @@ def run(
         require_current_official_evidence()
         for name in ("requests.jsonl", "raw_responses.jsonl", "judgments.jsonl", "case_results.jsonl", "failures.jsonl", "events.jsonl"):
             (run_dir / name).touch(mode=0o600, exist_ok=False)
-        (run_dir / "engine_results.jsonl").touch(mode=0o600, exist_ok=False)
     result_rows: list[dict[str, Any]] = []
     pricing_config = suite.config.get("pricing") or {}
     usage_required = bool(pricing_config or max_total_tokens or max_estimated_cost)
@@ -2231,25 +2203,11 @@ def run(
                 raise ProtocolError(f"Target identity mismatch: expected {expected_model!r}, got {reported_model!r}")
             consume_tokens(target_raw, "target")
             target = suite.config.get("target") or {}
-            retrieval = _get(target_raw, str(target.get("retrieved_ids_field", "retrieved_ids"))) or []
             tools = _get(target_raw, str(target.get("tools_field", "tool_calls"))) or []
-            deterministic = deterministic_evaluation(case, answer, target_raw=target_raw, retrieved_ids=retrieval, tool_calls=tools)
+            deterministic = deterministic_evaluation(case, answer, tool_calls=tools)
             if not deterministic["hard_pass"]:
                 result = {**base, "status": "fail", "reason": "deterministic check failed", "deterministic": deterministic}
             else:
-                engine_results: list[dict[str, Any]] = []
-                if deep_config:
-                    engine_results = evaluate_deepeval_metrics(deep_config, case, answer, official=official)
-                    record("engine_results.jsonl", {**base, "results": engine_results})
-                if any(item["hard_fail"] and not item["success"] for item in engine_results):
-                    result = {
-                        **base,
-                        "status": "fail",
-                        "reason": "metric engine hard check failed",
-                        "deterministic": deterministic,
-                        "engine_results": engine_results,
-                    }
-                    return finish_result(result)
                 verdicts: list[dict[str, Any]] = []
                 for judge_index, judge_spec in enumerate(judge_specs):
                     for model_repetition in range(1, judge_repetitions + 1):
@@ -2648,7 +2606,6 @@ def run(
         "requests.jsonl",
         "raw_responses.jsonl",
         "judgments.jsonl",
-        "engine_results.jsonl",
         "case_results.jsonl",
         "scenario_results.jsonl",
         "metrics.json",

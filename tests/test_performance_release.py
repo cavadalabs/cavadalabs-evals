@@ -15,7 +15,7 @@ from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.performance import (
     PerformanceRuntime,
     _campaign_summary,
-    _cell_metrics_for_protocol,
+    _cell_metrics_v2,
     _expand_cells,
     _measurement_window,
     _performance_reports,
@@ -24,6 +24,7 @@ from cavada_eval.performance import (
     load_performance_plan,
     load_performance_runtime,
     run_performance_campaign,
+    verify_performance_source_bundle,
 )
 from cavada_eval.performance_release import (
     PERFORMANCE_PUBLICATION_VERSION,
@@ -67,25 +68,18 @@ def _run(
     monkeypatch: pytest.MonkeyPatch,
     *,
     response_error: bool = False,
-    v2: bool = False,
     open_loop: bool = False,
 ) -> Path:
-    protocol_name = "PERFORMANCE_PROTOCOL_V2.md" if v2 else "PERFORMANCE_PROTOCOL_V1_1.md"
+    protocol_name = "PERFORMANCE_PROTOCOL_V2.md"
     (tmp_path / protocol_name).write_bytes((ROOT / protocol_name).read_bytes())
     workload = tmp_path / "workload.jsonl"
     workload.write_text(json.dumps({"id": "case", "context_tokens": 8, "repeat_text": " datum", "repeat_count": 8}) + "\n")
     plan = tmp_path / "plan.toml"
-    plan_version = "2.0.0" if v2 else "1.0.0"
-    profile = "llm-serving-v2" if v2 else "llm-serving-v1"
-    load_generator = (
-        """[load_generator]
+    load_generator = """[load_generator]
 minimum_dispatch_rate_fraction = 0.98
 maximum_dispatch_lag_p95_ms = 100
 maximum_dispatch_lag_ms = 1000
 """
-        if v2
-        else ""
-    )
     scenario = (
         """id = "open"
 arrival = "open-loop"
@@ -104,11 +98,11 @@ concurrency = [1]
 """
     )
     plan.write_text(
-        f'''plan_version = "{plan_version}"
-revision = "{plan_version}"
+        f'''plan_version = "2.0.0"
+revision = "2.0.0"
 name = "publication-test"
 description = "Publication test."
-profile = "{profile}"
+profile = "llm-serving-v2"
 data_classification = "synthetic"
 [workload]
 id = "publication-test"
@@ -228,7 +222,7 @@ launch_command_sanitized = "test-server"
 
 
 def _export_v2_public(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, open_loop: bool = True) -> Path:
-    run = _run(tmp_path, monkeypatch, v2=True, open_loop=open_loop)
+    run = _run(tmp_path, monkeypatch, open_loop=open_loop)
     suffix = "open" if open_loop else "closed"
     archive = tmp_path / f"public-v2-{suffix}.tar.gz"
     export_public_performance(run, archive)
@@ -267,6 +261,12 @@ def _add_test_evidence(run: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         "collected_at": restricted["collected_at"],
     }
     (run / "manifest.json").write_text(json.dumps(manifest))
+    _performance_reports(
+        run,
+        manifest,
+        json.loads((run / "summary.json").read_text(encoding="utf-8")),
+        [json.loads(line) for line in (run / "cells.jsonl").read_text(encoding="utf-8").splitlines()],
+    )
     write_bundle(run)
     monkeypatch.setattr("cavada_eval.performance.load_system_evidence", lambda _path: restricted)
     monkeypatch.setattr("cavada_eval.performance._cross_check_system_evidence", lambda *_args: None)
@@ -324,6 +324,12 @@ def _add_execution_record(run: Path, *, owner: str = "executor-1") -> None:
         "sha256": sha256_file(engagement_snapshot),
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _performance_reports(
+        run,
+        manifest,
+        json.loads((run / "summary.json").read_text(encoding="utf-8")),
+        [json.loads(line) for line in (run / "cells.jsonl").read_text(encoding="utf-8").splitlines()],
+    )
     write_bundle(run)
 
 
@@ -350,11 +356,11 @@ def test_performance_export_is_sanitized_and_extracted_bundle_verifies(tmp_path:
     assert "RAW_PRIVATE_COMPLETION_42" not in public_text
     assert "PRIVATE_RAW_BODY" not in public_text
     assert "private-server" not in public_text
-    assert not (extracted / "report.html").exists()
+    assert (extracted / "report.html").is_file()
     assert json.loads((extracted / "system_evidence.json").read_text())["projection"] == "public"
     public_manifest = json.loads((extracted / "public_manifest.json").read_text())
     assert public_manifest["protocol_sha256"] == sha256_file(extracted / "protocol_snapshot.md")
-    schema = json.loads((Path(__file__).parents[1] / "schemas" / "performance-publication.schema.json").read_text())
+    schema = json.loads((ROOT / "schemas" / "performance-publication-2.0.0.schema.json").read_text())
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(public_manifest)
     forged_official = {**public_manifest, "official": True, "performance_protocol_version": "1.0.0"}
     errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(forged_official))
@@ -401,9 +407,9 @@ def test_v2_public_projection_verifies_healthy_and_invalid_loadgen_evidence(
     runtime_config = dict(manifest["runtime"])
     runtime = PerformanceRuntime(public / "public_manifest.json", str(runtime_config["sha256"]), runtime_config)
     cell = _expand_cells(plan, runtime)[0]
-    metric = _cell_metrics_for_protocol(observations, cell, plan, _measurement_window(observations), 1002, None, "2.0.0")
+    metric = _cell_metrics_v2(observations, cell, plan, _measurement_window(observations), 1002, None)
     metric["block"] = 1
-    cells = _public_cells({(1, str(cell["cell_key"])): metric}, {}, "2.0.0")
+    cells = _public_cells({(1, str(cell["cell_key"])): metric}, {})
     manifest["status"] = "invalid-loadgen"
     manifest["cells"] = {
         "total": 1,
@@ -418,7 +424,7 @@ def test_v2_public_projection_verifies_healthy_and_invalid_loadgen_evidence(
     manifest["limitations"] = summary["limitations"]
     (public / "observations.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in observations), encoding="utf-8")
     (public / "cells.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in cells), encoding="utf-8")
-    _write_cells_csv(public / "cells.csv", cells, protocol_version="2.0.0")
+    _write_cells_csv(public / "cells.csv", cells)
     _write_json(public / "summary.json", summary)
     _write_json(public / "public_manifest.json", manifest)
     shutil.rmtree(public / "figures", ignore_errors=True)
@@ -499,7 +505,7 @@ def test_v2_public_verifier_rejects_resealed_timing_and_rate_tampering(
         manifest = json.loads((public / "public_manifest.json").read_text(encoding="utf-8"))
         observations = [json.loads(line) for line in (public / "observations.jsonl").read_text(encoding="utf-8").splitlines()]
         (public / "cells.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in cells), encoding="utf-8")
-        _write_cells_csv(public / "cells.csv", cells, protocol_version="2.0.0")
+        _write_cells_csv(public / "cells.csv", cells)
         _write_json(public / "summary.json", _campaign_summary(manifest, cells, observations))
         write_bundle(public)
     else:
@@ -524,7 +530,7 @@ def test_v2_restricted_verifier_rejects_resealed_denominator_and_rate_tampering(
     monkeypatch: pytest.MonkeyPatch,
     field: str,
 ) -> None:
-    run = _run(tmp_path, monkeypatch, v2=True, open_loop=True)
+    run = _run(tmp_path, monkeypatch, open_loop=True)
     cells = [json.loads(line) for line in (run / "cells.jsonl").read_text(encoding="utf-8").splitlines()]
     cells[0][field] = float(cells[0][field]) / 2
     (run / "cells.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in cells), encoding="utf-8")
@@ -532,6 +538,15 @@ def test_v2_restricted_verifier_rejects_resealed_denominator_and_rate_tampering(
 
     with pytest.raises(ProtocolError, match="metrics differ from immutable observations"):
         export_public_performance(run, tmp_path / "tampered.tar.gz")
+
+
+def test_v2_restricted_verifier_rejects_resealed_report_tampering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = _run(tmp_path, monkeypatch)
+    (run / "report.html").write_text("<h1>All performance SLOs passed</h1>", encoding="utf-8")
+    write_bundle(run)
+
+    with pytest.raises(ProtocolError, match="presentation differs from immutable evidence"):
+        verify_performance_source_bundle(run)
 
 
 def test_development_export_preserves_completed_with_errors_without_official_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -557,7 +572,7 @@ def test_development_export_preserves_completed_with_errors_without_official_cla
     assert cells[0]["warnings"] and observations[0]["status"] == "error"
     assert (observations[0]["input_tokens"], observations[0]["output_tokens"]) == (8.0, 2.0)
     assert verify_public_bundle(extracted)["assurance"] == "development"
-    schema = json.loads((ROOT / "schemas" / "performance-publication.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((ROOT / "schemas" / "performance-publication-2.0.0.schema.json").read_text(encoding="utf-8"))
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(manifest)
 
 
@@ -602,7 +617,7 @@ def test_authentic_reference_inputs_pass_official_gate() -> None:
 
 
 def test_official_release_rejects_development_plan_spoof_before_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run = _run(tmp_path, monkeypatch, v2=True)
+    run = _run(tmp_path, monkeypatch)
     evidence = _add_test_evidence(run, monkeypatch)
     _add_execution_record(run)
     manifest_path = run / "manifest.json"
@@ -681,7 +696,7 @@ def test_performance_release_approval_rejects_symlink_and_engagement_mismatch(tm
     finished = datetime.fromisoformat(manifest["finished_at"])
     now = finished + timedelta(minutes=1)
     approval = {
-        "release_version": "1.0.0",
+        "release_version": PERFORMANCE_PUBLICATION_VERSION,
         "release_id": "release-1",
         "status": "approved",
         "run_id": manifest["run_id"],

@@ -32,6 +32,7 @@ from cavada_eval.release import (
     verified_engagement,
     verified_public_release,
 )
+from cavada_eval.reporting import generate_reports
 from cavada_eval.runner import _judge_system_prompt, build_judge_payload, build_target_payload, run, target_case_prompt
 
 NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
@@ -281,7 +282,7 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
 
 
-def _release_fixture(tmp_path: Path, *, public_report: str = "<p>sanitized</p>") -> tuple[Path, Path, Path, dict[str, object]]:
+def _release_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
     engagement_path = tmp_path / "engagement.json"
     engagement, suite = _engagement(engagement_path)
     engagement_summary = verified_engagement(
@@ -353,7 +354,7 @@ def _release_fixture(tmp_path: Path, *, public_report: str = "<p>sanitized</p>")
             "transport": judge_transport,
         }
     ]
-    deterministic = deterministic_evaluation(case, "Answer", target_raw=target_raw, retrieved_ids=[], tool_calls=[])
+    deterministic = deterministic_evaluation(case, "Answer", tool_calls=[])
     results = [
         {
             **base,
@@ -568,7 +569,7 @@ def _release_fixture(tmp_path: Path, *, public_report: str = "<p>sanitized</p>")
     _write_jsonl(run / "raw_responses.jsonl", responses)
     _write_jsonl(run / "judgments.jsonl", judgments)
     _write_jsonl(run / "case_results.jsonl", results)
-    for name in ("engine_results.jsonl", "failures.jsonl", "adjudication_queue.jsonl"):
+    for name in ("failures.jsonl", "adjudication_queue.jsonl"):
         _write_jsonl(run / name, [])
     _write_jsonl(
         run / "events.jsonl",
@@ -613,23 +614,7 @@ def _release_fixture(tmp_path: Path, *, public_report: str = "<p>sanitized</p>")
     judge_support.parent.mkdir(parents=True, exist_ok=True)
     judge_support.write_bytes(judge_approver_evidence)
     (run / "dataset_card.md").write_text("# Dataset card\n", encoding="utf-8")
-    (run / "report.html").write_text("<p>private report</p>", encoding="utf-8")
-    (run / "report_public.html").write_text(public_report, encoding="utf-8")
-    for name in ("report.pdf", "report_public.pdf"):
-        (run / name).write_bytes(b"%PDF-1.4\n%%EOF\n")
-    summary = {
-        "protocol_version": PROTOCOL_VERSION,
-        "report_version": REPORT_VERSION,
-        "run_id": "run-1",
-        "status": "passed",
-        "suite": suite_manifest,
-        "target": {"label": "target", "revision": TARGET_REVISION},
-        "metrics": metrics,
-        "categories": categories,
-        "limitations": ["finite sampled scope"],
-    }
-    (run / "summary.json").write_text(json.dumps(summary, sort_keys=True), encoding="utf-8")
-    (run / "junit.xml").write_text('<?xml version="1.0"?><testsuite tests="1"><testcase name="one"/></testsuite>\n', encoding="utf-8")
+    generate_reports(run, manifest, metrics, categories, results)
     manifest["artifacts"] = {
         path.relative_to(run).as_posix(): sha256_file(path)
         for path in sorted(run.rglob("*"))
@@ -751,8 +736,12 @@ def _nonpublic_external_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[
     approval["engagement_sha256"] = sha256_file(engagement)
     (run / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
     summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
-    summary["suite"] = manifest["suite"]
-    (run / "summary.json").write_text(json.dumps(summary, sort_keys=True), encoding="utf-8")
+    metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+    dimensions = ("risk_domain", "severity", "language", "locale", "split", "operating_condition")
+    for field in ("slices", "slice_disparities"):
+        metrics[field] = {dimension: metrics[field][dimension] for dimension in dimensions}
+    results = [json.loads(line) for line in (run / "case_results.jsonl").read_text(encoding="utf-8").splitlines()]
+    generate_reports(run, manifest, metrics, summary["categories"], results)
     _reseal_forged_run(run, approval_path, approval)
     return run, engagement, approval_path, approval
 
@@ -770,6 +759,12 @@ def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_
             "bundle.json",
             "category_results.csv",
             "checksums.txt",
+            "figures/category_scores.svg",
+            "figures/latency.svg",
+            "figures/overall_scores.svg",
+            "figures/slice_disparity.svg",
+            "figures/stability.svg",
+            "figures/status_distribution.svg",
             "public_release.json",
             "report_public.html",
             "report_public.pdf",
@@ -1226,26 +1221,10 @@ def test_public_release_enforces_immutable_suite_repetition_minimums(tmp_path: P
 
 def test_public_release_rejects_unconfigured_engine_evidence(tmp_path: Path) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
-    result = json.loads((run / "case_results.jsonl").read_text(encoding="utf-8"))
-    identity_fields = (
-        "case_id",
-        "category",
-        "risk_domain",
-        "severity",
-        "language",
-        "locale",
-        "split",
-        "operating_condition",
-        "distribution_shift_reference_id",
-        "scenario_id",
-        "case_review_status",
-        "performance_phase",
-        "repetition",
-    )
-    _write_jsonl(run / "engine_results.jsonl", [{**{field: result.get(field) for field in identity_fields}, "results": []}])
+    _write_jsonl(run / "engine_results.jsonl", [{"results": []}])
     _reseal_forged_run(run, approval_path, approval)
 
-    with pytest.raises(ProtocolError, match="engine result ledger does not exactly match"):
+    with pytest.raises(ProtocolError, match="unsupported metric-engine evidence"):
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
@@ -1360,13 +1339,24 @@ def test_release_rejects_tampered_reviewer_evidence(tmp_path: Path) -> None:
 
 
 def test_public_export_rejects_endpoint_or_key_environment_leaks(tmp_path: Path) -> None:
-    run, engagement, approval, _ = _release_fixture(tmp_path, public_report="<p>TARGET_API_KEY</p>")
+    run, engagement, approval_path, approval = _release_fixture(tmp_path)
+    (run / "report_public.html").write_text("<p>TARGET_API_KEY</p>", encoding="utf-8")
+    _reseal_forged_run(run, approval_path, approval)
     output = tmp_path / "must-not-exist.tar.gz"
 
-    with pytest.raises(ProtocolError, match="public export contains restricted evidence"):
-        _export(run, output, True, engagement=str(engagement), release_approval=str(approval))
+    with pytest.raises(ProtocolError, match="behavior presentation differs from immutable evidence"):
+        _export(run, output, True, engagement=str(engagement), release_approval=str(approval_path))
 
     assert not output.exists()
+
+
+def test_public_release_rejects_forged_resealed_private_report(tmp_path: Path) -> None:
+    run, engagement, approval_path, approval = _release_fixture(tmp_path)
+    (run / "report.html").write_text("<p>forged private report</p>", encoding="utf-8")
+    _reseal_forged_run(run, approval_path, approval)
+
+    with pytest.raises(ProtocolError, match="behavior presentation differs from immutable evidence"):
+        verified_public_release(run, engagement, approval_path, now=NOW)
 
 
 def test_official_execution_requires_engagement_before_network_access(

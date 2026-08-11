@@ -6,35 +6,47 @@ import re
 import tomllib
 import unicodedata
 from collections import Counter
-from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from .assets import content_text
-from .profiles import profile_summary
+from .profiles import TASK_PROFILES
 from .protocol import PROTOCOL_VERSION, ProtocolError, Suite, load_suite, wilson_gate_power
 
-PROGRAM_STATUSES = {"planned", "draft", "candidate", "calibrated", "approved", "deprecated", "retired"}
-ASSURANCE_LEVELS = ("development", "candidate", "calibrated", "approved", "independently-reproduced")
-EXECUTION_SUPPORT = {"built-in", "adapter-required"}
-MODALITIES = {"text", "image", "audio", "video", "retrieval", "tools", "mcp", "code", "embedding"}
-SOURCE_KINDS = {"law", "standard", "guidance", "threat-intelligence", "framework", "benchmark", "tool", "service"}
-SOURCE_APPROVALS = {"reference-approved", "adapter-candidate", "legal-review-required", "service-authorization-required", "blocked"}
-SOURCE_USES = {"reference-only", "optional-adapter", "discovery-only", "blocked"}
-REDISTRIBUTION = {"reference-only", "allowed-with-notice", "prohibited", "review-required"}
-DATA_TRANSFERS = {"none", "local-only", "third-party-service", "review-required"}
-CROSSWALK_STATUSES = {"implemented-partial", "reference-only", "planned", "license-required", "legal-review-required"}
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*-v[1-9][0-9]*$")
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-STATUS_ASSURANCE = {
-    "planned": {"development"},
-    "draft": {"development"},
-    "candidate": {"candidate"},
-    "calibrated": {"calibrated"},
-    "approved": {"approved", "independently-reproduced"},
-    "deprecated": set(ASSURANCE_LEVELS),
-    "retired": set(ASSURANCE_LEVELS),
-}
+
+
+def _positive_int(value: object) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _probability(value: object, *, include_one: bool = False) -> TypeGuard[int | float]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    return 0 < float(value) and (float(value) <= 1 if include_one else float(value) < 1)
+
+
+def _allocation_errors(value: object, dimensions: set[str], total: object, total_name: str) -> list[str]:
+    if not isinstance(value, dict) or set(value) != dimensions:
+        return [f"allocations must define exactly {sorted(dimensions)}"]
+    errors: list[str] = []
+    for dimension, entries in value.items():
+        valid = (
+            isinstance(entries, list)
+            and bool(entries)
+            and all(
+                isinstance(item, dict) and set(item) == {"id", "target"} and isinstance(item["id"], str) and item["id"] and _positive_int(item["target"])
+                for item in entries
+            )
+        )
+        if not valid:
+            errors.append(f"allocation {dimension} must contain id/target entries")
+        elif len({item["id"] for item in entries}) != len(entries):
+            errors.append(f"allocation {dimension} contains duplicate ids")
+        elif isinstance(total, int) and sum(item["target"] for item in entries) != total:
+            errors.append(f"allocation {dimension} does not equal {total_name}")
+    return errors
 
 
 def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
@@ -60,8 +72,7 @@ def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
                 containment = len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
                 if containment >= min(left_semantic, right_semantic):
                     errors.append(
-                        f"cross-suite token-containment duplicate inputs: {left_suite}/{left_id}, "
-                        f"{right_suite}/{right_id} (containment={containment:.3f})"
+                        f"cross-suite token-containment duplicate inputs: {left_suite}/{left_id}, {right_suite}/{right_id} (containment={containment:.3f})"
                     )
                     continue
             threshold = min(left_threshold, right_threshold)
@@ -74,10 +85,7 @@ def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
             matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
             ratio = matcher.ratio()
             if ratio >= threshold:
-                errors.append(
-                    f"cross-suite near-duplicate inputs: {left_suite}/{left_id}, "
-                    f"{right_suite}/{right_id} (similarity={ratio:.3f})"
-                )
+                errors.append(f"cross-suite near-duplicate inputs: {left_suite}/{left_id}, {right_suite}/{right_id} (similarity={ratio:.3f})")
     return errors
 
 
@@ -95,11 +103,11 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     allocations = blueprint.get("allocations")
     modules = blueprint.get("modules")
     required_case_fields = blueprint.get("required_case_fields")
-    if not isinstance(total, int) or isinstance(total, bool) or total < 1:
+    if not _positive_int(total):
         errors.append("target_unique_scenarios must be a positive integer")
     if not isinstance(languages, list) or not languages or not all(isinstance(item, str) and item for item in languages):
         errors.append("languages must be a non-empty string array")
-    if not isinstance(each, int) or isinstance(each, bool) or each < 1:
+    if not _positive_int(each):
         errors.append("language_target_each must be a positive integer")
     elif isinstance(total, int) and isinstance(languages, list) and each * len(languages) != total:
         errors.append("language allocation does not equal target_unique_scenarios")
@@ -110,29 +118,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
     elif isinstance(total, int) and sum(splits.values()) != total:
         errors.append("split counts do not equal target_unique_scenarios")
     required_dimensions = {"locale", "difficulty", "severity", "operating_condition", "expected_behavior"}
-    if not isinstance(allocations, dict) or set(allocations) != required_dimensions:
-        errors.append(f"allocations must define exactly {sorted(required_dimensions)}")
-    else:
-        for dimension, values in allocations.items():
-            if (
-                not isinstance(values, list)
-                or not values
-                or not all(
-                    isinstance(value, dict)
-                    and set(value) == {"id", "target"}
-                    and isinstance(value["id"], str)
-                    and value["id"]
-                    and isinstance(value["target"], int)
-                    and not isinstance(value["target"], bool)
-                    and value["target"] > 0
-                    for value in values
-                )
-            ):
-                errors.append(f"allocation {dimension} must contain id/target entries")
-            elif len({value["id"] for value in values}) != len(values):
-                errors.append(f"allocation {dimension} contains duplicate ids")
-            elif isinstance(total, int) and sum(value["target"] for value in values) != total:
-                errors.append(f"allocation {dimension} does not equal target_unique_scenarios")
+    errors.extend(_allocation_errors(allocations, required_dimensions, total, "target_unique_scenarios"))
     if not isinstance(modules, list) or not modules:
         errors.append("modules must contain at least one entry")
         return errors
@@ -145,11 +131,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         errors.append("required_case_fields must be a unique non-empty string array")
         required_case_fields = []
 
-    gate_map = {
-        gate.get("category"): gate.get("min")
-        for gate in suite.config.get("gates", [])
-        if isinstance(gate, dict)
-    }
+    gate_map = {gate.get("category"): gate.get("min") for gate in suite.config.get("gates", []) if isinstance(gate, dict)}
     seen: set[str] = set()
     module_total = 0
     holdout_total = 0
@@ -172,11 +154,11 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
             errors.append(f"duplicate module id: {module_id}")
         else:
             seen.add(module_id)
-        if not isinstance(target, int) or isinstance(target, bool) or target < 1:
+        if not _positive_int(target):
             errors.append(f"{prefix}.target must be a positive integer")
         else:
             module_total += target
-        if not isinstance(holdout, int) or isinstance(holdout, bool) or holdout < 1:
+        if not _positive_int(holdout):
             errors.append(f"{prefix}.minimum_holdout must be a positive integer")
         else:
             holdout_total += holdout
@@ -184,7 +166,7 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
                 errors.append(f"{prefix}.minimum_holdout exceeds target")
         if module.get("primary_metric") != "pass_rate_ci.lower":
             errors.append(f"{prefix}.primary_metric must be pass_rate_ci.lower")
-        if not isinstance(gate, (int, float)) or isinstance(gate, bool) or not 0 < float(gate) <= 1:
+        if not _probability(gate, include_one=True):
             errors.append(f"{prefix}.draft_gate must be in (0, 1]")
         else:
             configured_gate = gate_map.get(module_id)
@@ -197,41 +179,20 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
             or not float(gate) < float(design_rate) <= 1
         ):
             errors.append(f"{prefix}.design_pass_rate must be greater than draft_gate and at most 1")
-        if not isinstance(minimum_power, (int, float)) or isinstance(minimum_power, bool) or not 0 < float(minimum_power) < 1:
+        if not _probability(minimum_power):
             errors.append(f"{prefix}.minimum_power must be in (0, 1)")
         if (
-            isinstance(holdout, int)
-            and not isinstance(holdout, bool)
-            and isinstance(gate, (int, float))
-            and not isinstance(gate, bool)
-            and isinstance(design_rate, (int, float))
-            and not isinstance(design_rate, bool)
-            and isinstance(minimum_power, (int, float))
-            and not isinstance(minimum_power, bool)
-            and 0 < float(gate) < float(design_rate) <= 1
+            _positive_int(holdout)
+            and _probability(gate)
+            and _probability(design_rate, include_one=True)
+            and _probability(minimum_power)
+            and float(gate) < float(design_rate)
             and wilson_gate_power(holdout, float(gate), float(design_rate)) < float(minimum_power)
         ):
             errors.append(f"{prefix}.minimum_holdout does not achieve minimum_power")
-        if (
-            not isinstance(subcategories, list)
-            or not subcategories
-            or not all(
-                isinstance(value, dict)
-                and set(value) == {"id", "target"}
-                and isinstance(value["id"], str)
-                and value["id"]
-                and isinstance(value["target"], int)
-                and not isinstance(value["target"], bool)
-                and value["target"] > 0
-                for value in subcategories
-            )
-        ):
-            errors.append(f"{prefix}.subcategories must contain id/target entries")
-        elif len({value["id"] for value in subcategories}) != len(subcategories):
-            errors.append(f"{prefix}.subcategories contains duplicate ids")
-        elif isinstance(target, int) and sum(value["target"] for value in subcategories) != target:
-            errors.append(f"{prefix}.subcategories do not equal target")
-        elif isinstance(module_id, str):
+        subcategory_errors = _allocation_errors({"subcategories": subcategories}, {"subcategories"}, target, "target")
+        errors.extend(f"{prefix}.subcategories {error.removeprefix('allocation subcategories ')}" for error in subcategory_errors)
+        if not subcategory_errors and isinstance(module_id, str) and isinstance(subcategories, list):
             module_subcategories[module_id] = {str(value["id"]) for value in subcategories}
     if isinstance(total, int) and module_total != total:
         errors.append("module targets do not equal target_unique_scenarios")
@@ -239,11 +200,11 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
         errors.append("minimum module holdouts exceed the holdout split")
     if seen != set(gate_map):
         errors.append("blueprint modules and suite gate categories must match")
-    allowed_allocations = {
-        dimension: {str(value["id"]) for value in values}
-        for dimension, values in allocations.items()
-        if isinstance(values, list) and all(isinstance(value, dict) and "id" in value for value in values)
-    } if isinstance(allocations, dict) else {}
+    allowed_allocations: dict[str, set[str]] = {}
+    if isinstance(allocations, dict):
+        for dimension, values in allocations.items():
+            if isinstance(values, list):
+                allowed_allocations[dimension] = {str(value["id"]) for value in values if isinstance(value, dict) and "id" in value}
     current_counts: dict[str, Counter[str]] = {
         "language": Counter(),
         "split": Counter(),
@@ -284,12 +245,16 @@ def validate_case_blueprint(path: Path, suite: Suite) -> list[str]:
             errors.append(f"scenario group {group!r} crosses split, module, or language boundaries")
         else:
             group_contracts[group] = contract
-    allocation_ceilings = {
-        dimension: {str(value["id"]): int(value["target"]) for value in values}
-        for dimension, values in allocations.items()
-        if isinstance(values, list)
-        and all(isinstance(value, dict) and isinstance(value.get("id"), str) and isinstance(value.get("target"), int) for value in values)
-    } if isinstance(allocations, dict) else {}
+    allocation_ceilings = (
+        {
+            dimension: {str(value["id"]): int(value["target"]) for value in values}
+            for dimension, values in allocations.items()
+            if isinstance(values, list)
+            and all(isinstance(value, dict) and isinstance(value.get("id"), str) and isinstance(value.get("target"), int) for value in values)
+        }
+        if isinstance(allocations, dict)
+        else {}
+    )
     ceilings = {
         "language": {str(value): int(each) for value in languages} if isinstance(languages, list) and isinstance(each, int) else {},
         "split": {str(key): int(value) for key, value in splits.items()} if isinstance(splits, dict) else {},
@@ -386,34 +351,12 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         errors.append("judge qualification blueprint version must be semantic X.Y.Z")
     if blueprint.get("status") != "preregistration-draft":
         errors.append("status must remain preregistration-draft until independent approval")
-    if not isinstance(target, int) or isinstance(target, bool) or target < 1:
+    if not _positive_int(target):
         errors.append("target_unique_responses must be a positive integer")
     if not isinstance(blueprint.get("minimum_model_families"), int) or blueprint["minimum_model_families"] < 4:
         errors.append("minimum_model_families must be at least four")
     required_dimensions = {"language", "severity", "response_length", "response_style", "probe_type"}
-    if not isinstance(allocations, dict) or set(allocations) != required_dimensions:
-        errors.append(f"allocations must define exactly {sorted(required_dimensions)}")
-    else:
-        for dimension, values in allocations.items():
-            if (
-                not isinstance(values, list)
-                or not values
-                or not all(
-                    isinstance(value, dict)
-                    and set(value) == {"id", "target"}
-                    and isinstance(value["id"], str)
-                    and value["id"]
-                    and isinstance(value["target"], int)
-                    and not isinstance(value["target"], bool)
-                    and value["target"] > 0
-                    for value in values
-                )
-            ):
-                errors.append(f"allocation {dimension} must contain id/target entries")
-            elif len({value["id"] for value in values}) != len(values):
-                errors.append(f"allocation {dimension} contains duplicate ids")
-            elif isinstance(target, int) and sum(value["target"] for value in values) != target:
-                errors.append(f"allocation {dimension} does not equal target_unique_responses")
+    errors.extend(_allocation_errors(allocations, required_dimensions, target, "target_unique_responses"))
     probe_values = allocations.get("probe_type", []) if isinstance(allocations, dict) else []
     probe_ids = {str(value["id"]) for value in probe_values if isinstance(value, dict) and "id" in value}
     if not isinstance(required_probes, list) or set(required_probes) != probe_ids:
@@ -425,8 +368,14 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         errors.append("modules must contain qualification targets")
         return errors
     expected_fields = {
-        "id", "target", "pass_target", "fail_target", "failure_sensitivity_gate",
-        "pass_specificity_gate", "design_rate", "minimum_power",
+        "id",
+        "target",
+        "pass_target",
+        "fail_target",
+        "failure_sensitivity_gate",
+        "pass_specificity_gate",
+        "design_rate",
+        "minimum_power",
     }
     for index, module in enumerate(modules, 1):
         prefix = f"module[{index}]"
@@ -440,7 +389,7 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         count = module["target"]
         pass_target = module["pass_target"]
         fail_target = module["fail_target"]
-        if not all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in (count, pass_target, fail_target)):
+        if not all(_positive_int(value) for value in (count, pass_target, fail_target)):
             errors.append(f"{prefix} targets must be positive integers")
             continue
         module_total += count
@@ -449,7 +398,7 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         gate_values = (module["failure_sensitivity_gate"], module["pass_specificity_gate"])
         design_rate = module["design_rate"]
         minimum_power = module["minimum_power"]
-        if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < float(value) < 1 for value in (*gate_values, minimum_power)):
+        if not all(_probability(value) for value in (*gate_values, minimum_power)):
             errors.append(f"{prefix} gates and minimum_power must be in (0, 1)")
             continue
         if not isinstance(design_rate, (int, float)) or isinstance(design_rate, bool) or not max(map(float, gate_values)) < float(design_rate) <= 1:
@@ -474,238 +423,24 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
     errors = validate_program_registry(registry, repo_root=repo_root)
     if errors:
         raise ProtocolError("invalid program registry:\n" + "\n".join(errors))
-    suites = registry["suites"]
-    source_register = load_source_register(repo_root / registry["source_register"])
-    crosswalk = load_evidence_crosswalk(
-        repo_root / registry["evidence_crosswalk"],
-        {str(source["id"]) for source in source_register["sources"]},
-        repo_root=repo_root,
-    )
-    return {
-        **registry,
-        "summary": {
-            "suite_count": len(suites),
-            "by_status": {status: sum(item["status"] == status for item in suites) for status in sorted(PROGRAM_STATUSES)},
-            "by_assurance": {level: sum(item["assurance"] == level for item in suites) for level in ASSURANCE_LEVELS},
-            "built_in": sum(item["execution_support"] == "built-in" for item in suites),
-            "adapter_required": sum(item["execution_support"] == "adapter-required" for item in suites),
-            "official_capable": sum(bool(item["official_capable"]) for item in suites),
-            "sources": source_register["summary"],
-            "crosswalk": crosswalk["summary"],
-        },
-    }
-
-
-def load_source_register(path: Path) -> dict[str, Any]:
-    try:
-        with path.open("rb") as handle:
-            register = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise ProtocolError(f"cannot load source register: {exc}") from exc
-    errors = validate_source_register(register)
-    if errors:
-        raise ProtocolError("invalid source register:\n" + "\n".join(errors))
-    sources = register["sources"]
-    return {
-        **register,
-        "summary": {
-            "count": len(sources),
-            "by_approval": {
-                status: sum(item["approval"] == status for item in sources)
-                for status in sorted(SOURCE_APPROVALS)
-            },
-            "by_official_use": {
-                use: sum(item["official_use"] == use for item in sources)
-                for use in sorted(SOURCE_USES)
-            },
-        },
-    }
-
-
-def validate_source_register(register: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    required = {"register_version", "reviewed_at", "review_due", "sources"}
-    if set(register) != required:
-        errors.append(f"source register fields must be exactly {sorted(required)}")
-    if not isinstance(register.get("register_version"), str) or not VERSION_PATTERN.fullmatch(str(register.get("register_version"))):
-        errors.append("source register version must be semantic X.Y.Z")
-    dates: dict[str, date] = {}
-    for field in ("reviewed_at", "review_due"):
-        try:
-            dates[field] = date.fromisoformat(str(register.get(field)))
-        except ValueError:
-            errors.append(f"source register {field} must be YYYY-MM-DD")
-    if dates.get("review_due") and dates.get("reviewed_at") and dates["review_due"] <= dates["reviewed_at"]:
-        errors.append("source register review_due must be after reviewed_at")
-    sources = register.get("sources")
-    if not isinstance(sources, list) or not sources:
-        errors.append("source register must contain sources")
-        return errors
-    source_fields = {
-        "id", "kind", "name", "publisher", "version", "revision", "primary_url", "license",
-        "license_url", "redistribution", "commercial_use", "data_transfer", "approval",
-        "official_use", "conditions",
-    }
-    seen: set[str] = set()
-    for index, source in enumerate(sources, 1):
-        prefix = f"source[{index}]"
-        if not isinstance(source, dict) or set(source) != source_fields:
-            errors.append(f"{prefix} fields must be exactly {sorted(source_fields)}")
-            continue
-        source_id = source.get("id")
-        if not isinstance(source_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", source_id):
-            errors.append(f"{prefix}.id must be kebab-case")
-        elif source_id in seen:
-            errors.append(f"duplicate source id: {source_id}")
-        else:
-            seen.add(source_id)
-        for field in ("name", "publisher", "version", "revision", "license", "commercial_use"):
-            if not isinstance(source.get(field), str) or not source[field].strip():
-                errors.append(f"{prefix}.{field} must be non-empty")
-        for field in ("primary_url", "license_url"):
-            if not isinstance(source.get(field), str) or not source[field].startswith("https://"):
-                errors.append(f"{prefix}.{field} must be an HTTPS URL")
-        for field, allowed in (
-            ("kind", SOURCE_KINDS),
-            ("approval", SOURCE_APPROVALS),
-            ("official_use", SOURCE_USES),
-            ("redistribution", REDISTRIBUTION),
-            ("data_transfer", DATA_TRANSFERS),
-        ):
-            if source.get(field) not in allowed:
-                errors.append(f"{prefix}.{field} is invalid")
-        if not isinstance(source.get("conditions"), list) or not source["conditions"] or not all(
-            isinstance(value, str) and value.strip() for value in source["conditions"]
-        ):
-            errors.append(f"{prefix}.conditions must be a non-empty string array")
-        if source.get("official_use") == "optional-adapter" and source.get("approval") != "adapter-candidate":
-            errors.append(f"{prefix} optional adapters must have adapter-candidate approval")
-    return errors
-
-
-def load_evidence_crosswalk(path: Path, source_ids: set[str], *, repo_root: Path) -> dict[str, Any]:
-    try:
-        with path.open("rb") as handle:
-            crosswalk = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise ProtocolError(f"cannot load evidence crosswalk: {exc}") from exc
-    errors: list[str] = []
-    required = {"crosswalk_version", "reviewed_at", "review_due", "claim_policy", "mappings"}
-    if set(crosswalk) != required:
-        errors.append(f"evidence crosswalk fields must be exactly {sorted(required)}")
-    if not isinstance(crosswalk.get("crosswalk_version"), str) or not VERSION_PATTERN.fullmatch(str(crosswalk.get("crosswalk_version"))):
-        errors.append("evidence crosswalk version must be semantic X.Y.Z")
-    try:
-        reviewed_at = date.fromisoformat(str(crosswalk.get("reviewed_at")))
-        review_due = date.fromisoformat(str(crosswalk.get("review_due")))
-        if review_due <= reviewed_at:
-            errors.append("evidence crosswalk review_due must be after reviewed_at")
-    except ValueError:
-        errors.append("evidence crosswalk dates must be YYYY-MM-DD")
-    if not isinstance(crosswalk.get("claim_policy"), str) or not crosswalk["claim_policy"].strip():
-        errors.append("evidence crosswalk claim_policy is required")
-    mappings = crosswalk.get("mappings")
-    fields = {"id", "source_id", "source_version", "status", "scope", "repository_evidence", "external_evidence", "limitations"}
-    seen: set[str] = set()
-    if not isinstance(mappings, list) or not mappings:
-        errors.append("evidence crosswalk must contain mappings")
-        mappings = []
-    for index, mapping in enumerate(mappings, 1):
-        prefix = f"mapping[{index}]"
-        if not isinstance(mapping, dict) or set(mapping) != fields:
-            errors.append(f"{prefix} fields must be exactly {sorted(fields)}")
-            continue
-        mapping_id = mapping.get("id")
-        if not isinstance(mapping_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", mapping_id):
-            errors.append(f"{prefix}.id must be kebab-case")
-        elif mapping_id in seen:
-            errors.append(f"duplicate evidence mapping id: {mapping_id}")
-        else:
-            seen.add(mapping_id)
-        if mapping.get("source_id") not in source_ids:
-            errors.append(f"{prefix}.source_id is absent from the source register")
-        if mapping.get("status") not in CROSSWALK_STATUSES:
-            errors.append(f"{prefix}.status is invalid")
-        for field in ("source_version", "scope"):
-            if not isinstance(mapping.get(field), str) or not mapping[field].strip():
-                errors.append(f"{prefix}.{field} must be non-empty")
-        for field in ("repository_evidence", "external_evidence", "limitations"):
-            values = mapping.get(field)
-            if not isinstance(values, list) or not values or not all(isinstance(value, str) and value.strip() for value in values):
-                errors.append(f"{prefix}.{field} must be a non-empty string array")
-        evidence = mapping.get("repository_evidence")
-        if isinstance(evidence, list):
-            for value in evidence:
-                if not isinstance(value, str) or not value.strip():
-                    continue
-                relative = Path(value)
-                if relative.is_absolute() or ".." in relative.parts:
-                    errors.append(f"{prefix}.repository_evidence contains unsafe path: {value}")
-                    continue
-                packaged_source = relative.parts[:2] == ("src", "cavada_eval") and repo_root.resolve() == (
-                    Path(__file__).resolve().parent / "_resources"
-                ).resolve()
-                resolved = ((Path(__file__).resolve().parent / Path(*relative.parts[2:])) if packaged_source else (repo_root / relative)).resolve()
-                evidence_root = Path(__file__).resolve().parent if packaged_source else repo_root.resolve()
-                try:
-                    resolved.relative_to(evidence_root)
-                except ValueError:
-                    errors.append(f"{prefix}.repository_evidence escapes the repository: {value}")
-                    continue
-                if not resolved.exists():
-                    errors.append(f"{prefix}.repository_evidence does not exist: {value}")
-    if errors:
-        raise ProtocolError("invalid evidence crosswalk:\n" + "\n".join(errors))
-    return {
-        **crosswalk,
-        "summary": {
-            "count": len(mappings),
-            "by_status": {status: sum(mapping["status"] == status for mapping in mappings) for status in sorted(CROSSWALK_STATUSES)},
-        },
-    }
+    return registry
 
 
 def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> list[str]:
     errors: list[str] = []
-    required = {
-        "program_version",
-        "registry_version",
-        "protocol_version",
-        "compatibility_policy",
-        "result_expiry_days",
-        "assurance_levels",
-        "source_register",
-        "evidence_crosswalk",
-        "suites",
-    }
-    unknown = set(registry) - required
-    missing = required - set(registry)
-    if missing:
-        errors.append(f"missing program fields: {sorted(missing)}")
-    if unknown:
-        errors.append(f"unknown program fields: {sorted(unknown)}")
-    for field in ("program_version", "registry_version"):
-        if not isinstance(registry.get(field), str) or not VERSION_PATTERN.fullmatch(str(registry[field])):
-            errors.append(f"{field} must be semantic version X.Y.Z")
+    required = {"registry_version", "protocol_version", "suites"}
+    if set(registry) != required:
+        errors.append(f"program fields must be exactly {sorted(required)}")
+    if not isinstance(registry.get("registry_version"), str) or not VERSION_PATTERN.fullmatch(str(registry.get("registry_version"))):
+        errors.append("registry_version must be semantic version X.Y.Z")
     if registry.get("protocol_version") != PROTOCOL_VERSION:
         errors.append(f"protocol_version must be {PROTOCOL_VERSION}")
-    if registry.get("compatibility_policy") != "same-major-explicit-cross-version-mapping":
-        errors.append("compatibility_policy must fail closed across incompatible major versions")
-    expiry = registry.get("result_expiry_days")
-    if not isinstance(expiry, int) or isinstance(expiry, bool) or expiry < 1:
-        errors.append("result_expiry_days must be a positive integer")
-    if registry.get("assurance_levels") != list(ASSURANCE_LEVELS):
-        errors.append(f"assurance_levels must be ordered as {list(ASSURANCE_LEVELS)}")
-    if registry.get("source_register") != "program/source-register.toml":
-        errors.append("source_register must be program/source-register.toml")
-    if registry.get("evidence_crosswalk") != "standards/evidence_crosswalk.toml":
-        errors.append("evidence_crosswalk must be standards/evidence_crosswalk.toml")
     suites = registry.get("suites")
     if not isinstance(suites, list) or not suites:
         errors.append("suites must contain at least one entry")
         return errors
 
-    known_profiles = {item["name"]: bool(item["built_in"]) for item in profile_summary()}
+    known_profiles = set(TASK_PROFILES)
     seen: set[str] = set()
     loaded_suites: list[Suite] = []
     for index, item in enumerate(suites, 1):
@@ -713,7 +448,7 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         if not isinstance(item, dict):
             errors.append(f"{prefix} must be a table")
             continue
-        item_required = {
+        fields = {
             "id",
             "family",
             "version",
@@ -727,14 +462,11 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
             "claims",
             "exclusions",
             "external_prerequisites",
+            "path",
         }
-        missing_item = item_required - set(item)
-        unknown_item = set(item) - item_required - {"path"}
-        if missing_item:
-            errors.append(f"{prefix} missing fields: {sorted(missing_item)}")
+        if set(item) != fields:
+            errors.append(f"{prefix} fields must be exactly {sorted(fields)}")
             continue
-        if unknown_item:
-            errors.append(f"{prefix} unknown fields: {sorted(unknown_item)}")
         suite_id = item.get("id")
         if not isinstance(suite_id, str) or not ID_PATTERN.fullmatch(suite_id):
             errors.append(f"{prefix}.id must match {ID_PATTERN.pattern}")
@@ -742,44 +474,19 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
             errors.append(f"duplicate suite id: {suite_id}")
         else:
             seen.add(suite_id)
-        if not isinstance(item.get("family"), str) or not item["family"].strip():
-            errors.append(f"{prefix}.family must be non-empty")
         if not isinstance(item.get("version"), str) or not VERSION_PATTERN.fullmatch(item["version"]):
             errors.append(f"{prefix}.version must be semantic version X.Y.Z")
-        status = item.get("status")
-        assurance = item.get("assurance")
-        if status not in PROGRAM_STATUSES:
-            errors.append(f"{prefix}.status is invalid")
-        elif assurance not in STATUS_ASSURANCE[status]:
-            errors.append(f"{prefix}.assurance {assurance!r} is inconsistent with status {status!r}")
-        if item.get("execution_support") not in EXECUTION_SUPPORT:
-            errors.append(f"{prefix}.execution_support is invalid")
-        if not isinstance(item.get("official_capable"), bool):
-            errors.append(f"{prefix}.official_capable must be boolean")
-        elif item["official_capable"] and status != "approved":
-            errors.append(f"{prefix} cannot be official-capable before approval")
-        for field in ("modalities", "languages", "profiles", "claims", "exclusions", "external_prerequisites"):
-            value = item.get(field)
-            if not isinstance(value, list) or not value or not all(isinstance(part, str) and part.strip() for part in value):
-                errors.append(f"{prefix}.{field} must be a non-empty string array")
-        modalities = item.get("modalities")
-        if isinstance(modalities, list) and not set(modalities) <= MODALITIES:
-            errors.append(f"{prefix}.modalities contains unsupported values: {sorted(set(modalities) - MODALITIES)}")
         profiles = item.get("profiles")
-        if isinstance(profiles, list):
-            missing_profiles = sorted(set(profiles) - set(known_profiles))
+        if isinstance(profiles, list) and profiles:
+            missing_profiles = sorted(set(profiles) - known_profiles)
             if missing_profiles:
                 errors.append(f"{prefix}.profiles contains unknown values: {missing_profiles}")
-            if item.get("execution_support") == "built-in" and any(not known_profiles.get(profile, False) for profile in profiles):
-                errors.append(f"{prefix} claims built-in support for an adapter-required profile")
+        else:
+            errors.append(f"{prefix}.profiles must be a non-empty array")
 
         suite_path = item.get("path")
-        if status == "planned":
-            if suite_path is not None:
-                errors.append(f"{prefix}.path must be omitted while planned")
-            continue
         if not isinstance(suite_path, str) or not suite_path:
-            errors.append(f"{prefix}.path is required after planning")
+            errors.append(f"{prefix}.path must be non-empty")
             continue
         relative = Path(suite_path)
         if relative.is_absolute() or ".." in relative.parts:
@@ -791,31 +498,21 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
         except ValueError:
             errors.append(f"{prefix}.path escapes the repository")
             continue
-        if not absolute.is_dir():
-            errors.append(f"{prefix}.path does not exist: {suite_path}")
-            continue
         try:
             suite = load_suite(absolute)
         except ProtocolError as exc:
             errors.append(f"{prefix}.path is invalid: {exc}")
             continue
         loaded_suites.append(suite)
-        if (suite.name, suite.version, suite.status) != (suite_id, item.get("version"), status):
-            errors.append(
-                f"{prefix} registry identity/status does not match suite: "
-                f"{suite.name}@{suite.version} ({suite.status})"
-            )
-        blueprint_path = absolute / "case_blueprint.toml"
-        if blueprint_path.is_file():
-            errors.extend(f"{prefix}.case_blueprint: {error}" for error in validate_case_blueprint(blueprint_path, suite))
-        reviewer_path = absolute / "review" / "reviewer_qualification.jsonl"
-        if reviewer_path.is_file():
-            errors.extend(f"{prefix}.reviewer_qualification: {error}" for error in validate_reviewer_fixtures(reviewer_path, suite))
-        judge_blueprint_path = absolute / "judge" / "qualification_blueprint.toml"
-        if judge_blueprint_path.is_file():
-            errors.extend(
-                f"{prefix}.judge_qualification: {error}"
-                for error in validate_judge_qualification_blueprint(judge_blueprint_path, suite)
-            )
+        if (suite.name, suite.version, suite.status) != (suite_id, item.get("version"), item.get("status")):
+            errors.append(f"{prefix} registry identity/status does not match suite: {suite.name}@{suite.version} ({suite.status})")
+        for label, relative_path, validator in (
+            ("case_blueprint", Path("case_blueprint.toml"), validate_case_blueprint),
+            ("reviewer_qualification", Path("review/reviewer_qualification.jsonl"), validate_reviewer_fixtures),
+            ("judge_qualification", Path("judge/qualification_blueprint.toml"), validate_judge_qualification_blueprint),
+        ):
+            artifact = absolute / relative_path
+            if artifact.is_file():
+                errors.extend(f"{prefix}.{label}: {error}" for error in validator(artifact, suite))
     errors.extend(validate_cross_suite_duplicates(loaded_suites))
     return errors

@@ -17,7 +17,7 @@ from cavada_eval.cli import main, parser
 from cavada_eval.performance import (
     _cache_nonce,
     _cell_metrics,
-    _cell_metrics_for_protocol,
+    _cell_metrics_v2,
     _expand_cells,
     _messages,
     _open_loop_offsets,
@@ -41,7 +41,7 @@ from cavada_eval.system_evidence import system_configuration_id
 
 
 def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:
-    (root / "PERFORMANCE_PROTOCOL_V1_1.md").write_bytes((Path(__file__).parents[1] / "PERFORMANCE_PROTOCOL_V1_1.md").read_bytes())
+    (root / "PERFORMANCE_PROTOCOL_V2.md").write_bytes((Path(__file__).parents[1] / "PERFORMANCE_PROTOCOL_V2.md").read_bytes())
     workload = root / "workload.jsonl"
     workload.write_text(
         json.dumps({"id": "ctx-8", "context_tokens": 8, "repeat_text": " datum", "repeat_count": 8}) + "\n",
@@ -50,14 +50,18 @@ def _files(root: Path, endpoint: str, runtime_id: str) -> tuple[Path, Path]:
     plan = root / "plan.toml"
     workload_hash = sha256_file(workload)
     plan.write_text(
-        f"""plan_version = "1.0.0"
-revision = "1.0.0"
-name = "test-serving-v1"
+        f"""plan_version = "2.0.0"
+revision = "2.0.0"
+name = "test-serving-v2"
 description = "Bounded test campaign."
-profile = "llm-serving-v1"
+profile = "llm-serving-v2"
 data_classification = "synthetic"
+[load_generator]
+minimum_dispatch_rate_fraction = 0.98
+maximum_dispatch_lag_p95_ms = 100
+maximum_dispatch_lag_ms = 1000
 [workload]
-id = "test-workload-v1"
+id = "test-workload-v2"
 revision = "1.0.0"
 path = "workload.jsonl"
 sha256 = "{workload_hash}"
@@ -258,7 +262,7 @@ def test_generation_only_campaign_and_exact_comparison(tmp_path: Path) -> None:
                     "engagement_id": "local-performance-engagement-1",
                     "execution_owner_id": "executor-1",
                     "scope": "Execute the exact hash-bound test performance campaign.",
-                    "protocol_sha256": sha256_file(left_root / "PERFORMANCE_PROTOCOL_V1_1.md"),
+                    "protocol_sha256": sha256_file(left_root / "PERFORMANCE_PROTOCOL_V2.md"),
                     "plan_sha256": left_plan_object.sha256,
                     "workload_sha256": left_plan_object.workload_sha256,
                     "runtime_sha256": left_runtime_object.sha256,
@@ -539,7 +543,7 @@ def test_performance_execution_record_binds_exact_inputs(tmp_path: Path) -> None
         "engagement_id": "local-performance-engagement-1",
         "execution_owner_id": "executor-1",
         "scope": "Execute the exact hash-bound test performance campaign.",
-        "protocol_sha256": sha256_file(tmp_path / "PERFORMANCE_PROTOCOL_V1_1.md"),
+        "protocol_sha256": sha256_file(tmp_path / "PERFORMANCE_PROTOCOL_V2.md"),
         "plan_sha256": plan.sha256,
         "workload_sha256": plan.workload_sha256,
         "runtime_sha256": runtime.sha256,
@@ -589,7 +593,7 @@ def test_performance_engagement_binds_exact_inputs_owner_and_validity(tmp_path: 
         "status": "approved",
         "scope": "Run and release this exact hash-bound performance campaign.",
         "execution_owner_id": execution_record["execution_owner_id"],
-        "protocol_sha256": sha256_file(tmp_path / "PERFORMANCE_PROTOCOL_V1_1.md"),
+        "protocol_sha256": sha256_file(tmp_path / "PERFORMANCE_PROTOCOL_V2.md"),
         "plan_sha256": plan.sha256,
         "workload_sha256": plan.workload_sha256,
         "runtime_sha256": runtime.sha256,
@@ -1089,8 +1093,11 @@ def test_campaign_cools_down_between_repetition_blocks(tmp_path: Path, monkeypat
 
 
 def test_performance_preset_accepts_runtime_without_explicit_plan() -> None:
-    args = parser().parse_args(["perf", "run", "runtime.toml", "--preset", "quick"])
-    assert args.plan is None and args.runtime == "runtime.toml" and args.preset == "quick"
+    args = parser().parse_args(["perf", "run", "runtime.toml", "--preset", "reference"])
+    assert args.plan is None and args.runtime == "runtime.toml" and args.preset == "reference"
+    for retired in ("smoke", "quick", "standard", "full"):
+        with pytest.raises(SystemExit):
+            parser().parse_args(["perf", "run", "runtime.toml", "--preset", retired])
 
 
 def test_performance_cli_accepts_explicit_integrity_inputs() -> None:
@@ -1125,17 +1132,11 @@ def test_runtime_requires_exact_model_artifact_digest(tmp_path: Path) -> None:
         load_performance_runtime(runtime)
 
 
-def test_builtin_quick_and_standard_plans_keep_declared_request_budgets() -> None:
+@pytest.mark.parametrize("name", ("llm-serving-smoke-v1.toml", "llm-serving-quick-v1.toml", "llm-serving-standard-v1.toml", "llm-serving-v1.toml"))
+def test_released_v1_plans_are_preserved_but_not_executable(name: str) -> None:
     root = Path(__file__).parents[1] / "performance" / "plans"
-    quick = performance_plan_summary(load_performance_plan(root / "llm-serving-quick-v1.toml"))
-    standard = performance_plan_summary(load_performance_plan(root / "llm-serving-standard-v1.toml"))
-    assert (quick["planned_requests"], quick["cells_per_repetition"]) == (98, 12)
-    assert (standard["planned_requests"], standard["cells_per_repetition"]) == (825, 34)
-    assert (quick["prefix_cache_policy"], quick["open_loop_arrival_distribution"], quick["minimum_p99_observations"]) == (
-        "unspecified",
-        "fixed",
-        1,
-    )
+    with pytest.raises(ProtocolError, match="plan_version 2.0.0"):
+        load_performance_plan(root / name)
 
 
 def test_reference_v2_preregisters_cache_arrivals_and_p99_resolution(tmp_path: Path) -> None:
@@ -1243,7 +1244,7 @@ def test_open_loop_saturation_cannot_pass_slo_or_goodput() -> None:
     assert legacy["goodput_requests"] == 100
     assert legacy["goodput_requests_per_second"] == 1
 
-    saturated = _cell_metrics_for_protocol(observations(60_000), cell, plan, 100.0, 1, None, "2.0.0")
+    saturated = _cell_metrics_v2(observations(60_000), cell, plan, 100.0, 1, None)
     assert saturated["status"] == "invalid-loadgen"
     assert saturated["client_queue_ms"]["p95"] == 60_000
     assert saturated["dispatch_lag_ms"]["p95"] == 60_000
@@ -1257,7 +1258,7 @@ def test_open_loop_saturation_cannot_pass_slo_or_goodput() -> None:
     assert saturated["goodput_requests"] == 0
     assert saturated["goodput_requests_per_second"] == 0
 
-    healthy = _cell_metrics_for_protocol(observations(0), cell, plan, 100.0, 1, None, "2.0.0")
+    healthy = _cell_metrics_v2(observations(0), cell, plan, 100.0, 1, None)
     assert healthy["status"] == "completed"
     assert healthy["load_generator_valid"] is True
     assert healthy["dispatch_rate_fidelity"] == 1
@@ -1303,7 +1304,7 @@ def test_v2_closed_loop_uses_contact_latency_and_has_no_open_loop_metrics() -> N
         for index in range(100)
     ]
 
-    metrics = _cell_metrics_for_protocol(observations, cell, plan, 101.0, 1, None, "2.0.0")
+    metrics = _cell_metrics_v2(observations, cell, plan, 101.0, 1, None)
 
     assert metrics["status"] == "completed"
     assert metrics["serving_slo_passed"] is True
@@ -1364,7 +1365,7 @@ def test_v2_open_loop_drain_uses_distinct_measurement_and_throughput_windows() -
             }
         )
 
-    metrics = _cell_metrics_for_protocol(observations, cell, plan, 101.0, 1, None, "2.0.0")
+    metrics = _cell_metrics_v2(observations, cell, plan, 101.0, 1, None)
 
     assert metrics["offered_requests"] == 100
     assert metrics["dispatched_requests"] == 100
@@ -1398,7 +1399,6 @@ def test_v2_all_skipped_csv_keeps_stable_v2_columns(tmp_path: Path) -> None:
                 "reason": "unsupported context",
             }
         ],
-        protocol_version="2.0.0",
     )
 
     header, row = path.read_text(encoding="utf-8").splitlines()
@@ -1453,7 +1453,7 @@ def test_v2_open_loop_window_boundary_is_inclusive_to_the_nanosecond() -> None:
         for boundary in (window_end_ns, window_end_ns + 1)
     ]
 
-    metrics = _cell_metrics_for_protocol(observations, cell, plan, 100.000000001, 1, None, "2.0.0")
+    metrics = _cell_metrics_v2(observations, cell, plan, 100.000000001, 1, None)
 
     assert metrics["offered_requests"] == 2
     assert metrics["dispatched_requests"] == 1
@@ -1514,11 +1514,18 @@ output_per_million = 2
     def response_error(*_args: object, **kwargs: object) -> tuple[dict[str, object], dict[str, object]]:
         nonlocal calls
         calls += 1
+        started_ns = time.perf_counter_ns()
+        finished_ns = time.perf_counter_ns()
         raise _ResponseError(
             "provider returned an error after reporting usage",
             request={"model": "test-model"},
             raw={"model": "test-model", "usage": {"prompt_tokens": 8, "completion_tokens": 2}},
-            transport={"request_id": kwargs["request_id"], "attempts": 1},
+            transport={
+                "request_id": kwargs["request_id"],
+                "attempts": 1,
+                "started_monotonic_ns": started_ns,
+                "finished_monotonic_ns": finished_ns,
+            },
         )
 
     monkeypatch.setattr("cavada_eval.performance._post_openai_stream", response_error)

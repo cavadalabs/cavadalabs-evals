@@ -9,8 +9,9 @@ import pytest
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.performance import (
     _campaign_summary,
-    _cell_metrics,
+    _cell_metrics_v2,
     _expand_cells,
+    _performance_reports,
     _request_material,
     _write_performance_comparison_reports,
     compare_performance_runs,
@@ -27,14 +28,14 @@ def _run(
     *,
     gpu_model: str = "gpu-a",
     max_context_tokens: int = 10,
-    plan_name: str = "comparison-test-v1",
+    plan_name: str = "comparison-test-v2",
     evidence_id: str | None = None,
     model_revision: str = "model-revision",
     error_block: int | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     protocol = root / "protocol_snapshot.md"
-    protocol.write_bytes((Path(__file__).parents[1] / "PERFORMANCE_PROTOCOL_V1_0.md").read_bytes())
+    protocol.write_bytes((Path(__file__).parents[1] / "PERFORMANCE_PROTOCOL_V2.md").read_bytes())
     workload = root / "workload_snapshot.jsonl"
     workload.write_text(
         "".join(json.dumps({"id": f"ctx-{context}", "context_tokens": context, "prompt": "test"}) + "\n" for context in (8, 16)),
@@ -43,18 +44,23 @@ def _run(
     workload_hash = sha256_file(workload)
     plan = root / "plan_snapshot.toml"
     plan.write_text(
-        f'''plan_version = "1.0.0"
-revision = "1.0.0"
+        f'''plan_version = "2.0.0"
+revision = "2.0.0"
 name = "{plan_name}"
 description = "Comparison test."
-profile = "llm-serving-v1"
+profile = "llm-serving-v2"
 data_classification = "synthetic"
+[load_generator]
+minimum_dispatch_rate_fraction = 0.98
+maximum_dispatch_lag_p95_ms = 100
+maximum_dispatch_lag_ms = 1000
 [workload]
-id = "comparison-workload-v1"
-revision = "1.0.0"
+id = "comparison-workload-v2"
+revision = "2.0.0"
 path = "workload_snapshot.jsonl"
 sha256 = "{workload_hash}"
 mode = "iso-prompt"
+prefix_cache_policy = "diverse"
 [execution]
 repetitions = 2
 warmup_requests = 0
@@ -83,6 +89,7 @@ goodput_ttft_ms = 100
 goodput_e2e_ms = 100
 maximum_error_rate = 0
 minimum_output_tokens_fraction = 1
+minimum_p99_observations = 1
 [[scenarios]]
 id = "closed"
 arrival = "closed-loop"
@@ -157,8 +164,17 @@ launch_command_sanitized = "test-server"
                         "batch_started_monotonic_ns": batch_started_ns,
                         "started_monotonic_ns": batch_started_ns,
                     }
+                    schedule = {
+                        "dispatch_monotonic_ns": transport_started_ns,
+                        "first_token_monotonic_ns": first_content_ns,
+                        "completed_monotonic_ns": transport_finished_ns,
+                        "dispatch_lag_ms": 0.0,
+                        "scheduled_ttft_ms": 10.0,
+                        "scheduled_e2e_ms": e2e_ms,
+                    }
                     observation = {
                         **base,
+                        **schedule,
                         "finished_monotonic_ns": finished_ns,
                         "status": "success",
                         "reported_model": "test-model",
@@ -188,8 +204,10 @@ launch_command_sanitized = "test-server"
                             "response_bytes",
                         ):
                             observation.pop(field)
+                        for field in ("first_token_monotonic_ns", "scheduled_ttft_ms", "scheduled_e2e_ms"):
+                            observation.pop(field)
                         observation.update(status="error", error_type="TimeoutError", error="timed out after provider usage")
-                    _, payload = _request_material(
+                    cache_nonce, payload = _request_material(
                         plan_object,
                         runtime.config,
                         cell,
@@ -199,6 +217,8 @@ launch_command_sanitized = "test-server"
                         "measured",
                         {},
                     )
+                    base["cache_nonce"] = cache_nonce
+                    observation["cache_nonce"] = cache_nonce
                     request_bytes = len(json.dumps(payload, ensure_ascii=False).encode())
                     observation["request_bytes"] = request_bytes
                     requests.append(
@@ -211,6 +231,7 @@ launch_command_sanitized = "test-server"
                     responses.append(
                         {
                             **base,
+                            **{field: observation[field] for field in schedule if field in observation},
                             "finished_monotonic_ns": finished_ns,
                             "terminal": True,
                             "network_contacted": True,
@@ -250,7 +271,7 @@ launch_command_sanitized = "test-server"
                     )
                     observations.append(observation)
                     cell_observations.append(observation)
-                metric = _cell_metrics(
+                metric = _cell_metrics_v2(
                     cell_observations,
                     cell,
                     plan_object,
@@ -285,27 +306,34 @@ launch_command_sanitized = "test-server"
         system_evidence = {**evidence, "sha256": sha256_file(evidence_path)}
     asset_set_hash = sha256_bytes(b"{}")
     manifest = {
-        "performance_protocol_version": "1.0.0",
+        "performance_protocol_version": "2.0.0",
         "protocol_sha256": sha256_file(protocol),
-        "plan_version": "1.0.0",
-        "report_version": "1.0.0",
+        "plan_version": "2.0.0",
+        "report_version": "2.0.0",
         "run_id": f"run-{runtime_id}",
         "status": "completed-with-errors" if with_errors else "completed",
         "official_requested": False,
         "officially_valid": False,
         "plan": {
             "name": plan_name,
-            "revision": "1.0.0",
+            "revision": "2.0.0",
             "sha256": sha256_file(plan),
-            "profile": "llm-serving-v1",
+            "profile": "llm-serving-v2",
             "data_classification": "synthetic",
             "open_loop_arrival_distribution": "fixed",
             "execution_seed": 1,
+            "minimum_p99_observations": 1,
+            "load_generator": {
+                "minimum_dispatch_rate_fraction": 0.98,
+                "maximum_dispatch_lag_p95_ms": 100,
+                "maximum_dispatch_lag_ms": 1000,
+            },
         },
         "workload": {
-            "id": "comparison-workload-v1",
-            "revision": "1.0.0",
+            "id": "comparison-workload-v2",
+            "revision": "2.0.0",
             "mode": "iso-prompt",
+            "prefix_cache_policy": "diverse",
             "sha256": workload_hash,
             "asset_set_sha256": asset_set_hash,
             "assets": {},
@@ -331,6 +359,7 @@ launch_command_sanitized = "test-server"
             "total": len(rows),
             "completed": len(completed),
             "with_errors": len(with_errors),
+            "invalid_loadgen": 0,
             "skipped": len(skipped),
             "slo_passed": sum(row["slo_passed"] is True for row in evaluated),
             "slo_failed": sum(row["slo_passed"] is False for row in evaluated),
@@ -348,8 +377,10 @@ launch_command_sanitized = "test-server"
             "campaign_complete": True,
         },
     }
-    (root / "summary.json").write_text(json.dumps(_campaign_summary(manifest, rows, observations)), encoding="utf-8")
+    summary = _campaign_summary(manifest, rows, observations)
+    (root / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _performance_reports(root, manifest, summary, rows)
     write_bundle(root)
     return root
 
@@ -383,7 +414,10 @@ def test_performance_comparison_accounts_for_cells_and_configuration(tmp_path: P
     assert "not causal" in result["limitations"]
     assert verify_bundle(tmp_path / "comparison")["valid"] is True
     assert verify_performance_comparison(tmp_path / "comparison")["semantic_valid"] is False
-    assert verify_performance_comparison(tmp_path / "comparison", source_run_dirs=[left, right])["semantic_valid"] is True
+    assert verify_bundle(left)["signature"] == verify_bundle(right)["signature"] == "absent"
+    source_verification = verify_performance_comparison(tmp_path / "comparison", source_run_dirs=[left, right])
+    assert source_verification["semantic_valid"] is True
+    assert source_verification["authenticity"] == "unverified"
     with pytest.raises(ProtocolError, match="source runs do not match recorded bundle hashes or order"):
         verify_performance_comparison(tmp_path / "comparison", source_run_dirs=[right, left])
 
@@ -674,7 +708,7 @@ def test_performance_comparison_rejects_nonfinalized_or_version_mismatched_runs(
     elif corruption == "reconciliation":
         manifest["request_reconciliation"]["campaign_complete"] = False
     elif corruption == "version":
-        manifest["report_version"] = "2.0.0"
+        manifest["report_version"] = "1.0.0"
     else:
         manifest["officially_valid"] = True
     _write_manifest(right, manifest)
@@ -685,15 +719,12 @@ def test_performance_comparison_rejects_nonfinalized_or_version_mismatched_runs(
     assert not output.exists()
 
 
-def test_performance_comparison_rejects_forged_historical_official_status(tmp_path: Path) -> None:
-    left = _run(tmp_path / "left", "runtime-a")
+def test_performance_comparison_rejects_historical_v1_sources(tmp_path: Path) -> None:
+    left = Path(__file__).parents[1] / "tests" / "fixtures" / "performance-v1.0-source" / "bundle"
     right = _run(tmp_path / "right", "runtime-b")
-    manifest = _manifest(right)
-    manifest["official_requested"] = manifest["officially_valid"] = True
-    _write_manifest(right, manifest)
 
     output = tmp_path / "comparison"
-    with pytest.raises(ProtocolError, match="official performance comparison requires the current performance protocol"):
+    with pytest.raises(ProtocolError, match="unsupported performance protocol version"):
         compare_performance_runs([left, right], output)
     assert not output.exists()
 
@@ -759,7 +790,7 @@ def test_performance_comparison_rejects_self_consistent_noncanonical_protocol(tm
     _write_manifest(left, manifest)
 
     output = tmp_path / "comparison"
-    with pytest.raises(ProtocolError, match="not canonical for version 1.0.0"):
+    with pytest.raises(ProtocolError, match="not canonical for version 2.0.0"):
         compare_performance_runs([left, right], output)
     assert not output.exists()
 

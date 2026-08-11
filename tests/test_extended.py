@@ -11,17 +11,12 @@ from typing import Any
 
 import pytest
 
-import cavada_eval.annotations as annotation_module
 import cavada_eval.assets as asset_module
-from cavada_eval.annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.comparison import _analysis_rows
-from cavada_eval.external import import_external_results
-from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, error_rate, normalize_text, retrieval_scores
-from cavada_eval.pairwise import _winner
+from cavada_eval.metrics import contains_pii_like, deterministic_evaluation, normalize_text
 from cavada_eval.pilot import audit_pilot_campaign
 from cavada_eval.program import (
-    load_evidence_crosswalk,
     load_program_registry,
     validate_case_blueprint,
     validate_cross_suite_duplicates,
@@ -190,8 +185,7 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         run_dir = tmp_path / f"run-{index}"
         run_dir.mkdir()
         scenario_rows = [
-            {"case_id": f"scenario-{scenario}", "category": "quality", "status": "pass" if scenario < passed else "fail"}
-            for scenario in range(328)
+            {"case_id": f"scenario-{scenario}", "category": "quality", "status": "pass" if scenario < passed else "fail"} for scenario in range(328)
         ]
         case_rows = [
             {
@@ -397,18 +391,14 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
     repo = Path.cwd()
     registry_path = repo / "program" / "registry.toml"
     registry = load_program_registry(registry_path, repo_root=repo)
-    assert registry["summary"]["by_status"]["candidate"] == 2
-    assert registry["summary"]["by_status"]["draft"] == 1
-    assert registry["summary"]["by_status"]["planned"] == 15
-    assert registry["summary"]["official_capable"] == 0
-    assert registry["summary"]["sources"]["count"] == 30
-    assert registry["summary"]["sources"]["by_official_use"]["blocked"] == 1
-    assert registry["summary"]["crosswalk"]["count"] == 18
-    assert registry["summary"]["crosswalk"]["by_status"]["implemented-partial"] == 5
+    assert [(suite["id"], suite["status"]) for suite in registry["suites"]] == [
+        ("security-privacy-smoke-v1", "candidate"),
+        ("cavada-core-assistant-text-v1", "draft"),
+    ]
 
     duplicate = tmp_path / "registry.toml"
     duplicate.write_text(
-        registry_path.read_text(encoding="utf-8").replace('id = "memo4345-v1"', 'id = "security-privacy-smoke-v1"', 1),
+        registry_path.read_text(encoding="utf-8").replace('id = "cavada-core-assistant-text-v1"', 'id = "security-privacy-smoke-v1"', 1),
         encoding="utf-8",
     )
     try:
@@ -417,50 +407,6 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
         assert "duplicate suite id" in str(exc)
     else:  # pragma: no cover - assertion branch
         raise AssertionError("duplicate program suite identity was accepted")
-
-
-def test_evidence_crosswalk_rejects_unregistered_sources(tmp_path: Path) -> None:
-    crosswalk = tmp_path / "crosswalk.toml"
-    crosswalk.write_text(
-        '''crosswalk_version = "1.0.0"
-reviewed_at = "2026-08-05"
-review_due = "2026-11-03"
-claim_policy = "No compliance claim."
-[[mappings]]
-id = "unknown-framework"
-source_id = "not-registered"
-source_version = "1"
-status = "reference-only"
-scope = "test"
-repository_evidence = ["test"]
-external_evidence = ["test"]
-limitations = ["test"]
-'''
-    )
-    with pytest.raises(ProtocolError, match="absent from the source register"):
-        load_evidence_crosswalk(crosswalk, {"known-source"}, repo_root=tmp_path)
-
-
-def test_evidence_crosswalk_rejects_missing_repository_evidence(tmp_path: Path) -> None:
-    crosswalk = tmp_path / "crosswalk.toml"
-    crosswalk.write_text(
-        '''crosswalk_version = "1.0.0"
-reviewed_at = "2026-08-05"
-review_due = "2026-11-03"
-claim_policy = "No compliance claim."
-[[mappings]]
-id = "known-framework"
-source_id = "known-source"
-source_version = "1"
-status = "reference-only"
-scope = "test"
-repository_evidence = ["missing.md"]
-external_evidence = ["test"]
-limitations = ["test"]
-'''
-    )
-    with pytest.raises(ProtocolError, match="repository_evidence does not exist: missing.md"):
-        load_evidence_crosswalk(crosswalk, {"known-source"}, repo_root=tmp_path)
 
 
 def test_cross_suite_duplicates_are_rejected(tmp_path: Path) -> None:
@@ -500,23 +446,17 @@ def test_judge_qualification_blueprint_rejects_underpowered_samples(tmp_path: Pa
     assert "module[1].pass_target does not achieve minimum_power" in errors
 
 
-def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
+def test_deterministic_structured_and_tool_metrics() -> None:
     result = deterministic_evaluation(
         {
             "expected_json": True,
             "json_schema": {"type": "object", "required": ["answer"], "properties": {"answer": {"type": "string"}}, "additionalProperties": False},
             "expected_json_value": {"answer": "ok"},
-            "expected_retrieval_ids": ["a", "b"],
-            "retrieval_k": 2,
-            "retrieval_minimums": {"recall_at_k": 1.0},
         },
         '{"answer":"ok"}',
-        retrieved_ids=["a", "b"],
     )
     assert result["hard_pass"] is True
     assert result["scores"]["structured_field_accuracy"] == 1.0
-    assert retrieval_scores(["a"], ["a"], 1)["ndcg_at_k"] == 1.0
-    assert error_rate("hello world".split(), "hello word".split()) == 0.5
 
     null_result = deterministic_evaluation(
         {
@@ -539,7 +479,7 @@ def test_deterministic_structured_retrieval_and_transcript_metrics() -> None:
     empty_structure = deterministic_evaluation({"expected_json_value": {"items": []}}, '{"other":[]}')
     assert empty_structure["checks"]["structured_field_accuracy"] is False
 
-    malformed_tools = deterministic_evaluation({}, "answer", tool_calls=["not-an-object"])
+    malformed_tools = deterministic_evaluation({"expected_tools": ["search"]}, "answer", tool_calls=["not-an-object"])
     assert malformed_tools["checks"]["tool_calls_valid"] is False
     assert malformed_tools["hard_pass"] is False
 
@@ -682,51 +622,17 @@ def test_truncated_png_is_rejected_without_decompression(tmp_path: Path) -> None
         raise AssertionError("truncated PNG was accepted")
 
 
-def test_pairwise_judgment_schema_is_strict() -> None:
-    raw = {"choices": [{"message": {"content": '{"winner":"A","reason":"better","confidence":0.8}'}}]}
-    assert _winner(raw) == ("A", "better", 0.8)
-    try:
-        _winner({"choices": [{"message": {"content": '{"winner":"baseline"}'}}]})
-    except ProtocolError:
-        pass
-    else:  # pragma: no cover - assertion branch
-        raise AssertionError("malformed pairwise output was accepted")
-
-
-def test_free_form_external_import_is_rejected_before_output(tmp_path: Path) -> None:
-    source = tmp_path / "external.json"
-    source.write_text(
-        json.dumps(
-            {
-                "adapter_version": "1.0.0",
-                "source": {
-                    "name": "fixture",
-                    "version": "1",
-                    "commit": "abc123",
-                    "license": "test-only",
-                    "dataset_sha256": "a" * 64,
-                    "evaluator_sha256": "b" * 64,
-                    "invocation": "fixture --offline",
-                },
-                "suite": {"name": "fixture"},
-                "results": [{"case_id": "one", "status": "pass"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    output = tmp_path / "import"
-    with pytest.raises(ProtocolError, match="unsupported external adapter"):
-        import_external_results(source, output)
-    assert not output.exists()
-
-
 def test_recorded_target_adapter_is_offline_and_pinned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = _suite(tmp_path)
     responses = root / "responses.jsonl"
     responses.write_text(json.dumps({"case_id": "one", "answer": "Recorded answer", "model": "recorded-model"}) + "\n", encoding="utf-8")
-    config = (root / "suite.toml").read_text(encoding="utf-8").replace(
-        'kind = "json"',
-        f'kind = "recorded"\nresponses = "responses.jsonl"\nresponses_sha256 = "{sha256_file(responses)}"',
+    config = (
+        (root / "suite.toml")
+        .read_text(encoding="utf-8")
+        .replace(
+            'kind = "json"',
+            f'kind = "recorded"\nresponses = "responses.jsonl"\nresponses_sha256 = "{sha256_file(responses)}"',
+        )
     )
     (root / "suite.toml").write_text(config, encoding="utf-8")
     suite = load_suite(root)
@@ -768,171 +674,6 @@ def test_encoded_asset_hash_and_payload_use_one_read(tmp_path: Path, monkeypatch
     assert base64.b64decode(encoded[0]["data_base64"]) == original
 
 
-def test_annotation_package_is_blind_and_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root = _suite(tmp_path)
-    suite = load_suite(root)
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    raw_path = run_dir / "raw_responses.jsonl"
-    raw_path.write_text(
-        json.dumps({"case_id": "one", "repetition": 1, "reported_model": "secret-model", "response": {"answer": "Anonymous answer", "model": "secret-model"}}) + "\n",
-        encoding="utf-8",
-    )
-    source_manifest = {
-        "protocol_version": suite.config["protocol_version"],
-        "run_id": "annotation-source",
-        "status": "passed",
-        "suite": {
-            "name": suite.name,
-            "version": suite.version,
-            "dataset_sha256": sha256_file(suite.dataset_path),
-            "rubric_sha256": sha256_file(suite.rubric_path),
-            "suite_config_sha256": sha256_file(suite.root / "suite.toml"),
-        },
-        "target": {"label": "secret-model"},
-        "artifacts": {"raw_responses.jsonl": sha256_file(raw_path)},
-    }
-    (run_dir / "manifest.json").write_text(json.dumps(source_manifest) + "\n", encoding="utf-8")
-    write_bundle(run_dir)
-    output = tmp_path / "annotations"
-    linkage = tmp_path / "restricted" / "linkage.jsonl"
-    original_annotation_sha256_file = annotation_module.sha256_file
-
-    def mutate_raw_after_hash(path: Path) -> str:
-        digest = original_annotation_sha256_file(path)
-        if path.resolve() == raw_path.resolve():
-            raw_path.write_text(
-                json.dumps({"case_id": "one", "repetition": 1, "response": {"answer": "Mutated answer", "model": "secret-model"}}) + "\n",
-                encoding="utf-8",
-            )
-        return digest
-
-    monkeypatch.setattr(annotation_module, "sha256_file", mutate_raw_after_hash)
-    manifest = export_annotation_package(suite, run_dir, output, linkage)
-    monkeypatch.setattr(annotation_module, "sha256_file", original_annotation_sha256_file)
-    annotation = json.loads((output / "annotations.jsonl").read_text(encoding="utf-8"))
-    public_text = json.dumps(annotation) + (output / "package_manifest.json").read_text(encoding="utf-8")
-    assert manifest["identity_blinded"] is True and "Anonymous answer" in public_text
-    assert "Mutated answer" not in public_text
-    assert "secret-model" not in public_text and "split" not in annotation
-    assert not (output / "linkage.restricted.jsonl").exists() and '"case_id": "one"' in linkage.read_text(encoding="utf-8")
-    annotation.update(
-        {
-            "label": "pass",
-            "criterion_findings": {"correct": True},
-            "rationale": "The response meets the criterion.",
-            "confidence": 0.9,
-        }
-    )
-    original_response = annotation["response"]
-    annotation["response"] = "Changed after export"
-    (output / "annotations.jsonl").write_text(json.dumps(annotation) + "\n", encoding="utf-8")
-    with pytest.raises(ProtocolError, match="restricted linkage is invalid"):
-        ingest_annotations(
-            output,
-            linkage,
-            tmp_path / "mutated-review",
-            reviewer_id="reviewer-x",
-            qualification_evidence="qualification-x",
-            conflicts="none declared",
-        )
-    annotation["response"] = original_response
-    (output / "annotations.jsonl").write_text(json.dumps(annotation) + "\n", encoding="utf-8")
-    left = tmp_path / "review-left"
-    right = tmp_path / "review-right"
-    completed_annotations_raw = (output / "annotations.jsonl").read_bytes()
-
-    def mutate_annotations_before_hash(path: Path) -> str:
-        if path.resolve() == (output / "annotations.jsonl").resolve():
-            changed = {**annotation, "rationale": "Changed after parsing."}
-            path.write_text(json.dumps(changed) + "\n", encoding="utf-8")
-        return original_annotation_sha256_file(path)
-
-    monkeypatch.setattr(annotation_module, "sha256_file", mutate_annotations_before_hash)
-    left_manifest = ingest_annotations(
-        output,
-        linkage,
-        left,
-        reviewer_id="reviewer-a",
-        qualification_evidence="qualification-a",
-        conflicts="none declared",
-    )
-    monkeypatch.setattr(annotation_module, "sha256_file", original_annotation_sha256_file)
-    assert left_manifest["completed_annotations_sha256"] == sha256_bytes(completed_annotations_raw)
-    annotation.update(
-        {
-            "label": "fail",
-            "criterion_findings": {"correct": False},
-            "rationale": "The response fails the criterion.",
-            "failure_severity": "medium",
-            "confidence": 0.8,
-        }
-    )
-    (output / "annotations.jsonl").write_text(json.dumps(annotation) + "\n", encoding="utf-8")
-    ingest_annotations(output, linkage, right, reviewer_id="reviewer-b", qualification_evidence="qualification-b", conflicts="none declared")
-    right_manifest_path = right / "evidence_manifest.json"
-    right_manifest = json.loads(right_manifest_path.read_text(encoding="utf-8"))
-    right_manifest["source_run_bundle_sha256"] = "f" * 64
-    right_manifest_path.write_text(json.dumps(right_manifest) + "\n", encoding="utf-8")
-    with pytest.raises(ProtocolError, match="same exact source package"):
-        annotation_agreement(left, right, tmp_path / "mismatched-agreement", bootstrap_samples=100)
-    right_manifest["source_run_bundle_sha256"] = manifest["source_run_bundle_sha256"]
-    right_manifest_path.write_text(json.dumps(right_manifest) + "\n", encoding="utf-8")
-    agreement_dir = tmp_path / "agreement"
-    left_labels_path = left / "labels.jsonl"
-
-    def mutate_labels_after_hash(path: Path) -> str:
-        digest = original_annotation_sha256_file(path)
-        if path.resolve() == left_labels_path.resolve():
-            changed = json.loads(left_labels_path.read_text(encoding="utf-8"))
-            changed.update(
-                {
-                    "label": "fail",
-                    "criterion_findings": {"correct": False},
-                    "rationale": "Changed after hashing.",
-                    "failure_severity": "medium",
-                }
-            )
-            left_labels_path.write_text(json.dumps(changed) + "\n", encoding="utf-8")
-        return digest
-
-    monkeypatch.setattr(annotation_module, "sha256_file", mutate_labels_after_hash)
-    agreement = annotation_agreement(left, right, agreement_dir, bootstrap_samples=100)
-    monkeypatch.setattr(annotation_module, "sha256_file", original_annotation_sha256_file)
-    assert agreement["raw_agreement"] == 0 and agreement["disagreements"] == 1
-    assert agreement["source_package"]["source_run_bundle_sha256"] == manifest["source_run_bundle_sha256"]
-    disagreement = json.loads((agreement_dir / "disagreements.jsonl").read_text(encoding="utf-8"))
-    assert "reviewer_id" not in json.dumps(disagreement)
-    disagreement["decision"] = {
-        "label": "pass",
-        "criterion_findings": {"correct": True},
-        "rationale": "The response satisfies the governing criterion.",
-        "failure_severity": None,
-        "confidence": 0.95,
-        "escalation_flags": [],
-    }
-    (agreement_dir / "disagreements.jsonl").write_text(json.dumps(disagreement) + "\n", encoding="utf-8")
-    adjudication_dir = tmp_path / "adjudication"
-    adjudication = ingest_adjudications(
-        agreement_dir,
-        left,
-        right,
-        adjudication_dir,
-        adjudicator_id="adjudicator-c",
-        qualification_evidence="qualification-c",
-        conflicts="none declared",
-    )
-    preserved = json.loads((adjudication_dir / "adjudications.jsonl").read_text(encoding="utf-8"))
-    assert adjudication["adjudications"] == 1
-    assert {review["label"] for review in preserved["source_reviews"]} == {"pass", "fail"}
-    try:
-        export_annotation_package(suite, run_dir, output, linkage)
-    except ProtocolError as exc:
-        assert "already exists" in str(exc)
-    else:  # pragma: no cover - assertion branch
-        raise AssertionError("annotation package overwrote existing evidence")
-
-
 def test_openai_target_prepends_hash_pinned_system_prompt(tmp_path: Path) -> None:
     class Handler(BaseHTTPRequestHandler):
         payload: dict[str, object] = {}
@@ -952,9 +693,13 @@ def test_openai_target_prepends_hash_pinned_system_prompt(tmp_path: Path) -> Non
     root = _suite(tmp_path)
     system_prompt = root / "system.txt"
     system_prompt.write_text("Fixed system prompt.\n", encoding="utf-8")
-    config = (root / "suite.toml").read_text(encoding="utf-8").replace(
-        'kind = "json"',
-        f'kind = "openai"\nsystem_prompt = "system.txt"\nsystem_prompt_sha256 = "{sha256_file(system_prompt)}"',
+    config = (
+        (root / "suite.toml")
+        .read_text(encoding="utf-8")
+        .replace(
+            'kind = "json"',
+            f'kind = "openai"\nsystem_prompt = "system.txt"\nsystem_prompt_sha256 = "{sha256_file(system_prompt)}"',
+        )
     )
     (root / "suite.toml").write_text(config, encoding="utf-8")
     suite = load_suite(root)
@@ -962,9 +707,7 @@ def test_openai_target_prepends_hash_pinned_system_prompt(tmp_path: Path) -> Non
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        answer, _, reported, _, _ = call_target(
-            suite, f"http://127.0.0.1:{server.server_port}", "", "Question", "target-request", 5
-        )
+        answer, _, reported, _, _ = call_target(suite, f"http://127.0.0.1:{server.server_port}", "", "Question", "target-request", 5)
     finally:
         server.shutdown()
         thread.join()
@@ -1290,9 +1033,7 @@ def test_stream_timeout_is_a_total_deadline() -> None:
             self.end_headers()
             try:
                 for index in range(5):
-                    self.wfile.write(
-                        f'data: {{"model":"target-real","choices":[{{"delta":{{"content":"{index}"}}}}]}}\n\n'.encode()
-                    )
+                    self.wfile.write(f'data: {{"model":"target-real","choices":[{{"delta":{{"content":"{index}"}}}}]}}\n\n'.encode())
                     self.wfile.flush()
                     time.sleep(0.06)
             except (BrokenPipeError, ConnectionResetError):

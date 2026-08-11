@@ -20,12 +20,10 @@ ROOT = Path(__file__).parents[1]
 SCHEMAS = ROOT / "schemas"
 PERFORMANCE_MANIFEST_SCHEMAS = (
     "performance-manifest.schema.json",
-    "performance-manifest-1.1.0.schema.json",
     "performance-manifest-2.0.0.schema.json",
 )
 PERFORMANCE_PLAN_SCHEMAS = (
     "performance-plan.schema.json",
-    "performance-plan-1.1.0.schema.json",
     "performance-plan-2.0.0.schema.json",
 )
 
@@ -42,29 +40,23 @@ def _matching_schemas(names: tuple[str, ...], value: Any) -> list[str]:
     return [name for name in names if not list(Draft202012Validator(_schema(name), format_checker=FormatChecker()).iter_errors(value))]
 
 
-def _performance_inputs(root: Path, endpoint: str, *, v2: bool = False) -> tuple[Path, Path]:
-    protocol = "PERFORMANCE_PROTOCOL_V2.md" if v2 else "PERFORMANCE_PROTOCOL_V1_1.md"
+def _performance_inputs(root: Path, endpoint: str) -> tuple[Path, Path]:
+    protocol = "PERFORMANCE_PROTOCOL_V2.md"
     (root / protocol).write_bytes((ROOT / protocol).read_bytes())
     workload = root / "workload.jsonl"
     workload.write_text(json.dumps({"id": "ctx-8", "context_tokens": 8, "repeat_text": " datum", "repeat_count": 8}) + "\n", encoding="utf-8")
     plan = root / "plan.toml"
-    plan_version = "2.0.0" if v2 else "1.0.0"
-    profile = "llm-serving-v2" if v2 else "llm-serving-v1"
-    load_generator = (
-        """[load_generator]
+    load_generator = """[load_generator]
 minimum_dispatch_rate_fraction = 0.98
 maximum_dispatch_lag_p95_ms = 100
 maximum_dispatch_lag_ms = 1000
 """
-        if v2
-        else ""
-    )
     plan.write_text(
-        f'''plan_version = "{plan_version}"
-revision = "{plan_version}"
+        f'''plan_version = "2.0.0"
+revision = "2.0.0"
 name = "schema-contract"
 description = "One-request schema contract campaign."
-profile = "{profile}"
+profile = "llm-serving-v2"
 data_classification = "synthetic"
 [workload]
 id = "schema-workload"
@@ -224,7 +216,7 @@ def test_real_performance_manifest_and_bundle_cover_final_abort_and_official_con
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        plan_path, runtime_path = _performance_inputs(tmp_path, f"http://127.0.0.1:{server.server_port}/v1", v2=True)
+        plan_path, runtime_path = _performance_inputs(tmp_path, f"http://127.0.0.1:{server.server_port}/v1")
         run_dir = run_performance_campaign(
             load_performance_plan(plan_path),
             load_performance_runtime(runtime_path),
@@ -332,75 +324,12 @@ def test_real_performance_manifest_and_bundle_cover_final_abort_and_official_con
         _validate(manifest_schema, unknown)
 
 
-def test_generated_historical_development_v1_1_output_has_one_exact_schema(tmp_path: Path) -> None:
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
-            self.rfile.read(int(self.headers["Content-Length"]))
-            self.send_response(500)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def log_message(self, _format: str, *_args: object) -> None:
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        plan_path, runtime_path = _performance_inputs(tmp_path, f"http://127.0.0.1:{server.server_port}/v1")
-        run_dir = run_performance_campaign(
-            load_performance_plan(plan_path),
-            load_performance_runtime(runtime_path),
-            repo_root=tmp_path,
-            output_root=tmp_path / "runs",
-        )
-    finally:
-        server.shutdown()
-        thread.join()
-
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    plan = tomllib.loads((run_dir / "plan_snapshot.toml").read_text(encoding="utf-8"))
-    assert (manifest["performance_protocol_version"], manifest["plan_version"], manifest["report_version"]) == (
-        "1.1.0",
-        "1.0.0",
-        "1.0.0",
-    )
-    assert _matching_schemas(PERFORMANCE_MANIFEST_SCHEMAS, manifest) == ["performance-manifest-1.1.0.schema.json"]
-    assert _matching_schemas(PERFORMANCE_PLAN_SCHEMAS, plan) == ["performance-plan-1.1.0.schema.json"]
-
-    aborted = copy.deepcopy(manifest)
-    aborted.update({"status": "aborted", "abort_reason": "controlled development abort"})
-    for field in ("estimated_cost", "cells", "warmups"):
-        aborted.pop(field)
-    assert _matching_schemas(PERFORMANCE_MANIFEST_SCHEMAS, aborted) == ["performance-manifest-1.1.0.schema.json"]
-
-    for field in ("official_requested", "officially_valid"):
-        promoted = {**manifest, field: True}
-        with pytest.raises(ValidationError):
-            _validate("performance-manifest-1.1.0.schema.json", promoted)
-
-
 def test_performance_input_schemas_match_loader_contract(tmp_path: Path) -> None:
     plan_path, runtime_path = _performance_inputs(tmp_path, "http://127.0.0.1:1/v1")
     plan = tomllib.loads(plan_path.read_text(encoding="utf-8"))
     runtime = tomllib.loads(runtime_path.read_text(encoding="utf-8"))
     workload = json.loads((tmp_path / "workload.jsonl").read_text(encoding="utf-8"))
-    historical_plan = copy.deepcopy(plan)
-    historical_plan["workload"].pop("prefix_cache_policy")
-    historical_plan["execution"].pop("open_loop_arrival_distribution")
-    historical_plan["slo"].pop("minimum_p99_observations")
-    assert _matching_schemas(PERFORMANCE_PLAN_SCHEMAS, historical_plan) == ["performance-plan.schema.json"]
-    extensions = (
-        ("workload", "prefix_cache_policy"),
-        ("execution", "open_loop_arrival_distribution"),
-        ("slo", "minimum_p99_observations"),
-    )
-    for mask in range(1, 1 << len(extensions)):
-        development_plan = copy.deepcopy(historical_plan)
-        for index, (section, field) in enumerate(extensions):
-            if mask & (1 << index):
-                development_plan[section][field] = plan[section][field]
-        assert _matching_schemas(PERFORMANCE_PLAN_SCHEMAS, development_plan) == ["performance-plan-1.1.0.schema.json"]
+    assert _matching_schemas(PERFORMANCE_PLAN_SCHEMAS, plan) == ["performance-plan-2.0.0.schema.json"]
     _validate("performance-runtime.schema.json", runtime)
     _validate("performance-workload-item.schema.json", workload)
     reference_v2 = tomllib.loads((ROOT / "performance" / "plans" / "llm-serving-v2.toml").read_text())

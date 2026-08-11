@@ -5,7 +5,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from .protocol import contains_secret_like
@@ -16,36 +16,35 @@ PII_PATTERNS = (
     re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b"),
     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
 )
-RETRIEVAL_METRICS = {"hit_rate", "recall_at_k", "precision_at_k", "mrr", "ndcg_at_k"}
+_DEFERRED_FIELDS = {
+    "allowed_tool_permissions",
+    "citation_pattern",
+    "citation_required",
+    "exact_tool_order",
+    "expected_retrieval_ids",
+    "expected_set",
+    "expected_tool_arguments",
+    "expected_transcript",
+    "forbidden_regex",
+    "max_character_error_rate",
+    "max_chars",
+    "max_tool_calls",
+    "max_word_error_rate",
+    "min_chars",
+    "pattern",
+    "required_regex",
+    "retrieval_k",
+    "retrieval_minimums",
+    "set_f1_min",
+}
 
 
 def metric_config_errors(case: dict[str, Any]) -> list[str]:
     """Validate case metric inputs that would otherwise fail during evaluation."""
     errors: list[str] = []
-    for field in ("required_regex", "forbidden_regex"):
-        patterns = case.get(field)
-        if patterns is None:
-            continue
-        if not isinstance(patterns, list) or not patterns or not all(isinstance(pattern, str) and pattern for pattern in patterns):
-            errors.append(f"{field} must be a non-empty string array")
-            continue
-        for index, pattern in enumerate(patterns, 1):
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                errors.append(f"{field}[{index}] is not a valid regular expression: {exc}")
-
-    for field in ("citation_pattern", "pattern"):
-        pattern = case.get(field)
-        if pattern is None:
-            continue
-        if not isinstance(pattern, str) or not pattern:
-            errors.append(f"{field} must be non-empty text")
-        else:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                errors.append(f"{field} is not a valid regular expression: {exc}")
+    deferred = sorted(_DEFERRED_FIELDS & set(case))
+    if deferred:
+        errors.append(f"unsupported deterministic metric fields: {deferred}")
 
     def validate_schema_patterns(value: Any, path: str = "json_schema") -> None:
         if isinstance(value, dict):
@@ -70,7 +69,7 @@ def metric_config_errors(case: dict[str, Any]) -> list[str]:
         else:
             validate_schema_patterns(case["json_schema"])
 
-    for field in ("token_f1_min", "structured_field_accuracy_min", "set_f1_min", "max_word_error_rate", "max_character_error_rate"):
+    for field in ("token_f1_min", "structured_field_accuracy_min"):
         value = case.get(field)
         if value is not None and (
             not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or not 0 <= float(value) <= 1
@@ -81,26 +80,6 @@ def metric_config_errors(case: dict[str, Any]) -> list[str]:
         not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool) or not math.isfinite(float(tolerance)) or float(tolerance) < 0
     ):
         errors.append("numeric_tolerance must be a finite non-negative number")
-    for field in ("min_chars", "max_chars", "max_tool_calls"):
-        value = case.get(field)
-        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
-            errors.append(f"{field} must be a non-negative integer")
-    retrieval_k = case.get("retrieval_k")
-    if retrieval_k is not None and (not isinstance(retrieval_k, int) or isinstance(retrieval_k, bool) or retrieval_k < 1):
-        errors.append("retrieval_k must be a positive integer")
-    minimums = case.get("retrieval_minimums")
-    if minimums is not None and (
-        not isinstance(minimums, dict)
-        or not all(
-            name in RETRIEVAL_METRICS
-            and isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(float(value))
-            and 0 <= float(value) <= 1
-            for name, value in minimums.items()
-        )
-    ):
-        errors.append(f"retrieval_minimums must map {sorted(RETRIEVAL_METRICS)} to finite numbers from 0 to 1")
     return errors
 
 
@@ -123,44 +102,6 @@ def token_f1(expected: str, actual: str) -> float:
     precision = overlap / sum(right.values())
     recall = overlap / sum(left.values())
     return 2 * precision * recall / (precision + recall)
-
-
-def set_scores(expected: Iterable[str], actual: Iterable[str]) -> dict[str, float]:
-    left = {normalize_text(str(item)) for item in expected}
-    right = {normalize_text(str(item)) for item in actual}
-    overlap = len(left & right)
-    precision = overlap / len(right) if right else float(not left)
-    recall = overlap / len(left) if left else float(not right)
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    return {"precision": precision, "recall": recall, "f1": f1}
-
-
-def error_rate(expected: Sequence[str], actual: Sequence[str]) -> float:
-    previous = list(range(len(actual) + 1))
-    for left_index, left in enumerate(expected, 1):
-        current = [left_index]
-        for right_index, right in enumerate(actual, 1):
-            current.append(min(current[-1] + 1, previous[right_index] + 1, previous[right_index - 1] + (left != right)))
-        previous = current
-    return previous[-1] / len(expected) if expected else float(bool(actual))
-
-
-def retrieval_scores(expected_ids: Iterable[str], retrieved_ids: Sequence[str], k: int) -> dict[str, float]:
-    expected = list(dict.fromkeys(str(item) for item in expected_ids))
-    retrieved = list(dict.fromkeys(str(item) for item in retrieved_ids))[:k]
-    relevant = set(expected)
-    hits = [identifier in relevant for identifier in retrieved]
-    hit_count = sum(hits)
-    reciprocal_rank = next((1 / (index + 1) for index, hit in enumerate(hits) if hit), 0.0)
-    dcg = sum((1 if hit else 0) / math.log2(index + 2) for index, hit in enumerate(hits))
-    ideal = sum(1 / math.log2(index + 2) for index in range(min(len(relevant), k)))
-    return {
-        "hit_rate": float(hit_count > 0),
-        "recall_at_k": hit_count / len(relevant) if relevant else float(not retrieved),
-        "precision_at_k": hit_count / len(retrieved) if retrieved else float(not relevant),
-        "mrr": reciprocal_rank,
-        "ndcg_at_k": dcg / ideal if ideal else float(not retrieved),
-    }
 
 
 def _json_schema_errors(value: Any, schema: dict[str, Any], prefix: str = "$") -> list[str]:
@@ -220,8 +161,6 @@ def deterministic_evaluation(
     case: dict[str, Any],
     answer: str,
     *,
-    target_raw: dict[str, Any] | None = None,
-    retrieved_ids: Sequence[str] | None = None,
     tool_calls: Sequence[object] | None = None,
 ) -> dict[str, Any]:
     folded = normalize_text(answer)
@@ -248,15 +187,6 @@ def deterministic_evaluation(
         threshold = float(case.get("token_f1_min", 0.0))
         if threshold:
             checks["token_f1"] = scores["token_f1"] >= threshold
-    if "required_regex" in case:
-        checks["required_regex"] = all(re.search(str(pattern), answer) is not None for pattern in case["required_regex"])
-    if "forbidden_regex" in case:
-        checks["forbidden_regex"] = all(re.search(str(pattern), answer) is None for pattern in case["forbidden_regex"])
-    if "min_chars" in case:
-        checks["min_chars"] = len(answer) >= int(case["min_chars"])
-    if "max_chars" in case:
-        checks["max_chars"] = len(answer) <= int(case["max_chars"])
-
     parsed: Any = None
     parsed_ok = False
     if case.get("expected_json") or isinstance(case.get("json_schema"), dict) or "expected_json_value" in case:
@@ -277,37 +207,10 @@ def deterministic_evaluation(
         matched = sum(path in actual_leaves and actual_leaves[path] == value for path, value in expected_leaves.items())
         scores["structured_field_accuracy"] = matched / len(expected_leaves) if expected_leaves else float(not actual_leaves)
         checks["structured_field_accuracy"] = scores["structured_field_accuracy"] >= float(case.get("structured_field_accuracy_min", 1.0))
-    if "expected_set" in case:
-        try:
-            actual_set = json.loads(answer)
-        except json.JSONDecodeError:
-            actual_set = None
-        if not isinstance(actual_set, list):
-            checks["set_output"] = False
-        else:
-            set_result = set_scores(case["expected_set"], actual_set)
-            scores.update({f"set_{name}": value for name, value in set_result.items()})
-            checks["set_output"] = set_result["f1"] >= float(case.get("set_f1_min", 1.0))
     if "expected_number" in case:
         match = re.fullmatch(r"\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*", answer)
         tolerance = float(case.get("numeric_tolerance", 0.0))
         checks["numeric_tolerance"] = bool(match) and abs(float(answer) - float(case["expected_number"])) <= tolerance
-    if "expected_transcript" in case:
-        expected_transcript = normalize_text(str(case["expected_transcript"]))
-        scores["word_error_rate"] = error_rate(expected_transcript.split(), folded.split())
-        scores["character_error_rate"] = error_rate(list(expected_transcript), list(folded))
-        if "max_word_error_rate" in case:
-            checks["word_error_rate"] = scores["word_error_rate"] <= float(case["max_word_error_rate"])
-        if "max_character_error_rate" in case:
-            checks["character_error_rate"] = scores["character_error_rate"] <= float(case["max_character_error_rate"])
-
-    if case.get("expected_retrieval_ids") is not None:
-        resolved = list(retrieved_ids or [])
-        k = int(case.get("retrieval_k", len(resolved) or 1))
-        retrieval = retrieval_scores(case["expected_retrieval_ids"], resolved, k)
-        scores.update(retrieval)
-        for metric, threshold in (case.get("retrieval_minimums") or {}).items():
-            checks[f"retrieval_{metric}"] = metric in retrieval and retrieval[metric] >= float(threshold)
 
     calls_valid = False
     calls: list[dict[str, Any]] = []
@@ -322,20 +225,6 @@ def deterministic_evaluation(
         checks["expected_tools"] = set(map(str, case["expected_tools"])) <= set(names)
     if "forbidden_tools" in case:
         checks["forbidden_tools"] = not (set(map(str, case["forbidden_tools"])) & set(names))
-    if case.get("exact_tool_order") is not None:
-        checks["exact_tool_order"] = names == list(map(str, case["exact_tool_order"]))
-    if "max_tool_calls" in case:
-        checks["max_tool_calls"] = len(calls) <= int(case["max_tool_calls"])
-    if isinstance(case.get("expected_tool_arguments"), dict):
-        arguments = {str(call.get("name")): call.get("arguments") for call in calls if isinstance(call, dict)}
-        checks["expected_tool_arguments"] = all(arguments.get(str(name)) == expected for name, expected in case["expected_tool_arguments"].items())
-    if isinstance(case.get("allowed_tool_permissions"), list):
-        allowed = set(map(str, case["allowed_tool_permissions"]))
-        checks["tool_permissions"] = all(str(call.get("permission", "")) in allowed for call in calls if call.get("permission") is not None)
-    if case.get("citation_required"):
-        checks["citation_presence"] = re.search(r"https?://|\[[0-9]+\]|\([A-Za-z][^)]*,?\s*\d{4}\)", answer) is not None
-    if "citation_pattern" in case:
-        checks["citation_format"] = re.search(str(case["citation_pattern"]), answer) is not None
 
     soft = set(map(str, case.get("soft_checks", [])))
     hard_pass = all(value for name, value in checks.items() if name not in soft)

@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from .artifacts import verify_bundle
-from .protocol import ProtocolError, Suite, atomic_json, require_mutable_output_root, sha256_bytes, sha256_file
+from .protocol import ProtocolError, Suite, _read_jsonl, atomic_json, require_mutable_output_root, sha256_bytes, sha256_file
 
 
 def judge_signature(judge: Any) -> str:
@@ -146,25 +146,6 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise ProtocolError(f"cannot read calibration evidence {path}: {exc}") from exc
-    rows: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(lines, 1):
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ProtocolError(f"invalid calibration evidence {path}:{line_number}: {exc.msg}") from exc
-        if not isinstance(row, dict):
-            raise ProtocolError(f"calibration evidence must contain objects: {path}:{line_number}")
-        rows.append(row)
-    return rows
-
-
 def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Path, output: Path) -> dict[str, Any]:
     source_run = run
     run = source_run.resolve()
@@ -247,8 +228,8 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
         rubric = (run / "rubric_snapshot.md").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot read judge qualification suite snapshots: {exc}") from exc
-    cases = _jsonl(run / "dataset_snapshot.jsonl")
-    judgments = _jsonl(run / "judgments.jsonl")
+    cases = _read_jsonl(run / "dataset_snapshot.jsonl")
+    judgments = _read_jsonl(run / "judgments.jsonl")
     if not cases or not judgments or any(case.get("judge_gold_verdict") not in {"pass", "fail"} for case in cases):
         raise ProtocolError("judge qualification requires complete gold cases and judgment evidence")
     snapshot_suite = Suite(

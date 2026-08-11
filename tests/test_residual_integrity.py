@@ -12,6 +12,7 @@ import cavada_eval.retention as retention_module
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.assets import asset_inventory
 from cavada_eval.compliance import generate_control_report
+from cavada_eval.performance import _metric_summary
 from cavada_eval.pilot import _evidence
 from cavada_eval.protocol import ProtocolError, sha256_bytes, sha256_file
 from cavada_eval.retention import retention_record
@@ -322,3 +323,15 @@ def test_statistics_reject_nonfinite_or_nonboolean_inputs() -> None:
     for call in invalid_calls:
         with pytest.raises(ValueError):
             call()
+
+
+def test_seeded_bootstrap_is_independent_of_completion_order() -> None:
+    values = [1.0, 2.0, 3.0, 10.0, 100.0]
+    permuted = [1.0, 2.0, 10.0, 3.0, 100.0]
+    assert _metric_summary(values, 100, 1) == _metric_summary(permuted, 100, 1)
+    assert bootstrap_mean_interval(values, samples=100, seed=7) == bootstrap_mean_interval(list(reversed(values)), samples=100, seed=7)
+    assert stratified_bootstrap_mean_interval(
+        {"a": [0.0, 1.0, 10.0], "b": [2.0, 3.0, 100.0]}, samples=100, seed=7
+    ) == stratified_bootstrap_mean_interval(
+        {"b": [100.0, 3.0, 2.0], "a": [10.0, 1.0, 0.0]}, samples=100, seed=7
+    )

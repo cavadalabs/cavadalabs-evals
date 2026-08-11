@@ -14,12 +14,12 @@ from typing import Any, cast
 
 from .artifacts import verify_bundle
 from .performance import (
+    PERFORMANCE_PLAN_VERSION,
     PERFORMANCE_PROTOCOL_VERSION,
     PERFORMANCE_RUNTIME_VERSION,
-    SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS,
     PerformanceRuntime,
     _campaign_summary,
-    _cell_metrics_for_protocol,
+    _cell_metrics_v2,
     _content_addressed_revision,
     _expand_cells,
     _finite_json,
@@ -33,9 +33,8 @@ from .performance import (
     load_performance_plan,
 )
 from .performance_release import (
-    _PERFORMANCE_PLAN_REPORT_VERSIONS,
+    PERFORMANCE_PUBLICATION_VERSION,
     PERMITTED_CLAIM,
-    _performance_publication_version,
     _public_cells,
     _public_observations,
     _public_presentation_manifest,
@@ -662,10 +661,10 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
     if set(manifest) != _PERFORMANCE_FIELDS or not _finite_json(manifest):
         raise ProtocolError("public performance manifest has an invalid top-level contract")
     protocol_version = str(manifest.get("performance_protocol_version"))
-    publication_version = _performance_publication_version(protocol_version)
+    publication_version = PERFORMANCE_PUBLICATION_VERSION
     if (
         manifest.get("publication_version") != publication_version
-        or protocol_version not in SUPPORTED_PERFORMANCE_PROTOCOL_VERSIONS
+        or protocol_version != PERFORMANCE_PROTOCOL_VERSION
         or manifest.get("status") not in {"completed", "completed-with-errors", "invalid-loadgen"}
         or not isinstance(manifest.get("official"), bool)
     ):
@@ -756,7 +755,7 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         **({"minimum_p99_observations": plan.config["slo"]["minimum_p99_observations"]} if "minimum_p99_observations" in plan.config["slo"] else {}),
         **({"load_generator": plan.config["load_generator"]} if "load_generator" in plan.config else {}),
     }
-    expected_plan_version = _PERFORMANCE_PLAN_REPORT_VERSIONS[protocol_version][0]
+    expected_plan_version = PERFORMANCE_PLAN_VERSION
     if plan_metadata != expected_plan or plan.config.get("plan_version") != expected_plan_version:
         raise ProtocolError("public performance plan metadata differs from its snapshot")
     expected_workload = {
@@ -800,7 +799,7 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         _cross_check_public_system_evidence(runtime, source, loaded_evidence)
 
     observations = _read_jsonl(root / "observations.jsonl", "performance observations")
-    if _public_observations(observations, protocol_version) != observations:
+    if _public_observations(observations) != observations:
         raise ProtocolError("public performance observations differ from the allowed projection")
     observation_keys = [(row.get("block"), row.get("cell_key"), row.get("request_index")) for row in observations]
     if len(observation_keys) != len(set(observation_keys)):
@@ -817,11 +816,11 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
             raise ProtocolError("public performance cells contain duplicate identities")
         if row.get("status") == "skipped":
             skipped[key] = _text(row.get("reason"), "performance skip reason")
-        elif row.get("status") in {"completed", "completed-with-errors"} | ({"invalid-loadgen"} if protocol_version == "2.0.0" else set()):
+        elif row.get("status") in {"completed", "completed-with-errors", "invalid-loadgen"}:
             completed[key] = row
         else:
             raise ProtocolError("public performance cells contain a non-terminal status")
-    if _public_cells(completed, skipped, protocol_version) != cells:
+    if _public_cells(completed, skipped) != cells:
         raise ProtocolError("public performance cells differ from the allowed projection")
 
     runtime_config = {**runtime, "max_context_tokens": runtime["max_context_tokens"]}
@@ -862,13 +861,7 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         successes = sum(item.get("status") == "success" for item in cell_observations)
         errors = len(cell_observations) - successes
         usage_observations = [item for item in cell_observations if "input_tokens" in item and "output_tokens" in item]
-        expected_status = (
-            "invalid-loadgen"
-            if protocol_version == "2.0.0" and row.get("load_generator_valid") is False
-            else "completed-with-errors"
-            if errors
-            else "completed"
-        )
+        expected_status = "invalid-loadgen" if row.get("load_generator_valid") is False else "completed-with-errors" if errors else "completed"
         if (
             row.get("observations") != len(cell_observations)
             or row.get("successes") != successes
@@ -918,46 +911,34 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
                 raise ProtocolError("public performance client queue differs from monotonic timing")
         ordered = sorted(cell_observations, key=lambda item: int(item["request_index"]))
         scheduled = [int(item["scheduled_monotonic_ns"]) for item in ordered]
-        if protocol_version == "2.0.0":
-            if not ordered:
-                offsets = []
-                expected_schedule = []
-            else:
-                batch_starts = {item.get("batch_started_monotonic_ns") for item in ordered}
-                offsets = (
-                    _open_loop_offsets(plan, expected_cell, key[0], "measured")
-                    if expected_cell["arrival"] == "open-loop"
-                    else [0.0] * len(ordered)
-                )
-                if len(batch_starts) != 1 or not all(isinstance(value, int) and not isinstance(value, bool) for value in batch_starts):
-                    raise ProtocolError("public performance v2 schedule has an invalid monotonic anchor")
-                anchor = cast(int, next(iter(batch_starts)))
-                expected_schedule = [anchor + round(offset * 1_000_000_000) for offset in offsets]
-            if scheduled != expected_schedule:
-                raise ProtocolError("public performance v2 schedule differs from its preregistered monotonic anchor")
-        elif expected_cell["arrival"] == "closed-loop":
-            if len(set(scheduled)) != 1:
-                raise ProtocolError("public performance closed-loop schedule differs within a batch")
+        if not ordered:
+            offsets = []
+            expected_schedule = []
         else:
-            offsets = _open_loop_offsets(plan, expected_cell, key[0], "measured")
-            if len(offsets) != len(ordered) or any(
-                abs((value - scheduled[0]) - round((offset - offsets[0]) * 1_000_000_000)) > 1
-                for value, offset in zip(scheduled, offsets, strict=True)
-            ):
-                raise ProtocolError("public performance open-loop schedule differs from the preregistered arrival process")
+            batch_starts = {item.get("batch_started_monotonic_ns") for item in ordered}
+            offsets = (
+                _open_loop_offsets(plan, expected_cell, key[0], "measured")
+                if expected_cell["arrival"] == "open-loop"
+                else [0.0] * len(ordered)
+            )
+            if len(batch_starts) != 1 or not all(isinstance(value, int) and not isinstance(value, bool) for value in batch_starts):
+                raise ProtocolError("public performance v2 schedule has an invalid monotonic anchor")
+            anchor = cast(int, next(iter(batch_starts)))
+            expected_schedule = [anchor + round(offset * 1_000_000_000) for offset in offsets]
+        if scheduled != expected_schedule:
+            raise ProtocolError("public performance v2 schedule differs from its preregistered monotonic anchor")
         try:
             window = _measurement_window(cell_observations)
-            recalculated = _cell_metrics_for_protocol(
+            recalculated = _cell_metrics_v2(
                 cell_observations,
                 expected_cell,
                 plan,
                 window,
                 seeds[key],
                 pricing_for_cells,
-                protocol_version,
             )
             recalculated["block"] = key[0]
-            projected = _public_cells({key: recalculated}, {}, protocol_version)
+            projected = _public_cells({key: recalculated}, {})
         except (KeyError, TypeError, ValueError) as exc:
             raise ProtocolError("public performance observations cannot reconstruct cell metrics") from exc
         if projected != [row]:
@@ -967,11 +948,7 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         "total": len(cells),
         "completed": sum(row.get("status") == "completed" for row in completed.values()),
         "with_errors": sum(row.get("status") == "completed-with-errors" for row in completed.values()),
-        **(
-            {"invalid_loadgen": sum(row.get("status") == "invalid-loadgen" for row in completed.values())}
-            if protocol_version == "2.0.0"
-            else {}
-        ),
+        "invalid_loadgen": sum(row.get("status") == "invalid-loadgen" for row in completed.values()),
         "skipped": len(skipped),
         "slo_passed": sum(row.get("slo_passed") is True for row in completed.values()),
         "slo_failed": sum(row.get("slo_passed") is False for row in completed.values()),
@@ -1056,7 +1033,7 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         raise ProtocolError("public performance summary differs from observations and cells")
     with tempfile.TemporaryDirectory(prefix="cavada-public-csv-") as temporary:
         expected_csv = Path(temporary) / "cells.csv"
-        _write_cells_csv(expected_csv, cells, protocol_version=protocol_version)
+        _write_cells_csv(expected_csv, cells)
         if (root / "cells.csv").read_bytes() != expected_csv.read_bytes():
             raise ProtocolError("public performance CSV differs from cells.jsonl")
 
@@ -1065,26 +1042,21 @@ def _performance(root: Path, *, effective_at: datetime | None = None) -> str:
         for relative in _content_files(root)
         if relative in _PERFORMANCE_REPORT_ROOTS or relative.startswith("figures/")
     }
-    expected_presentation: set[str] = set()
-    if publication_version == "2.0.0":
-        with tempfile.TemporaryDirectory(prefix="cavada-public-report-") as temporary:
-            expected_root = Path(temporary)
-            _performance_reports(expected_root, _public_presentation_manifest(manifest), expected_summary, cells)
-            expected_presentation = _content_files(expected_root)
-            if actual_presentation != expected_presentation:
-                raise ProtocolError("public performance presentation files differ from the verified projection")
-            for relative in expected_presentation:
-                if (root / relative).read_bytes() != (expected_root / relative).read_bytes():
-                    raise ProtocolError(f"public performance presentation differs from the verified projection: {relative}")
-    elif actual_presentation:
-        raise ProtocolError("legacy public performance presentation is outside the semantic verification contract")
+    with tempfile.TemporaryDirectory(prefix="cavada-public-report-") as temporary:
+        expected_root = Path(temporary)
+        _performance_reports(expected_root, _public_presentation_manifest(manifest), expected_summary, cells)
+        expected_presentation = _content_files(expected_root)
+        if actual_presentation != expected_presentation:
+            raise ProtocolError("public performance presentation files differ from the verified projection")
+        for relative in expected_presentation:
+            if (root / relative).read_bytes() != (expected_root / relative).read_bytes():
+                raise ProtocolError(f"public performance presentation differs from the verified projection: {relative}")
 
     official = cast(bool, manifest["official"])
     if official:
         if (
             manifest.get("status") != "completed"
             or manifest.get("assurance") != "approved"
-            or manifest.get("performance_protocol_version") != PERFORMANCE_PROTOCOL_VERSION
         ):
             raise ProtocolError("official public performance assurance is incoherent")
         mutable_revisions = [field for field in ("model_revision", "engine_revision") if not _content_addressed_revision(runtime.get(field))]

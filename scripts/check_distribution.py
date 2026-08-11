@@ -12,7 +12,6 @@ REQUIRED_WHEEL = {
     "cavada_eval/_resources/PROTOCOL.md",
     "cavada_eval/_resources/PERFORMANCE_PROTOCOL.md",
     "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_0.md",
-    "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V1_1.md",
     "cavada_eval/_resources/PERFORMANCE_PROTOCOL_V2.md",
     "cavada_eval/_resources/IMPLEMENTATION_CHECKLIST.md",
     "cavada_eval/_resources/OFFICIAL_EVALUATION_PROGRAM.md",
@@ -20,15 +19,14 @@ REQUIRED_WHEEL = {
     "cavada_eval/_resources/docs/COMPLIANCE.md",
     "cavada_eval/_resources/docs/THREAT_MODEL.md",
     "cavada_eval/_resources/.github/workflows/ci.yml",
-    "cavada_eval/_resources/uv.lock",
     "cavada_eval/_resources/program/registry.toml",
     "cavada_eval/_resources/schemas/manifest.schema.json",
-    "cavada_eval/_resources/schemas/performance-plan-1.1.0.schema.json",
-    "cavada_eval/_resources/schemas/performance-manifest-1.1.0.schema.json",
     "cavada_eval/_resources/schemas/performance-plan-2.0.0.schema.json",
     "cavada_eval/_resources/schemas/performance-manifest-2.0.0.schema.json",
     "cavada_eval/_resources/schemas/performance-publication-2.0.0.schema.json",
     "cavada_eval/_resources/schemas/results-registry-2.0.0.schema.json",
+    "cavada_eval/_resources/suites/cavada-core-assistant-text-v1/suite.toml",
+    "cavada_eval/_resources/suites/security-privacy-smoke-v1/suite.toml",
     "cavada_eval/_resources/suites/template/suite.toml",
     "cavada_eval/_resources/performance/plans/llm-serving-quick-v1.toml",
     "cavada_eval/_resources/performance/plans/llm-serving-v2.toml",
@@ -39,7 +37,6 @@ REQUIRED_SDIST_SUFFIXES = {
     "/PROTOCOL.md",
     "/PERFORMANCE_PROTOCOL.md",
     "/PERFORMANCE_PROTOCOL_V1_0.md",
-    "/PERFORMANCE_PROTOCOL_V1_1.md",
     "/PERFORMANCE_PROTOCOL_V2.md",
     "/IMPLEMENTATION_CHECKLIST.md",
     "/OFFICIAL_EVALUATION_PROGRAM.md",
@@ -50,12 +47,12 @@ REQUIRED_SDIST_SUFFIXES = {
     "/uv.lock",
     "/program/registry.toml",
     "/schemas/manifest.schema.json",
-    "/schemas/performance-plan-1.1.0.schema.json",
-    "/schemas/performance-manifest-1.1.0.schema.json",
     "/schemas/performance-plan-2.0.0.schema.json",
     "/schemas/performance-manifest-2.0.0.schema.json",
     "/schemas/performance-publication-2.0.0.schema.json",
     "/schemas/results-registry-2.0.0.schema.json",
+    "/suites/cavada-core-assistant-text-v1/suite.toml",
+    "/suites/security-privacy-smoke-v1/suite.toml",
     "/suites/template/suite.toml",
     "/performance/plans/llm-serving-quick-v1.toml",
     "/performance/plans/llm-serving-v2.toml",
@@ -80,7 +77,22 @@ def main() -> int:
     if len(wheels) != 1 or len(sdists) != 1:
         raise SystemExit("distribution check requires exactly one wheel and one source archive")
     with zipfile.ZipFile(wheels[0]) as archive:
-        _check(set(archive.namelist()), REQUIRED_WHEEL, exact=True)
+        names = set(archive.namelist())
+        _check(names, REQUIRED_WHEEL, exact=True)
+        unexpected = sorted(
+            name
+            for name in names
+            if name == "cavada_eval/_resources/uv.lock"
+            or (
+                name.startswith("cavada_eval/_resources/suites/")
+                and not any(
+                    name.startswith(f"cavada_eval/_resources/suites/{suite}/")
+                    for suite in ("cavada-core-assistant-text-v1", "security-privacy-smoke-v1", "template")
+                )
+            )
+        )
+        if unexpected:
+            raise SystemExit(f"distribution check failed: unexpected wheel resources={unexpected}")
     with tarfile.open(sdists[0]) as archive:
         _check(set(archive.getnames()), REQUIRED_SDIST_SUFFIXES, exact=False)
     print("Distribution contents passed")

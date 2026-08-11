@@ -43,7 +43,6 @@ def _release_tree(root: Path) -> None:
 | Material | Current declaration | Decision | Condition |
 | --- | --- | --- | --- |
 | `suites/cavada-core-assistant-text-v1` | Rights approved | ready | Evidence retained. |
-| `suites/memo4345-v1` | Rights approved | ready | Evidence retained. |
 | `suites/security-privacy-smoke-v1` | Rights approved | ready | Evidence retained. |
 | `suites/template` | Rights approved | ready | Evidence retained. |
 | Repository organization approval | Retained approval | ready | Evidence retained. |
@@ -106,8 +105,8 @@ def test_sbom_uses_wheel_metadata_not_the_environment(tmp_path: Path) -> None:
             """Metadata-Version: 2.4
 Name: example
 Version: 1.2.3
-Provides-Extra: deepeval
-Requires-Dist: deepeval<4,>=3; extra == 'deepeval'
+Provides-Extra: reports
+Requires-Dist: reportlab<5,>=4; extra == 'reports'
 
 """,
         )
@@ -118,7 +117,7 @@ Requires-Dist: deepeval<4,>=3; extra == 'deepeval'
     assert result.returncode == 0, result.stderr
     document = json.loads(output.read_text(encoding="utf-8"))
     assert document["metadata"]["component"]["version"] == "1.2.3"
-    assert [(item["name"], item["scope"]) for item in document["components"]] == [("deepeval", "optional")]
+    assert [(item["name"], item["scope"]) for item in document["components"]] == [("reportlab", "optional")]
     assert all(item["name"] != "pytest" for item in document["components"])
 
 
@@ -197,11 +196,8 @@ def test_distribution_inventory_requires_versioned_open_loop_contracts() -> None
     wheel = inventory["REQUIRED_WHEEL"]
     sdist = inventory["REQUIRED_SDIST_SUFFIXES"]
     required = {
-        "PERFORMANCE_PROTOCOL_V1_1.md",
         "PERFORMANCE_PROTOCOL_V2.md",
         "performance/VERSION_PROVENANCE.md",
-        "schemas/performance-plan-1.1.0.schema.json",
-        "schemas/performance-manifest-1.1.0.schema.json",
         "schemas/performance-plan-2.0.0.schema.json",
         "schemas/performance-manifest-2.0.0.schema.json",
         "schemas/performance-publication-2.0.0.schema.json",
@@ -209,3 +205,12 @@ def test_distribution_inventory_requires_versioned_open_loop_contracts() -> None
     }
     assert {f"cavada_eval/_resources/{path}" for path in required} <= wheel
     assert {f"/{path}" for path in required} <= sdist
+    assert "cavada_eval/_resources/uv.lock" not in wheel
+    packaged_suites = {"cavada-core-assistant-text-v1", "security-privacy-smoke-v1", "template"}
+    assert {f"cavada_eval/_resources/suites/{suite}/suite.toml" for suite in packaged_suites} <= wheel
+    assert all(
+        not path.startswith("cavada_eval/_resources/suites/")
+        or any(path.startswith(f"cavada_eval/_resources/suites/{suite}/") for suite in packaged_suites)
+        for path in wheel
+    )
+    assert "/uv.lock" in sdist

@@ -6,7 +6,7 @@
 2. engineering evidence that can be checked automatically only in part;
 3. legal, contractual and governance evidence requiring accountable approval outside the runner.
 
-External benchmark entries are discovery records, not dependencies. A candidate is imported only after checking its current license, dataset provenance, maintenance status, data-transfer behavior and fit for the intended system. Imported data must be pinned by version and SHA-256; the runner never downloads mutable datasets during an official run.
+External benchmark entries are discovery records, not dependencies. Adopt a candidate only after checking its current license, dataset provenance, maintenance status, data-transfer behavior and fit for the intended system. Referenced data must be pinned by version and SHA-256; the runner never downloads mutable datasets during an official run.
 
 Current candidates include garak, CyberSecEval, AgentDojo, PrivacyLens and Microsoft Presidio. They complement CavadaLabs suites; none can establish GDPR or AI Act compliance by itself.
 
@@ -15,7 +15,6 @@ on 2026-08-03. The previous 2025 crosswalk is preserved in
 `risk_mappings-owasp-llm-2025.toml`; taxonomy renumbering never rewrites old run
 evidence or implies that the mapped smoke cases provide complete coverage.
 
-`evidence_crosswalk.toml` is the dated machine-validated framework index.
 `licensed_mapping.example.toml` is deliberately empty of protected ISO clause
 text: populate it only from an organization-authorized current copy in a
 controlled workspace. Engagement roles, claims, conflicts, appeals, disclosure,
