@@ -53,6 +53,11 @@ synthetic templates and smoke tests, not representative or official benchmark
 suites. `official` means conformance to the versioned protocol, never universal
 safety, correctness, or legal certification.
 
+The 0.4 M0 line enables only the offline, recorded, non-claiming
+`conformance-fixture` path. Real behavior results remain fail-closed and
+`doctor` reports `official_ready=false` until the judge-qualification run and
+corpus support bytes are included in a reconstructible evidence closure.
+
 ## Create and validate a suite
 
 ```bash
@@ -131,10 +136,13 @@ Useful commands:
 ```text
 init doctor list profiles program validate audit estimate run resume redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
-judge-qualify pilot-audit compare pairwise report verify promote export controls
+judge-qualify pilot-audit compare report verify promote export controls
 import-external retention-record
 perf validate | perf run | perf compare
 ```
+
+`compare` performs paired statistical comparison of already evaluated outcomes.
+Blinded output judging with retained A/B and B/A orders is not supported.
 
 Run a generation-only serving benchmark against an externally managed engine:
 

@@ -16,7 +16,8 @@ Deterministic checks precede judges. A hard deterministic failure cannot be
 overridden. Subjective judges require calibration against gold labels, bias
 tests, fixed prompts, exact revisions, anonymity, and qualification thresholds.
 Critical disagreement is invalid evidence and enters adjudication; it is not a
-target failure. Blind pairwise evaluation always retains A/B and B/A orders.
+target failure. Paired statistical comparison of already evaluated outcomes is
+supported; blinded output judging with retained A/B and B/A orders is not.
 
 Independent judges can be declared in `suite.toml`; every model needs a pinned
 expected identity and revision. `consensus = "unanimous"` invalidates any

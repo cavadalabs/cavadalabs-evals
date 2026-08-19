@@ -1,28 +1,114 @@
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .artifacts import verify_bundle
-from .protocol import PROTOCOL_VERSION, ProtocolError, Suite, sha256_file
+from .artifacts import _hash_regular, _read_regular
+from .behavior_verify import _safe_path, verify_behavior_run
+from .protocol import PROTOCOL_VERSION, ProtocolError, Suite, _strict_json_loads, sha256_bytes, sha256_file
 
 _PLACEHOLDERS = {"", "unavailable", "unassigned", "unassessed", "not-assessed", "replace-me"}
 _PROHIBITED_CLAIM_FRAGMENTS = ("accredited", "certified", "legally compliant", "universally correct", "universally safe", "universally secure")
 _DECISIONS = ("statistical", "security", "privacy_legal", "disclosure", "release")
 _EVIDENCE = ("authorization", "conflict_assessment", "legal_applicability", "approver_qualification")
+_ENGAGEMENT_FIELDS = {
+    "engagement_version",
+    "engagement_id",
+    "status",
+    "cavadalabs_roles",
+    "counterparty_roles",
+    "scope",
+    "suite",
+    "sut",
+    "execution_owner_id",
+    "commercial_owner_id",
+    "system_owner_reference",
+    "jurisdictions",
+    "requested_claims",
+    "permitted_claims",
+    "prohibited_claims",
+    "conflicts_assessed",
+    "conflicts",
+    "complaints_process_reference",
+    "appeals_process_reference",
+    "correction_revocation_reference",
+    "disclosure_policy_reference",
+    "surveillance_required",
+    "surveillance_plan_reference",
+    "authorization_evidence",
+    "authorization_evidence_sha256",
+    "conflict_assessment_evidence",
+    "conflict_assessment_evidence_sha256",
+    "legal_applicability_evidence",
+    "legal_applicability_evidence_sha256",
+    "approver_qualification_evidence",
+    "approver_qualification_evidence_sha256",
+    "approver_id",
+    "approved_at",
+    "expires_at",
+}
+_RELEASE_FIELDS = {
+    "release_version",
+    "release_id",
+    "status",
+    "run_id",
+    "bundle_sha256",
+    "manifest_sha256",
+    "engagement_id",
+    "engagement_sha256",
+    "assurance_level",
+    "permitted_claims",
+    "limitations_acknowledged",
+    "decisions",
+    "approved_at",
+    "expires_at",
+}
+_DECISION_FIELDS = {
+    "status",
+    "independent",
+    "reviewer_id",
+    "review_evidence",
+    "review_evidence_sha256",
+    "qualification_evidence",
+    "qualification_evidence_sha256",
+    "conflicts",
+    "conflict_mitigation",
+    "rationale",
+}
 
 
-def _read_object(path: Path, label: str) -> dict[str, Any]:
+def _exact_object(value: Any, fields: set[str], label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProtocolError(f"{label} must be an object")
+    missing, unknown = sorted(fields - set(value)), sorted(set(value) - fields)
+    if missing or unknown:
+        raise ProtocolError(f"{label} fields are not exact; missing={missing}; unknown={unknown}")
+    return value
+
+
+def _engagement_shape(record: dict[str, Any]) -> None:
+    _exact_object(record, _ENGAGEMENT_FIELDS, "engagement")
+    _exact_object(record["suite"], {"protocol_version", "name", "version", "dataset_sha256", "rubric_sha256", "suite_config_sha256"}, "engagement suite")
+    _exact_object(record["sut"], {"expected_model", "revision"}, "engagement SUT")
+    for field in ("cavadalabs_roles", "counterparty_roles", "jurisdictions"):
+        values = record[field]
+        if not isinstance(values, list) or len(values) != len({str(item) for item in values}):
+            raise ProtocolError(f"engagement {field} must contain unique values")
+    if not isinstance(record["surveillance_required"], bool) or not isinstance(record["surveillance_plan_reference"], str):
+        raise ProtocolError("engagement surveillance fields have invalid types")
+
+
+def _read_object(path: Path, label: str) -> tuple[dict[str, Any], str]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = _read_regular(path.parent, Path(path.name))
+        value = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise ProtocolError(f"{label} must be a readable JSON object") from exc
     if not isinstance(value, dict):
         raise ProtocolError(f"{label} must be a readable JSON object")
-    return value
+    return value, sha256_bytes(raw)
 
 
 def _time(value: Any, label: str) -> datetime:
@@ -42,13 +128,12 @@ def _usable(value: Any) -> bool:
 def _evidence_error(container: Path, relative: Any, expected_hash: Any, label: str) -> str | None:
     if not _usable(relative) or not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash) or expected_hash == "0" * 64:
         return f"{label} path and non-placeholder SHA-256 are required"
-    path = Path(str(relative))
-    if path.is_absolute() or ".." in path.parts:
-        return f"{label} path must stay inside its restricted evidence package"
-    resolved = (container.parent / path).resolve()
-    if not resolved.is_relative_to(container.parent.resolve()) or not resolved.is_file() or resolved.is_symlink():
+    try:
+        path = _safe_path(container.parent, relative, label)
+        observed = _hash_regular(container.parent, path.relative_to(container.parent))
+    except (OSError, ProtocolError, ValueError):
         return f"{label} must be a regular file inside its restricted evidence package"
-    if sha256_file(resolved) != expected_hash:
+    if observed != expected_hash:
         return f"{label} hash mismatch"
     return None
 
@@ -61,7 +146,8 @@ def verified_engagement(
     model_revision: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    record = _read_object(path, "engagement governance record")
+    record, record_sha256 = _read_object(path, "engagement governance record")
+    _engagement_shape(record)
     now = now or datetime.now(timezone.utc)
     errors: list[str] = []
     if record.get("engagement_version") != "1.1.0" or record.get("status") != "approved":
@@ -134,7 +220,7 @@ def verified_engagement(
         raise ProtocolError("invalid engagement governance record:\n" + "\n".join(errors))
     return {
         "engagement_id": record["engagement_id"],
-        "sha256": sha256_file(path),
+        "sha256": record_sha256,
         "status": record["status"],
         "cavadalabs_roles": roles,
         "jurisdictions": record.get("jurisdictions"),
@@ -152,15 +238,23 @@ def verified_engagement(
 
 
 def verified_public_release(run_dir: Path, engagement_path: Path, approval_path: Path, *, now: datetime | None = None) -> dict[str, Any]:
-    verification = verify_bundle(run_dir)
+    verification = verify_behavior_run(run_dir, now=now)
     if not verification["valid"]:
-        raise ProtocolError("cannot release an invalid bundle")
-    manifest = _read_object(run_dir / "manifest.json", "run manifest")
+        raise ProtocolError("cannot release an invalid official behavior run:\n" + "\n".join(verification["failures"]))
+    manifest, manifest_sha256 = _read_object(run_dir / "manifest.json", "run manifest")
     if manifest.get("status") != "passed" or manifest.get("official") is not True or manifest.get("official_requested") is not True:
         raise ProtocolError("public release requires a passed official run")
-    engagement = _read_object(engagement_path, "engagement governance record")
+    assurance = manifest.get("assurance", "official")
+    conformance_fixture = assurance == "conformance-fixture"
+    release_assurance = "conformance-fixture" if conformance_fixture else "approved"
+    if conformance_fixture and (
+        manifest.get("model_claim_allowed") is not False or manifest.get("benchmark_claim_allowed") is not False
+    ):
+        raise ProtocolError("conformance fixtures cannot be released with model or benchmark claims")
+    engagement, engagement_sha256 = _read_object(engagement_path, "engagement governance record")
+    _engagement_shape(engagement)
     recorded = manifest.get("engagement")
-    if not isinstance(recorded, dict) or recorded.get("sha256") != sha256_file(engagement_path) or recorded.get("engagement_id") != engagement.get("engagement_id"):
+    if not isinstance(recorded, dict) or recorded.get("sha256") != engagement_sha256 or recorded.get("engagement_id") != engagement.get("engagement_id"):
         raise ProtocolError("release engagement does not match the run manifest")
     now = now or datetime.now(timezone.utc)
     if engagement.get("status") != "approved" or not _time(engagement.get("approved_at"), "engagement approved_at") <= now < _time(
@@ -180,17 +274,18 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     if engagement_evidence_errors:
         raise ProtocolError("invalid release engagement evidence:\n" + "\n".join(engagement_evidence_errors))
 
-    approval = _read_object(approval_path, "release approval")
+    approval, approval_sha256 = _read_object(approval_path, "release approval")
+    _exact_object(approval, _RELEASE_FIELDS, "release approval")
     errors: list[str] = []
-    bundle_hash = sha256_file(run_dir / "bundle.json")
+    bundle_hash = _hash_regular(run_dir, Path("bundle.json"))
     expected = {
         "release_version": "1.0.0",
         "status": "approved",
         "run_id": manifest.get("run_id"),
         "bundle_sha256": bundle_hash,
-        "manifest_sha256": sha256_file(run_dir / "manifest.json"),
+        "manifest_sha256": manifest_sha256,
         "engagement_id": engagement.get("engagement_id"),
-        "engagement_sha256": sha256_file(engagement_path),
+        "engagement_sha256": engagement_sha256,
         "assurance_level": "approved",
     }
     for field, value in expected.items():
@@ -208,6 +303,8 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     engagement_claims = set(map(str, engagement.get("permitted_claims", [])))
     if not isinstance(claims, list) or not claims or not set(map(str, claims)) <= engagement_claims:
         errors.append("release claims are empty or exceed the approved engagement claims")
+    elif len(claims) != len(set(map(str, claims))) or not all(_usable(claim) for claim in claims):
+        errors.append("release claims must be unique non-placeholder strings")
     if approval.get("limitations_acknowledged") is not True:
         errors.append("release approval must acknowledge the report limitations")
     decisions = approval.get("decisions")
@@ -219,6 +316,12 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     else:
         for name in _DECISIONS:
             decision = decisions[name]
+            if isinstance(decision, dict):
+                try:
+                    _exact_object(decision, _DECISION_FIELDS, f"release {name} decision")
+                except ProtocolError as exc:
+                    errors.append(str(exc))
+                    continue
             allowed_status = {"passed", "not-applicable"} if name == "privacy_legal" else {"passed"}
             if not isinstance(decision, dict) or decision.get("status") not in allowed_status or decision.get("independent") is not True:
                 errors.append(f"release {name} decision did not pass independent review")
@@ -241,8 +344,10 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
                 if error:
                     errors.append(error)
             conflicts = decision.get("conflicts")
-            if not isinstance(conflicts, list):
-                errors.append(f"release {name} conflicts must be an array")
+            if not isinstance(conflicts, list) or any(not _usable(conflict) for conflict in conflicts):
+                errors.append(f"release {name} conflicts must be an array of non-placeholder strings")
+            elif not isinstance(decision.get("conflict_mitigation"), str):
+                errors.append(f"release {name} conflict mitigation must be a string")
             elif conflicts and not _usable(decision.get("conflict_mitigation")):
                 errors.append(f"release {name} conflicts require documented mitigation")
     if reviewers.get("release") in {value for key, value in reviewers.items() if key != "release"}:
@@ -257,8 +362,10 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
         "manifest_sha256": expected["manifest_sha256"],
         "engagement_id": engagement["engagement_id"],
         "engagement_sha256": expected["engagement_sha256"],
-        "approval_sha256": sha256_file(approval_path),
-        "assurance_level": "approved",
+        "approval_sha256": approval_sha256,
+        "assurance_level": release_assurance,
+        "model_claim_allowed": False if conformance_fixture else manifest.get("model_claim_allowed", True),
+        "benchmark_claim_allowed": False if conformance_fixture else manifest.get("benchmark_claim_allowed", True),
         "permitted_claims": claims,
         "decision_statuses": decision_statuses,
         "approved_at": approval["approved_at"],

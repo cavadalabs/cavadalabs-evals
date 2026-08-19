@@ -115,8 +115,8 @@ never means universal correctness, universal safety, or legal certification.
 - [x] Preserve all raw judge outputs and disagreements.
 - [x] Fail official observations on judge disagreement.
 - [x] Version and hash judge prompts, rubrics, response schemas, and sampling parameters.
-- [x] Implement blind pairwise evaluation in both A/B and B/A order.
-- [x] Add single-answer, pointwise, pairwise, and reference-based judge modes.
+- [!] Implement blinded pairwise output judging with retained A/B and B/A orders.
+- [x] Add single-answer, pointwise, and reference-based judge modes.
 - [x] Support multiple independent judge models and explicit consensus policies.
 - [x] Produce judge agreement, disagreement, and score-distribution metrics.
 - [x] Compute per-judge confusion matrices and qualification gates when cases contain gold verdicts.
@@ -163,7 +163,7 @@ never means universal correctness, universal safety, or legal certification.
 - [!] Add deployment-specific SIGTERM and job-cancellation integration after the target runtime is selected.
 - [x] Add hard budgets for requests, tokens, judge calls, elapsed time, and estimated cost.
 - [x] Add deterministic case ordering or record the randomized seed and order.
-- [x] Add dry-run, smoke, regression, candidate, official, pairwise, red-team, performance, offline, and monitoring modes.
+- [x] Add dry-run, smoke, regression, candidate, official, red-team, performance, offline, and monitoring modes.
 - [x] Add progress events suitable for terminal and CI without leaking prompts or secrets.
 - [x] Add crash/resume, retry/idempotency, and budget-interruption tests.
 - [!] Add provider-specific connection/idle-timeout and deployment-signal integration tests with their adapters.
@@ -319,6 +319,8 @@ never means universal correctness, universal safety, or legal certification.
 
 ## 21. Verification and official release gate
 
+- [x] Exercise validate, run, bundle, semantic verify, release, and export with an offline non-claiming conformance fixture.
+- [!] Include judge-qualification run and corpus support bytes in a reconstructible closure before enabling real behavior results as official.
 - [x] Existing unit and mock end-to-end tests pass.
 - [x] Source distribution and wheel build successfully.
 - [x] All repository-implementable checklist items are checked and tested.

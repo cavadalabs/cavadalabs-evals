@@ -179,7 +179,8 @@ def _release_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object
     return run, engagement_path, approval_path, approval
 
 
-def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_path: Path) -> None:
+def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
     run, engagement, approval, _ = _release_fixture(tmp_path)
     released = verified_public_release(run, engagement, approval, now=NOW)
     assert released["release_id"] == "release-1"
@@ -191,7 +192,8 @@ def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_
         assert set(exported.getnames()) == {"report_public.html", "public_release.json"}
 
 
-def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Path) -> None:
+def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     decisions = approval["decisions"]
     assert isinstance(decisions, dict)
@@ -207,11 +209,55 @@ def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Pat
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_release_rejects_tampered_reviewer_evidence(tmp_path: Path) -> None:
+def test_public_export_rejects_report_replaced_after_release_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    run, engagement, approval, _ = _release_fixture(tmp_path)
+    release = verified_public_release(run, engagement, approval, now=NOW)
+
+    def replace_after_verification(*_args: object, **_kwargs: object) -> dict[str, object]:
+        (run / "report_public.html").write_text("<p>replaced</p>", encoding="utf-8")
+        return release
+
+    monkeypatch.setattr("cavada_eval.cli.verified_public_release", replace_after_verification)
+    with pytest.raises(ProtocolError, match="public artifact changed after release verification"):
+        _export(run, tmp_path / "public.tar.gz", True, engagement=str(engagement), release_approval=str(approval))
+
+
+def test_release_rejects_tampered_reviewer_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
     run, engagement, approval, _ = _release_fixture(tmp_path)
     (tmp_path / "review-evidence.txt").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(ProtocolError, match="review evidence hash mismatch"):
         verified_public_release(run, engagement, approval, now=NOW)
+
+
+def test_governance_records_reject_duplicate_and_unknown_nested_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engagement_path = tmp_path / "engagement.json"
+    engagement, suite = _engagement(engagement_path)
+    raw = engagement_path.read_text(encoding="utf-8")
+    engagement_path.write_text(raw[:-1] + ', "status": "approved"}', encoding="utf-8")
+    with pytest.raises(ProtocolError, match="readable JSON object"):
+        verified_engagement(engagement_path, suite, expected_model="target-model", model_revision="target-revision", now=NOW)
+
+    suite_record = engagement["suite"]
+    assert isinstance(suite_record, dict)
+    suite_record["unexpected"] = True
+    engagement_path.write_text(json.dumps(engagement), encoding="utf-8")
+    with pytest.raises(ProtocolError, match="engagement suite fields are not exact"):
+        verified_engagement(engagement_path, suite, expected_model="target-model", model_revision="target-revision", now=NOW)
+
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    release_root = tmp_path / "release"
+    release_root.mkdir()
+    run, engagement_path, approval_path, approval = _release_fixture(release_root)
+    decisions = approval["decisions"]
+    assert isinstance(decisions, dict) and isinstance(decisions["statistical"], dict)
+    decisions["statistical"]["unexpected"] = True
+    approval_path.write_text(json.dumps(approval), encoding="utf-8")
+    with pytest.raises(ProtocolError, match="release statistical decision fields are not exact"):
+        verified_public_release(run, engagement_path, approval_path, now=NOW)
 
 
 def test_official_execution_requires_engagement_before_network_access(tmp_path: Path) -> None:
@@ -237,4 +283,5 @@ def test_official_execution_requires_engagement_before_network_access(tmp_path: 
             timeout=1,
             official=True,
             allow_external_judge=False,
+            preset="reference",
         )

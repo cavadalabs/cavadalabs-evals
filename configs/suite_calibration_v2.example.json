@@ -1,0 +1,37 @@
+{
+  "calibration_version": "2.0.0",
+  "status": "failed",
+  "protocol_version": "1.0.0",
+  "suite": {
+    "name": "replace-with-suite-name",
+    "version": "0.0.0",
+    "dataset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rubric_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source_commit": "0000000000000000000000000000000000000000",
+  "analysis_plan": "evidence/analysis-plan.json",
+  "analysis_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "human_label_evidence": "evidence/human-labels.json",
+  "human_label_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "holdout_manifest": "evidence/holdout-manifest.json",
+  "holdout_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "pilot_campaign": "evidence/pilot-campaign.json",
+  "pilot_campaign_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "pilot_audit": "evidence/pilot-audit.json",
+  "pilot_audit_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "statistical_review": "evidence/statistical-review.json",
+  "statistical_review_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "semantic_contamination_evidence": "evidence/semantic-contamination.json",
+  "semantic_contamination_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "gates_passed": false,
+  "results": {
+    "analysis_plan": "preregistered",
+    "human_label_cases": 1,
+    "holdout_cases": 1,
+    "pilot_runs": 6,
+    "independent_reviewers": 2,
+    "all_preregistered_gates": "passed"
+  },
+  "completed_at": "1970-01-01T00:00:00Z",
+  "limitations": ["Template only; calibration has not been performed."]
+}

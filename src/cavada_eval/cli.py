@@ -10,14 +10,15 @@ import tarfile
 import webbrowser
 from pathlib import Path
 
+from . import __version__
 from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
-from .artifacts import verify_bundle
+from .artifacts import _read_regular, verify_bundle
+from .behavior_verify import verify_behavior_run
 from .calibration import qualify_judge_run
 from .comparison import compare_runs
 from .compliance import generate_control_report
 from .demo import run_demo
 from .external import import_external_results
-from .pairwise import pairwise_runs
 from .performance import (
     build_performance_matrix,
     compare_performance_runs,
@@ -29,7 +30,7 @@ from .performance import (
 from .pilot import audit_pilot_campaign
 from .profiles import benchmark_preset, canonical_preset, preset_summary, profile_summary, stratified_cases
 from .program import load_program_registry
-from .protocol import ProtocolError, audit_suite, load_suite, promote_suite, sha256_file
+from .protocol import ProtocolError, _strict_json_loads, audit_suite, load_suite, promote_suite, sha256_bytes
 from .release import verified_public_release
 from .retention import ACTIONS as RETENTION_ACTIONS
 from .retention import retention_record
@@ -87,7 +88,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="cavada-eval", description="CavadaLabs reproducible AI evaluation protocol")
-    root.add_argument("--version", action="version", version="cavadalabs-evals 0.3.1")
+    root.add_argument("--version", action="version", version=f"cavadalabs-evals {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Create a new draft suite from the secure template")
@@ -189,19 +190,6 @@ def parser() -> argparse.ArgumentParser:
     compare.add_argument("--seed", type=int, default=0)
     compare.add_argument("--non-inferiority-margin", type=float)
 
-    pairwise = commands.add_parser("pairwise", help="Run blind A/B and B/A judge comparisons for two compatible runs")
-    pairwise.add_argument("baseline")
-    pairwise.add_argument("candidate")
-    pairwise.add_argument("suite")
-    pairwise.add_argument("--output", required=True)
-    pairwise.add_argument("--judge-endpoint", required=True)
-    pairwise.add_argument("--judge-model", required=True)
-    pairwise.add_argument("--expected-judge-model", required=True)
-    pairwise.add_argument("--judge-revision", required=True)
-    pairwise.add_argument("--judge-key-env", default="JUDGE_API_KEY")
-    pairwise.add_argument("--timeout", type=float, default=90)
-    pairwise.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
-
     report = commands.add_parser("report", help="Verify a run and print its generated report paths")
     report.add_argument("run")
 
@@ -270,7 +258,11 @@ def _repository_root(start: Path | None = None) -> Path:
         config = candidate / "pyproject.toml"
         if config.is_file() and 'name = "cavadalabs-evals"' in config.read_text(encoding="utf-8"):
             return candidate
-    return Path(__file__).resolve().parents[2]
+    source_root = Path(__file__).resolve().parents[2]
+    source_config = source_root / "pyproject.toml"
+    if source_config.is_file() and 'name = "cavadalabs-evals"' in source_config.read_text(encoding="utf-8"):
+        return source_root
+    return Path(__file__).resolve().parent
 
 
 def _doctor(repo: Path) -> dict[str, object]:
@@ -303,6 +295,22 @@ def _doctor(repo: Path) -> dict[str, object]:
     except ProtocolError as exc:
         program_error = str(exc)
         program_summary = {"error": program_error}
+    source_tree = (repo / ".git").exists() and (repo / "uv.lock").is_file()
+    installed_distribution = repo == Path(__file__).resolve().parent
+    structural_ready = (
+        bool(schema_paths)
+        and not schema_errors
+        and not unsafe
+        and not program_error
+        and (source_tree or installed_distribution)
+        and (repo / "PROTOCOL.md").is_file()
+    )
+    official_ready = (
+        structural_ready
+        and isinstance(program_summary, dict)
+        and isinstance(program_summary.get("official_capable"), int)
+        and program_summary["official_capable"] > 0
+    )
     return {
         "repository": str(repo),
         "python": sys.version.split()[0],
@@ -313,13 +321,9 @@ def _doctor(repo: Path) -> dict[str, object]:
         "program": program_summary,
         "telemetry_environment": telemetry,
         "unsafe_explicit_telemetry_settings": unsafe,
-        "ready": bool(schema_paths)
-        and not schema_errors
-        and not unsafe
-        and not program_error
-        and (repo / ".git").exists()
-        and (repo / "uv.lock").is_file()
-        and (repo / "PROTOCOL.md").is_file(),
+        "structural_ready": structural_ready,
+        "official_ready": official_ready,
+        "ready": structural_ready,
     }
 
 
@@ -463,22 +467,45 @@ def _export(run_dir: Path, output: Path, public: bool, *, engagement: str = "", 
         "figures/latency_cdf.svg",
         "figures/distribution_shift.svg",
     }
-    selected = [
-        path
-        for path in sorted(run_dir.rglob("*"))
-        if path.is_file() and not path.is_symlink() and (not public or path.relative_to(run_dir).as_posix() in public_names)
-    ]
+    selected = [] if public else [path for path in sorted(run_dir.rglob("*")) if path.is_file() and not path.is_symlink()]
+    public_snapshots: dict[str, bytes] = {}
     if release_record is not None:
-        release_record["public_files"] = {path.relative_to(run_dir).as_posix(): sha256_file(path) for path in selected}
-    with tarfile.open(output, "w:gz") as archive:
-        for path in selected:
-            archive.add(path, arcname=path.relative_to(run_dir).as_posix(), recursive=False)
-        if release_record is not None:
-            payload = (json.dumps(release_record, indent=2, sort_keys=True) + "\n").encode()
-            info = tarfile.TarInfo("public_release.json")
-            info.size = len(payload)
-            info.mode = 0o644
-            archive.addfile(info, io.BytesIO(payload))
+        try:
+            bundle_raw = _read_regular(run_dir, Path("bundle.json"))
+            if sha256_bytes(bundle_raw) != release_record["bundle_sha256"]:
+                raise ProtocolError("behavior bundle changed after release verification")
+            bundle = _strict_json_loads(bundle_raw)
+            files = bundle.get("files") if isinstance(bundle, dict) else None
+            if not isinstance(files, dict):
+                raise ProtocolError("release bundle has no valid file manifest")
+            for name in sorted(public_names & set(map(str, files))):
+                raw = _read_regular(run_dir, Path(name))
+                if sha256_bytes(raw) != files[name]:
+                    raise ProtocolError(f"public artifact changed after release verification: {name}")
+                public_snapshots[name] = raw
+        except ProtocolError:
+            raise
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise ProtocolError("public artifacts could not be snapshotted safely") from exc
+        release_record["public_files"] = {name: sha256_bytes(raw) for name, raw in public_snapshots.items()}
+    try:
+        with output.open("xb") as destination, tarfile.open(fileobj=destination, mode="w:gz") as archive:
+            if release_record is None:
+                for path in selected:
+                    archive.add(path, arcname=path.relative_to(run_dir).as_posix(), recursive=False)
+            else:
+                for name, raw in public_snapshots.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(raw)
+                    info.mode = 0o644
+                    archive.addfile(info, io.BytesIO(raw))
+                payload = (json.dumps(release_record, indent=2, sort_keys=True) + "\n").encode()
+                info = tarfile.TarInfo("public_release.json")
+                info.size = len(payload)
+                info.mode = 0o644
+                archive.addfile(info, io.BytesIO(payload))
+    except FileExistsError as exc:
+        raise ProtocolError(f"refusing to overwrite export: {output}") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -676,22 +703,6 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(overall, indent=2))
             non_inferiority = overall.get("non_inferiority")
             return EXIT_PASS if not isinstance(non_inferiority, dict) or bool(non_inferiority.get("passed")) else EXIT_GATE_FAILURE
-        if args.command == "pairwise":
-            pairwise_result = pairwise_runs(
-                Path(args.baseline),
-                Path(args.candidate),
-                load_suite(args.suite),
-                Path(args.output),
-                judge_endpoint=args.judge_endpoint,
-                judge_model=args.judge_model,
-                expected_judge_model=args.expected_judge_model,
-                judge_revision=args.judge_revision,
-                judge_key_env=args.judge_key_env,
-                timeout=args.timeout,
-                signing_key_env=args.signing_key_env,
-            )
-            print(json.dumps(pairwise_result["metrics"], indent=2))
-            return EXIT_PASS if pairwise_result["metrics"]["invalid"] == 0 else EXIT_GATE_FAILURE
         if args.command == "report":
             run_dir = Path(args.run)
             verification = verify_bundle(run_dir)
@@ -701,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"verification": verification, "reports": paths}, indent=2))
             return EXIT_PASS
         if args.command == "verify":
-            result = verify_bundle(Path(args.run), signing_key_env=args.signing_key_env)
+            result = verify_behavior_run(Path(args.run), signing_key_env=args.signing_key_env)
             print(json.dumps(result, indent=2))
             return EXIT_PASS if result["valid"] else EXIT_INTEGRITY
         if args.command == "promote":

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint/1.0.0",
+  "title": "CavadaLabs Preregistered Judge Qualification Blueprint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "status", "target_unique_responses", "minimum_model_families",
+    "minimum_target_repetitions", "minimum_judge_repetitions", "maximum_invalid_cases",
+    "minimum_repeat_stability", "required_probe_types", "allocations", "modules"
+  ],
+  "properties": {
+    "version": {"const": "1.0.0"},
+    "status": {"const": "preregistered"},
+    "target_unique_responses": {"type": "integer", "minimum": 1},
+    "minimum_model_families": {"type": "integer", "minimum": 4},
+    "minimum_target_repetitions": {"type": "integer", "minimum": 1},
+    "minimum_judge_repetitions": {"type": "integer", "minimum": 1},
+    "maximum_invalid_cases": {"type": "integer", "minimum": 0},
+    "minimum_repeat_stability": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "required_probe_types": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "allocations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "severity", "response_length", "response_style", "probe_type"],
+      "properties": {
+        "language": {"$ref": "#/$defs/allocation"},
+        "severity": {"$ref": "#/$defs/allocation"},
+        "response_length": {"$ref": "#/$defs/allocation"},
+        "response_style": {"$ref": "#/$defs/allocation"},
+        "probe_type": {"$ref": "#/$defs/allocation"}
+      }
+    },
+    "modules": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/module"}}
+  },
+  "$defs": {
+    "allocation": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "target"],
+        "properties": {"id": {"type": "string", "minLength": 1}, "target": {"type": "integer", "minimum": 1}}
+      }
+    },
+    "module": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "target", "pass_target", "fail_target", "failure_sensitivity_gate", "pass_specificity_gate", "design_rate", "minimum_power"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "target": {"type": "integer", "minimum": 2},
+        "pass_target": {"type": "integer", "minimum": 1},
+        "fail_target": {"type": "integer", "minimum": 1},
+        "failure_sensitivity_gate": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "pass_specificity_gate": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "design_rate": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "minimum_power": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    }
+  }
+}

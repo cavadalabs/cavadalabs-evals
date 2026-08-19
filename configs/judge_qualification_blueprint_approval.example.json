@@ -1,0 +1,24 @@
+{
+  "approval_version": "1.0.0",
+  "approval_id": "replace-with-immutable-approval-id",
+  "scope": "judge-qualification-blueprint",
+  "status": "failed",
+  "independent": false,
+  "blueprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "suite": {
+    "name": "replace-with-suite-name",
+    "version": "0.0.0",
+    "dataset_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rubric_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "approver_id": "UNASSIGNED",
+  "approver_qualification_evidence": "UNAVAILABLE",
+  "approver_qualification_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "conflicts": "NOT-ASSESSED",
+  "conflicts_resolved": false,
+  "decision_rationale": "Template only; it must fail until independent approval is completed.",
+  "approved_at": "1970-01-01T00:00:00Z",
+  "expires_at": "1970-01-01T00:00:00Z",
+  "revoked_at": null,
+  "revocation_reason": ""
+}

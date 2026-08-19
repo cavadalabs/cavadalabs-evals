@@ -153,6 +153,7 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         ("target", "family-a", 0.8),
         ("target", "family-b", 0.7),
         ("target", "family-c", 0.6),
+        ("target", "family-d", 0.6),
         ("positive-control", "positive", 1.0),
         ("negative-control", "negative", 0.0),
     ]
@@ -198,21 +199,45 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         write_bundle(run_dir)
         campaign_runs.append({"role": role, "family_alias": alias, "path": run_dir.name})
     qualification = {
-        "qualification_version": "1.0.0",
+        "qualification_version": "2.0.0",
         "passed": True,
         "rubric_sha256": suite["rubric_sha256"],
+        "source_suite": {field: suite[field] for field in ("name", "version", "dataset_sha256", "rubric_sha256")},
         "run_manifest_sha256": "1" * 64,
         "corpus_manifest_sha256": "2" * 64,
         "blueprint_sha256": "3" * 64,
+        "blueprint_approval_sha256": "5" * 64,
         "corpus_dataset_sha256": "4" * 64,
-        "bundle_verification": {"valid": True},
-        "judge_configuration": judge,
-        "judges": {"primary": {"passed": True}},
+            "bundle_verification": {"valid": True, "failures": [], "signature": "absent", "files": 1},
+            "judge_configuration": judge,
+            "judges": {
+                "primary": {
+                    "passed": True,
+                    "checks": [
+                        {"name": name, "passed": True}
+                        for name in ("all_modules", "invalid_cases", "judge_repetitions", "repeat_stability")
+                    ],
+                    "modules": {
+                        "pilot": {
+                            "passed": True,
+                            "cases": 1,
+                            "expected_cases": 1,
+                            "invalid_cases": 0,
+                            "failure_sensitivity_ci": {"lower": 1.0, "upper": 1.0, "confidence": 0.95},
+                            "failure_sensitivity_gate": 0.9,
+                            "pass_specificity_ci": {"lower": 1.0, "upper": 1.0, "confidence": 0.95},
+                            "pass_specificity_gate": 0.9,
+                        }
+                    },
+                    "diagnostic_slices": {},
+                }
+            },
+            "limitations": ["Pilot-campaign unit-test fixture for this exact judge only."],
     }
     qualification_path = tmp_path / "qualification.json"
     qualification_path.write_text(json.dumps(qualification))
     approval = {
-        "approval_version": "1.0.0",
+        "approval_version": "2.0.0",
         "approval_id": "approval-1",
         "scope": "judge-qualification",
         "status": "passed",
@@ -221,9 +246,12 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         "approver_id": "independent-reviewer",
         "approver_qualification_evidence": "restricted-evidence-reference",
         "conflicts": "none declared",
+        "conflicts_resolved": True,
         "decision_rationale": "The preregistered evidence and gates were independently reviewed.",
         "approved_at": "2026-08-05T12:00:00+00:00",
         "expires_at": "2099-08-05T12:00:00+00:00",
+        "revoked_at": None,
+        "revocation_reason": "",
     }
     evidence = {
         "qualification.json": qualification,
@@ -239,7 +267,7 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         "campaign_version": "1.0.0",
         "suite": suite,
         "requirements": {
-            "minimum_model_families": 3,
+            "minimum_model_families": 4,
             "minimum_target_repetitions": 3,
             "minimum_judge_repetitions": 3,
             "evaluation_cases": 404,
@@ -255,7 +283,7 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
     campaign_path = tmp_path / "campaign.json"
     campaign_path.write_text(json.dumps(campaign))
     result = audit_pilot_campaign(campaign_path, tmp_path / "pilot-audit.json")
-    assert result["passed"] is True and result["role_counts"] == {"target": 3, "positive-control": 1, "negative-control": 1}
+    assert result["passed"] is True and result["role_counts"] == {"target": 4, "positive-control": 1, "negative-control": 1}
     campaign["runs"] = campaign_runs[:-1]
     incomplete_path = tmp_path / "campaign-incomplete.json"
     incomplete_path.write_text(json.dumps(campaign))
@@ -369,6 +397,11 @@ def test_bundle_verification_detects_tampering(tmp_path: Path) -> None:
     artifact.write_text("{}\n", encoding="utf-8")
     write_bundle(run_dir)
     assert verify_bundle(run_dir)["valid"] is True
+    bundle = run_dir / "bundle.json"
+    bundle_raw = bundle.read_bytes()
+    bundle.write_bytes(bundle_raw + b" ")
+    assert "bundle.json is not in canonical byte form" in verify_bundle(run_dir)["failures"]
+    bundle.write_bytes(bundle_raw)
     artifact.write_text('{"tampered":true}\n', encoding="utf-8")
     result = verify_bundle(run_dir)
     assert result["valid"] is False
@@ -377,6 +410,50 @@ def test_bundle_verification_detects_tampering(tmp_path: Path) -> None:
     extra = run_dir / "unlisted.txt"
     extra.write_text("misleading", encoding="utf-8")
     assert "unlisted artifact: unlisted.txt" in verify_bundle(run_dir)["failures"]
+
+    malformed = tmp_path / "malformed"
+    malformed.mkdir()
+    malformed_bundle = {
+        "bundle_version": "1.0.0",
+        "algorithm": "sha256",
+        "files": {
+            "../outside.txt": "a" * 64,
+            r"..\outside.txt": "b" * 64,
+            r"C:outside.txt": "c" * 64,
+            "evidence.txt": "not-a-sha256",
+        },
+    }
+    (malformed / "bundle.json").write_text(json.dumps(malformed_bundle), encoding="utf-8")
+    (malformed / "checksums.txt").write_text(
+        f"{'a' * 64}  ../outside.txt\n{'b' * 64}  ..\\outside.txt\n{'c' * 64}  C:outside.txt\nnot-a-sha256  evidence.txt\n",
+        encoding="utf-8",
+    )
+    failures = verify_bundle(malformed)["failures"]
+    assert "unsafe artifact path: ../outside.txt" in failures
+    assert r"unsafe artifact path: ..\outside.txt" in failures
+    assert r"unsafe artifact path: C:outside.txt" in failures
+    assert "malformed artifact entry: evidence.txt" in failures
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_artifact = outside / "evidence.txt"
+    outside_artifact.write_text("outside", encoding="utf-8")
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir()
+    (unsafe / "linked").symlink_to(outside, target_is_directory=True)
+    unsafe_bundle = {"bundle_version": "1.0.0", "algorithm": "sha256", "files": {"linked/evidence.txt": sha256_file(outside_artifact)}}
+    (unsafe / "bundle.json").write_text(json.dumps(unsafe_bundle), encoding="utf-8")
+    (unsafe / "checksums.txt").write_text(f"{sha256_file(outside_artifact)}  linked/evidence.txt\n", encoding="utf-8")
+    assert any("unsafe" in failure for failure in verify_bundle(unsafe)["failures"])
+
+    for body in (
+        '{"bundle_version":"1.0.0","bundle_version":"1.0.0","algorithm":"sha256","files":{}}',
+        '{"bundle_version":"1.0.0","algorithm":"sha256","files":{},"number":NaN}',
+        '{"bundle_version":"1.0.0","algorithm":"sha256","files":{},"number":1e999}',
+    ):
+        (malformed / "bundle.json").write_text(body, encoding="utf-8")
+        with pytest.raises(ProtocolError, match="invalid bundle.json"):
+            verify_bundle(malformed)
 
 
 def test_conversation_input_must_match_final_user_turn(tmp_path: Path) -> None:

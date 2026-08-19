@@ -25,7 +25,7 @@ from .assets import content_text, validate_content_parts, validate_messages
 from .profiles import TASK_PROFILES
 
 PROTOCOL_VERSION = "1.0.0"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 REPORT_VERSION = "1.1.0"
 BEHAVIORS = {"answer", "refuse", "abstain", "redirect", "safe_complete"}
 RISK_DOMAINS = {"quality", "security", "privacy", "safety", "reliability", "performance", "fairness"}
@@ -63,6 +63,74 @@ OFFICIAL_SUITE_FIELDS = {
     "network",
     "profile",
     "dataset_integrity",
+}
+OFFICIAL_CASE_FIELDS = {
+    "id",
+    "input",
+    "messages",
+    "category",
+    "risk_domain",
+    "severity",
+    "language",
+    "locale",
+    "split",
+    "weight",
+    "tags",
+    "operating_condition",
+    "distribution_shift_dimension",
+    "distribution_shift_reference_id",
+    "scenario_group_id",
+    "scenario_id",
+    "scenario_role",
+    "scenario_reference_id",
+    "performance_phase",
+    "expected_behavior",
+    "expected_behavior_reason",
+    "expected_output",
+    "expected_json",
+    "expected_json_value",
+    "json_schema",
+    "expected_number",
+    "numeric_tolerance",
+    "expected_set",
+    "set_f1_min",
+    "token_f1_min",
+    "expected_retrieval_ids",
+    "retrieval_k",
+    "retrieval_minimums",
+    "expected_tools",
+    "forbidden_tools",
+    "allowed_tool_permissions",
+    "expected_tool_arguments",
+    "exact_tool_order",
+    "max_tool_calls",
+    "expected_transcript",
+    "required_terms",
+    "forbidden_terms",
+    "required_regex",
+    "forbidden_regex",
+    "citation_required",
+    "citation_pattern",
+    "forbid_pii",
+    "min_chars",
+    "max_chars",
+    "max_character_error_rate",
+    "max_word_error_rate",
+    "structured_field_accuracy_min",
+    "mandatory_criteria",
+    "metric_weights",
+    "soft_checks",
+    "judge_gold_verdict",
+    "response_length",
+    "response_style",
+    "probe_type",
+    "model_family_alias",
+    "module",
+    "context",
+    "retrieval_context",
+    "pattern",
+    "source",
+    "review",
 }
 SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -111,6 +179,213 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _strict_json_loads(value: str | bytes) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = item
+        return result
+
+    def reject_constant(token: str) -> Any:
+        raise ValueError(f"non-finite JSON number: {token}")
+
+    parsed = json.loads(value, object_pairs_hook=object_pairs, parse_constant=reject_constant)
+
+    def reject_overflow(item: Any) -> None:
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError("non-finite JSON number")
+        if isinstance(item, dict):
+            for child in item.values():
+                reject_overflow(child)
+        elif isinstance(item, list):
+            for child in item:
+                reject_overflow(child)
+
+    reject_overflow(parsed)
+    return parsed
+
+
+def _closed_object_errors(value: Any, allowed: set[str], label: str) -> list[str]:
+    if not isinstance(value, dict):
+        return [f"{label} must be an object"]
+    unknown = sorted(set(value) - allowed)
+    return [f"{label} has unknown fields: {unknown}"] if unknown else []
+
+
+def _official_content_structure_errors(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    allowed = {
+        "type",
+        "text",
+        "asset",
+        "mime_type",
+        "sha256",
+        "name",
+        "arguments",
+        "result",
+        "license",
+        "origin",
+        "personal_data",
+    }
+    return [
+        error
+        for index, part in enumerate(value)
+        for error in _closed_object_errors(part, allowed, f"{label}[{index}]")
+    ]
+
+
+def _official_suite_structure_errors(suite: Suite) -> list[str]:
+    config = suite.config
+    errors = _closed_object_errors(config, OFFICIAL_SUITE_FIELDS, "suite")
+    object_fields = {
+        "governance": {
+            "owner",
+            "purpose",
+            "intended_use",
+            "prohibited_use",
+            "license",
+            "origin",
+            "created_at",
+            "retention",
+            "personal_data",
+            "legal_basis_reference",
+            "rotation_due",
+            "contamination_status",
+            "canary_strategy",
+            "known_leaks",
+            "representativeness",
+            "transfer_restrictions",
+            "near_duplicate_threshold",
+            "semantic_duplicate_threshold",
+            "minimum_category_cases",
+            "maximum_category_share",
+        },
+        "target": {
+            "kind",
+            "responses",
+            "responses_sha256",
+            "response_field",
+            "reported_model_field",
+            "retrieved_ids_field",
+            "sources_field",
+            "tools_field",
+            "request_field",
+            "request_defaults_json",
+            "stream",
+            "system_prompt",
+            "system_prompt_sha256",
+            "capabilities",
+        },
+        "assets": {"max_bytes", "max_image_pixels", "max_audio_seconds"},
+        "metrics": {"deepeval"},
+        "judge": {
+            "additional_models",
+            "consensus",
+            "minimum_calibration_accuracy",
+            "qualification_blueprint",
+            "qualification_blueprint_sha256",
+            "qualification_blueprint_approval",
+            "qualification_blueprint_approval_sha256",
+        },
+        "statistics": {"confidence", "bootstrap_samples", "seed"},
+        "report": {
+            "include_raw",
+            "public_redaction",
+            "limitations",
+            "assurance",
+            "model_claim_allowed",
+            "benchmark_claim_allowed",
+        },
+        "calibration": {
+            "status",
+            "evidence",
+            "evidence_sha256",
+            "independent_review",
+            "independent_review_evidence",
+            "independent_review_evidence_sha256",
+        },
+        "pricing": {
+            "currency",
+            "source",
+            "effective_at",
+            "input_per_million",
+            "output_per_million",
+            "judge_input_per_million",
+            "judge_output_per_million",
+        },
+        "network": {"allowed_hosts"},
+        "dataset_integrity": {
+            "semantic_review_status",
+            "semantic_review_evidence",
+            "semantic_review_evidence_sha256",
+            "semantic_detector",
+            "semantic_detector_revision",
+            "cross_split_reviewed",
+            "cross_suite_reviewed",
+        },
+    }
+    for field, allowed in object_fields.items():
+        if field in config:
+            errors.extend(_closed_object_errors(config[field], allowed, f"suite.{field}"))
+    target = config.get("target")
+    report = config.get("report")
+    if isinstance(report, dict) and "assurance" in report:
+        if report.get("assurance") != "conformance-fixture" or not isinstance(target, dict) or target.get("kind") != "recorded":
+            errors.append("report.assurance=conformance-fixture is reserved for recorded official targets")
+        if report.get("model_claim_allowed") is not False or report.get("benchmark_claim_allowed") is not False:
+            errors.append("official conformance fixtures must prohibit model and benchmark claims")
+    if "splits" in config and not isinstance(config["splits"], dict):
+        errors.append("suite.splits must be an object")
+    gates = config.get("gates")
+    if isinstance(gates, list):
+        for index, gate in enumerate(gates):
+            errors.extend(_closed_object_errors(gate, {"category", "slice", "value", "metric", "min"}, f"suite.gates[{index}]"))
+    metrics = config.get("metrics")
+    if isinstance(metrics, dict) and isinstance(metrics.get("deepeval"), list):
+        for index, metric in enumerate(metrics["deepeval"]):
+            errors.extend(
+                _closed_object_errors(
+                    metric,
+                    {"name", "threshold", "pattern", "ignore_case", "model", "hard_fail"},
+                    f"suite.metrics.deepeval[{index}]",
+                )
+            )
+    judge = config.get("judge")
+    if isinstance(judge, dict) and isinstance(judge.get("additional_models"), list):
+        for index, model in enumerate(judge["additional_models"]):
+            errors.extend(_closed_object_errors(model, {"model", "expected_model", "revision"}, f"suite.judge.additional_models[{index}]"))
+    for index, case in enumerate(suite.cases, 1):
+        prefix = f"case[{index}]"
+        errors.extend(_closed_object_errors(case, OFFICIAL_CASE_FIELDS, prefix))
+        errors.extend(_official_content_structure_errors(case.get("input"), f"{prefix}.input"))
+        source = case.get("source")
+        errors.extend(
+            _closed_object_errors(
+                source,
+                {"origin", "source_case_id", "source_run_manifest_sha256", "gold_evidence_sha256", "model_family_alias", "metadata"},
+                f"{prefix}.source",
+            )
+        )
+        errors.extend(
+            _closed_object_errors(
+                case.get("review"),
+                {"status", "method", "reviewer_id", "reviewed_at", "evidence_sha256"},
+                f"{prefix}.review",
+            )
+        )
+        messages = case.get("messages")
+        if isinstance(messages, list):
+            for message_index, message in enumerate(messages):
+                message_label = f"{prefix}.messages[{message_index}]"
+                errors.extend(_closed_object_errors(message, {"role", "content", "name", "tool_call_id"}, message_label))
+                if isinstance(message, dict):
+                    errors.extend(_official_content_structure_errors(message.get("content"), f"{message_label}.content"))
+    return errors
+
+
 def contains_secret_like(value: Any) -> bool:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
@@ -121,7 +396,7 @@ def atomic_json(path: Path, value: Any) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False)
             handle.write("\n")
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
@@ -145,7 +420,7 @@ def atomic_text(path: Path, value: str) -> None:
 
 def append_jsonl(path: Path, value: Any) -> None:
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.write(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
     os.chmod(path, 0o600)
 
 
@@ -165,9 +440,9 @@ def _read_jsonl(path: Path) -> tuple[dict[str, Any], ...]:
             if not raw.strip():
                 continue
             try:
-                row = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ProtocolError(f"Invalid JSONL line {line_number}: {exc.msg}") from exc
+                row = _strict_json_loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+                raise ProtocolError(f"Invalid JSONL line {line_number}: {exc}") from exc
             if not isinstance(row, dict):
                 raise ProtocolError(f"Invalid JSONL line {line_number}: expected object")
             rows.append(row)
@@ -201,27 +476,48 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
         path = _inside(suite.root, relative)
     except ProtocolError as exc:
         return [str(exc)]
-    if not path.is_file():
+    if (suite.root / relative).is_symlink() or not path.is_file():
         return ["official semantic contamination evidence file is missing"]
     expected_hash = str(integrity.get("semantic_review_evidence_sha256", ""))
-    if sha256_file(path) != expected_hash:
-        return ["official semantic contamination evidence hash mismatch"]
     try:
-        evidence = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = path.read_bytes()
+        evidence = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return ["official semantic contamination evidence must be valid JSON"]
+    if sha256_bytes(raw) != expected_hash:
+        return ["official semantic contamination evidence hash mismatch"]
     if not isinstance(evidence, dict):
         return ["official semantic contamination evidence must be an object"]
-    hashes = (
+    expected_fields = {
+        "evidence_version",
         "dataset_sha256",
+        "comparison_corpus",
         "comparison_corpus_sha256",
+        "candidate_pairs_evidence",
         "candidate_pairs_evidence_sha256",
+        "reviewer_evidence",
         "reviewer_evidence_sha256",
-    )
+        "detector",
+        "detector_revision",
+        "detector_license",
+        "similarity_metric",
+        "threshold",
+        "cases",
+        "candidate_pairs",
+        "confirmed_duplicates",
+        "cross_split_reviewed",
+        "cross_suite_reviewed",
+        "independent_review_status",
+        "performed_at",
+        "passed",
+    }
+    if set(evidence) != expected_fields:
+        errors.append(f"official semantic contamination fields must be exactly {sorted(expected_fields)}")
+    hashes = ("dataset_sha256", "comparison_corpus_sha256", "candidate_pairs_evidence_sha256", "reviewer_evidence_sha256")
     if any(not isinstance(evidence.get(field), str) or not re.fullmatch(r"[a-f0-9]{64}", evidence[field]) for field in hashes):
         errors.append("official semantic contamination evidence contains invalid hashes")
-    if evidence.get("evidence_version") != "1.0.0":
-        errors.append("official semantic contamination evidence_version must be 1.0.0")
+    if evidence.get("evidence_version") != "2.0.0":
+        errors.append("official semantic contamination evidence_version must be 2.0.0")
     if evidence.get("dataset_sha256") != sha256_file(suite.dataset_path):
         errors.append("official semantic contamination evidence dataset hash mismatch")
     if evidence.get("detector") != integrity.get("semantic_detector"):
@@ -236,6 +532,98 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
         errors.append("official semantic contamination threshold is invalid")
     if evidence.get("cases") != len(suite.cases):
         errors.append("official semantic contamination case count mismatch")
+    def support(field: str, label: str, *, parse_json: bool) -> tuple[bytes, Any] | None:
+        support_relative = evidence.get(field)
+        support_hash = evidence.get(f"{field}_sha256")
+        if not isinstance(support_relative, str) or not support_relative.strip():
+            errors.append(f"official semantic contamination {label} path is required")
+            return None
+        candidate = suite.root / support_relative
+        try:
+            support_path = _inside(suite.root, support_relative)
+        except ProtocolError as exc:
+            errors.append(str(exc))
+            return None
+        if candidate.is_symlink() or not support_path.is_file():
+            errors.append(f"official semantic contamination {label} must be a regular suite-local file")
+            return None
+        try:
+            support_raw = support_path.read_bytes()
+            support_value = _strict_json_loads(support_raw) if parse_json else None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            errors.append(f"official semantic contamination {label} is unreadable or invalid")
+            return None
+        if not support_raw or sha256_bytes(support_raw) != support_hash:
+            errors.append(f"official semantic contamination {label} hash mismatch")
+            return None
+        return support_raw, support_value
+
+    comparison = support("comparison_corpus", "comparison corpus", parse_json=False)
+    pairs_record = support("candidate_pairs_evidence", "candidate-pairs evidence", parse_json=True)
+    reviewer_record = support("reviewer_evidence", "reviewer evidence", parse_json=True)
+    if comparison is not None and sha256_bytes(comparison[0]) != evidence.get("comparison_corpus_sha256"):
+        errors.append("official semantic contamination comparison corpus hash mismatch")
+
+    pair_rows: list[Any] = []
+    if pairs_record is not None:
+        pairs_value = pairs_record[1]
+        pair_fields = {"candidate_pairs_evidence_version", "dataset_sha256", "comparison_corpus_sha256", "pairs"}
+        raw_pairs = pairs_value.get("pairs") if isinstance(pairs_value, dict) else None
+        pair_rows = raw_pairs if isinstance(raw_pairs, list) else []
+        suite_ids = {str(case.get("id")) for case in suite.cases}
+        if (
+            not isinstance(pairs_value, dict)
+            or set(pairs_value) != pair_fields
+            or pairs_value.get("candidate_pairs_evidence_version") != "1.0.0"
+            or pairs_value.get("dataset_sha256") != evidence.get("dataset_sha256")
+            or pairs_value.get("comparison_corpus_sha256") != evidence.get("comparison_corpus_sha256")
+            or not isinstance(pair_rows, list)
+            or any(
+                not isinstance(pair, dict)
+                or set(pair) != {"left_case_id", "right_corpus_id", "similarity"}
+                or pair.get("left_case_id") not in suite_ids
+                or not isinstance(pair.get("right_corpus_id"), str)
+                or not pair["right_corpus_id"]
+                or not isinstance(pair.get("similarity"), (int, float))
+                or isinstance(pair.get("similarity"), bool)
+                or not -1 <= float(pair["similarity"]) <= 1
+                for pair in pair_rows
+            )
+        ):
+            errors.append("official semantic contamination candidate-pairs evidence is invalid or unlinked")
+
+    confirmed_rows: list[Any] = []
+    if reviewer_record is not None:
+        reviewer = reviewer_record[1]
+        reviewer_fields = {
+            "reviewer_evidence_version",
+            "status",
+            "dataset_sha256",
+            "candidate_pairs_evidence_sha256",
+            "independent_reviewers",
+            "confirmed_duplicate_pairs",
+            "completed_at",
+        }
+        raw_confirmed = reviewer.get("confirmed_duplicate_pairs") if isinstance(reviewer, dict) else None
+        confirmed_rows = raw_confirmed if isinstance(raw_confirmed, list) else []
+        reviewers = reviewer.get("independent_reviewers") if isinstance(reviewer, dict) else None
+        if (
+            not isinstance(reviewer, dict)
+            or set(reviewer) != reviewer_fields
+            or reviewer.get("reviewer_evidence_version") != "1.0.0"
+            or reviewer.get("status") != "passed"
+            or reviewer.get("dataset_sha256") != evidence.get("dataset_sha256")
+            or reviewer.get("candidate_pairs_evidence_sha256") != evidence.get("candidate_pairs_evidence_sha256")
+            or not isinstance(reviewers, list)
+            or len(reviewers) < 2
+            or len(set(reviewers)) != len(reviewers)
+            or not all(isinstance(reviewer_id, str) and reviewer_id.strip() for reviewer_id in reviewers)
+            or not isinstance(confirmed_rows, list)
+            or not all(isinstance(pair_id, str) and pair_id.strip() for pair_id in confirmed_rows)
+        ):
+            errors.append("official semantic contamination reviewer evidence is invalid or unlinked")
+        _evidence_time(reviewer.get("completed_at") if isinstance(reviewer, dict) else None, "semantic reviewer completed_at", errors)
+
     candidate_pairs = evidence.get("candidate_pairs")
     confirmed = evidence.get("confirmed_duplicates")
     if (
@@ -246,14 +634,15 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
         or isinstance(confirmed, bool)
         or confirmed < 0
         or confirmed > candidate_pairs
+        or candidate_pairs != len(pair_rows)
+        or confirmed != len(confirmed_rows)
     ):
         errors.append("official semantic contamination pair counts are invalid")
     if evidence.get("cross_split_reviewed") is not True or evidence.get("cross_suite_reviewed") is not True:
         errors.append("official semantic contamination evidence requires cross-split and cross-suite review")
     if (
         evidence.get("independent_review_status") != "passed"
-        or not isinstance(evidence.get("reviewer_evidence"), str)
-        or not str(evidence["reviewer_evidence"]).strip()
+        or reviewer_record is None
     ):
         errors.append("official semantic contamination evidence requires independent reviewer evidence")
     if evidence.get("passed") is not True or confirmed != 0:
@@ -267,6 +656,123 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
     return errors
 
 
+def _judge_blueprint_evidence_errors(suite: Suite, *, require: bool) -> list[str]:
+    judge = suite.config.get("judge")
+    fields = {
+        "qualification_blueprint": "judge qualification blueprint",
+        "qualification_blueprint_approval": "judge qualification blueprint approval",
+    }
+    configured = isinstance(judge, dict) and any(
+        judge.get(field) or judge.get(f"{field}_sha256") for field in fields
+    )
+    if not configured:
+        return ["official runs require a pinned judge qualification blueprint and independent approval"] if require else []
+    if not isinstance(judge, dict):
+        return ["suite.judge must be a table"]
+
+    loaded: dict[str, tuple[Path, bytes]] = {}
+    errors: list[str] = []
+    for field, label in fields.items():
+        relative = judge.get(field)
+        expected_hash = judge.get(f"{field}_sha256")
+        if (
+            not isinstance(relative, str)
+            or not relative.strip()
+            or not isinstance(expected_hash, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+        ):
+            errors.append(f"{label} path and SHA-256 are required")
+            continue
+        try:
+            path = _inside(suite.root, relative)
+        except ProtocolError as exc:
+            errors.append(str(exc))
+            continue
+        if (suite.root / relative).is_symlink() or not path.is_file():
+            errors.append(f"{label} must be a regular suite-local file")
+            continue
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            errors.append(f"cannot read {label}: {exc}")
+            continue
+        if sha256_bytes(raw) != expected_hash:
+            errors.append(f"{label} hash mismatch")
+            continue
+        loaded[field] = (path, raw)
+    if errors or set(loaded) != set(fields):
+        return errors
+
+    from .program import (
+        validate_judge_qualification_blueprint,
+        validate_judge_qualification_blueprint_approval,
+    )
+
+    blueprint_path, blueprint_raw = loaded["qualification_blueprint"]
+    errors.extend(validate_judge_qualification_blueprint(blueprint_path, suite, raw=blueprint_raw))
+    approval_path, approval_raw = loaded["qualification_blueprint_approval"]
+    errors.extend(
+        validate_judge_qualification_blueprint_approval(
+            approval_path,
+            suite,
+            str(judge["qualification_blueprint_sha256"]),
+            raw=approval_raw,
+            require_effective=require,
+        )
+    )
+    return errors
+
+
+def _load_suite_json_evidence(
+    suite: Suite,
+    relative: Any,
+    expected_hash: Any,
+    label: str,
+    errors: list[str],
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(relative, str)
+        or not relative.strip()
+        or not isinstance(expected_hash, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)
+    ):
+        errors.append(f"official {label} path and SHA-256 are required")
+        return None
+    candidate = suite.root / relative
+    try:
+        path = _inside(suite.root, relative)
+    except ProtocolError as exc:
+        errors.append(str(exc))
+        return None
+    if candidate.is_symlink() or not path.is_file():
+        errors.append(f"official {label} must be a regular suite-local file")
+        return None
+    try:
+        raw = path.read_bytes()
+        value = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        errors.append(f"official {label} must be valid JSON")
+        return None
+    if sha256_bytes(raw) != expected_hash:
+        errors.append(f"official {label} hash mismatch")
+        return None
+    if not isinstance(value, dict):
+        errors.append(f"official {label} must be a JSON object")
+        return None
+    return value
+
+
+def _evidence_time(value: Any, label: str, errors: list[str]) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError
+    except ValueError:
+        errors.append(f"official {label} must include a timezone")
+        return None
+    return parsed
+
+
 def _calibration_evidence_errors(
     suite: Suite,
     calibration: Any,
@@ -276,77 +782,380 @@ def _calibration_evidence_errors(
 ) -> list[str]:
     if not isinstance(calibration, dict):
         return ["official suite calibration configuration is missing"]
-    required_paths = {"evidence": "calibration report"}
-    if require_approval:
-        required_paths["independent_review_evidence"] = "calibration independent approval"
-    loaded: dict[str, dict[str, Any]] = {}
-    for field, label in required_paths.items():
-        relative = calibration.get(field)
-        expected_hash = calibration.get(f"{field}_sha256")
-        if not isinstance(relative, str) or not relative or not isinstance(expected_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
-            return [f"official {label} path and SHA-256 are required"]
-        try:
-            path = _inside(suite.root, relative)
-        except ProtocolError as exc:
-            return [str(exc)]
-        if not path.is_file() or path.is_symlink():
-            return [f"official {label} must be a regular suite-local file"]
-        if sha256_file(path) != expected_hash:
-            return [f"official {label} hash mismatch"]
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return [f"official {label} must be valid JSON"]
-        if not isinstance(value, dict):
-            return [f"official {label} must be a JSON object"]
-        loaded[field] = value
-
     errors: list[str] = []
-    report = loaded["evidence"]
-    evidence_hashes = (
-        "analysis_plan_sha256",
-        "human_label_evidence_sha256",
-        "holdout_manifest_sha256",
-        "pilot_audit_sha256",
-        "statistical_review_sha256",
-        "semantic_contamination_evidence_sha256",
+    report = _load_suite_json_evidence(
+        suite,
+        calibration.get("evidence"),
+        calibration.get("evidence_sha256"),
+        "calibration report",
+        errors,
     )
-    report_suite = report.get("suite")
+    if report is None:
+        return errors
     expected_suite = {
         "name": suite.name,
         "version": suite.version,
         "dataset_sha256": sha256_file(suite.dataset_path),
         "rubric_sha256": sha256_file(suite.rubric_path),
     }
+    support_labels = {
+        "analysis_plan": "calibration analysis plan",
+        "human_label_evidence": "calibration human-label evidence",
+        "holdout_manifest": "calibration holdout manifest",
+        "pilot_campaign": "calibration pilot campaign",
+        "pilot_audit": "calibration pilot audit",
+        "statistical_review": "calibration statistical review",
+        "semantic_contamination_evidence": "calibration semantic-contamination evidence",
+    }
+    report_fields = {
+        "calibration_version",
+        "status",
+        "protocol_version",
+        "suite",
+        "source_commit",
+        "gates_passed",
+        "results",
+        "completed_at",
+        "limitations",
+        *(support_labels),
+        *(f"{field}_sha256" for field in support_labels),
+    }
+    if set(report) != report_fields:
+        errors.append(f"official calibration report fields must be exactly {sorted(report_fields)}")
     if (
-        report.get("calibration_version") != "1.0.0"
+        report.get("calibration_version") != "2.0.0"
         or report.get("status") != "passed"
         or report.get("protocol_version") != PROTOCOL_VERSION
-        or report_suite != expected_suite
-        or report.get("gates_passed") is not True
-        or not isinstance(report.get("results"), dict)
-        or not report["results"]
+        or report.get("suite") != expected_suite
         or not isinstance(report.get("limitations"), list)
         or not report["limitations"]
         or not all(isinstance(value, str) and value.strip() for value in report["limitations"])
         or not isinstance(report.get("source_commit"), str)
         or not re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", report["source_commit"])
-        or not all(isinstance(report.get(field), str) and re.fullmatch(r"[a-f0-9]{64}", report[field]) for field in evidence_hashes)
     ):
         errors.append("official calibration report is incomplete or did not pass")
+
+    supports: dict[str, dict[str, Any]] = {}
+    for field, label in support_labels.items():
+        value = _load_suite_json_evidence(suite, report.get(field), report.get(f"{field}_sha256"), label, errors)
+        if value is not None:
+            supports[field] = value
+    if set(supports) != set(support_labels):
+        return errors
+
     integrity = suite.config.get("dataset_integrity") or {}
-    if report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256"):
+    if (
+        report.get("semantic_contamination_evidence") != integrity.get("semantic_review_evidence")
+        or report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256")
+    ):
         errors.append("official calibration report does not match semantic contamination evidence")
+    elif isinstance(integrity, dict):
+        errors.extend(_semantic_integrity_errors(suite, integrity))
+
+    analysis = supports["analysis_plan"]
+    statistics = suite.config.get("statistics") or {}
+    expected_statistics = {
+        "confidence": statistics.get("confidence", 0.95),
+        "bootstrap_samples": statistics.get("bootstrap_samples", 10_000),
+        "seed": statistics.get("seed", 0),
+    }
+    analysis_fields = {"analysis_plan_version", "status", "suite", "gates", "statistics", "frozen_at"}
+    if (
+        set(analysis) != analysis_fields
+        or analysis.get("analysis_plan_version") != "1.0.0"
+        or analysis.get("status") != "preregistered"
+        or analysis.get("suite") != expected_suite
+        or analysis.get("gates") != suite.config.get("gates")
+        or analysis.get("statistics") != expected_statistics
+    ):
+        errors.append("official calibration analysis plan does not reconstruct the pinned suite")
+
+    case_ids = sorted(str(case.get("id")) for case in suite.cases)
+    approved_ids = sorted(
+        str(case.get("id")) for case in suite.cases if (case.get("review") or {}).get("status") == "approved"
+    )
+    human = supports["human_label_evidence"]
+    human_fields = {
+        "human_label_evidence_version",
+        "status",
+        "suite",
+        "case_ids",
+        "approved_case_ids",
+        "independent_reviewers",
+        "separate_adjudicator",
+        "identity_blinded",
+        "completed_at",
+    }
+    reviewers = human.get("independent_reviewers")
+    if (
+        set(human) != human_fields
+        or human.get("human_label_evidence_version") != "1.0.0"
+        or human.get("status") != "passed"
+        or human.get("suite") != expected_suite
+        or human.get("case_ids") != case_ids
+        or human.get("approved_case_ids") != case_ids
+        or approved_ids != case_ids
+        or not isinstance(reviewers, int)
+        or isinstance(reviewers, bool)
+        or reviewers < 2
+        or human.get("separate_adjudicator") is not True
+        or human.get("identity_blinded") is not True
+    ):
+        errors.append("official calibration human-label evidence does not reconstruct independent approval of every case")
+
+    split_ids = {
+        split: sorted(str(case.get("id")) for case in suite.cases if case.get("split") == split)
+        for split in sorted(SPLITS)
+    }
+    holdout = supports["holdout_manifest"]
+    holdout_fields = {"holdout_manifest_version", "status", "suite", "split_case_ids", "completed_at"}
+    if (
+        set(holdout) != holdout_fields
+        or holdout.get("holdout_manifest_version") != "1.0.0"
+        or holdout.get("status") != "passed"
+        or holdout.get("suite") != expected_suite
+        or holdout.get("split_case_ids") != split_ids
+        or not split_ids["holdout"]
+        or sorted(case_id for ids in split_ids.values() for case_id in ids) != case_ids
+    ):
+        errors.append("official calibration holdout manifest does not reconstruct an isolated complete split partition")
+
+    campaign = supports["pilot_campaign"]
+    campaign_path = _inside(suite.root, str(report["pilot_campaign"]))
+    campaign_fields = {
+        "campaign_version",
+        "suite",
+        "requirements",
+        "judge_qualification",
+        "judge_independent_approval",
+        "transcript_review",
+        "runs",
+    }
+    campaign_closure_valid = isinstance(campaign, dict) and set(campaign) == campaign_fields
+    campaign_root = campaign_path.parent
+    if campaign_closure_valid:
+        for field in ("judge_qualification", "judge_independent_approval", "transcript_review"):
+            record = campaign.get(field)
+            if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+                campaign_closure_valid = False
+                break
+            relative = record.get("path")
+            expected_hash = record.get("sha256")
+            if not isinstance(relative, str) or not isinstance(expected_hash, str):
+                campaign_closure_valid = False
+                break
+            candidate = campaign_root / relative
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(suite.root.resolve())
+                raw = resolved.read_bytes()
+                _strict_json_loads(raw)
+            except (ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+                campaign_closure_valid = False
+                break
+            if candidate.is_symlink() or not resolved.is_file() or sha256_bytes(raw) != expected_hash:
+                campaign_closure_valid = False
+                break
+        runs_value = campaign.get("runs")
+        if not isinstance(runs_value, list):
+            campaign_closure_valid = False
+        else:
+            for record in runs_value:
+                if not isinstance(record, dict) or set(record) != {"role", "family_alias", "path"}:
+                    campaign_closure_valid = False
+                    break
+                relative = record.get("path")
+                if not isinstance(relative, str):
+                    campaign_closure_valid = False
+                    break
+                candidate = campaign_root / relative
+                resolved = candidate.resolve()
+                try:
+                    resolved.relative_to(suite.root.resolve())
+                except ValueError:
+                    campaign_closure_valid = False
+                    break
+                if candidate.is_symlink() or not resolved.is_dir():
+                    campaign_closure_valid = False
+                    break
+    if not campaign_closure_valid:
+        errors.append("official calibration pilot campaign is not a strict suite-local evidence closure")
+    else:
+        from .pilot import audit_pilot_campaign
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="cavada-pilot-audit-") as temporary:
+                regenerated_path = Path(temporary) / "pilot-audit.json"
+                audit_pilot_campaign(campaign_path, regenerated_path)
+                regenerated_raw = regenerated_path.read_bytes()
+            pinned_audit_raw = (suite.root / str(report["pilot_audit"])).read_bytes()
+            if regenerated_raw != pinned_audit_raw:
+                errors.append("official calibration pilot audit does not match the regenerated campaign audit")
+        except (OSError, ProtocolError, ValueError) as exc:
+            errors.append(f"official calibration pilot campaign could not be re-audited: {exc}")
+
+    pilot = supports["pilot_audit"]
+    pilot_fields = {
+        "pilot_audit_version",
+        "passed",
+        "campaign_sha256",
+        "suite",
+        "requirements",
+        "runs",
+        "role_counts",
+        "errors",
+        "limitations",
+    }
+    pilot_suite = pilot.get("suite")
+    requirements = pilot.get("requirements")
+    runs = pilot.get("runs")
+    role_counts = pilot.get("role_counts")
+    judge_config = suite.config.get("judge") or {}
     try:
-        completed_at = datetime.fromisoformat(str(report.get("completed_at", "")).replace("Z", "+00:00"))
-        if completed_at.tzinfo is None:
-            raise ValueError
-    except ValueError:
-        errors.append("official calibration completed_at must include a timezone")
+        blueprint_config = tomllib.loads(
+            _inside(suite.root, str(judge_config.get("qualification_blueprint", ""))).read_text(encoding="utf-8")
+        )
+    except (OSError, ProtocolError, tomllib.TOMLDecodeError):
+        blueprint_config = {}
+    target_families = {
+        str(row.get("family_alias"))
+        for row in runs or []
+        if isinstance(row, dict) and row.get("role") == "target" and row.get("family_alias")
+    }
+    if (
+        set(pilot) != pilot_fields
+        or pilot.get("pilot_audit_version") != "1.0.0"
+        or pilot.get("passed") is not True
+        or pilot.get("errors") != []
+        or not isinstance(pilot.get("campaign_sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", pilot.get("campaign_sha256", ""))
+        or not isinstance(pilot_suite, dict)
+        or any(pilot_suite.get(field) != value for field, value in expected_suite.items())
+        or not isinstance(pilot_suite.get("suite_config_sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", pilot_suite.get("suite_config_sha256", ""))
+        or not isinstance(requirements, dict)
+        or not isinstance(requirements.get("minimum_model_families"), int)
+        or isinstance(requirements.get("minimum_model_families"), bool)
+        or requirements["minimum_model_families"] < 4
+        or any(
+            requirements.get(campaign_field) != blueprint_config.get(blueprint_field)
+            for campaign_field, blueprint_field in (
+                ("minimum_model_families", "minimum_model_families"),
+                ("minimum_target_repetitions", "minimum_target_repetitions"),
+                ("minimum_judge_repetitions", "minimum_judge_repetitions"),
+            )
+        )
+        or not isinstance(runs, list)
+        or len(runs) < 6
+        or len(target_families) < requirements.get("minimum_model_families", 4)
+        or not isinstance(role_counts, dict)
+        or role_counts != {
+            "target": sum(isinstance(row, dict) and row.get("role") == "target" for row in runs or []),
+            "positive-control": sum(isinstance(row, dict) and row.get("role") == "positive-control" for row in runs or []),
+            "negative-control": sum(isinstance(row, dict) and row.get("role") == "negative-control" for row in runs or []),
+        }
+        or role_counts.get("positive-control", 0) < 1
+        or role_counts.get("negative-control", 0) < 1
+        or not isinstance(pilot.get("limitations"), list)
+        or not pilot["limitations"]
+        or not all(isinstance(value, str) and value.strip() for value in pilot["limitations"])
+    ):
+        errors.append("official calibration pilot audit does not reconstruct a passing controlled campaign")
+
+    review = supports["statistical_review"]
+    review_fields = {
+        "statistical_review_version",
+        "status",
+        "suite",
+        "analysis_plan_sha256",
+        "human_label_evidence_sha256",
+        "holdout_manifest_sha256",
+        "pilot_audit_sha256",
+        "pilot_campaign_sha256",
+        "semantic_contamination_evidence_sha256",
+        "independent",
+        "reviewer_id",
+        "conflicts",
+        "conflicts_resolved",
+        "decision_rationale",
+        "completed_at",
+    }
+    linked_hashes = {
+        field: report.get(field)
+        for field in (
+            "analysis_plan_sha256",
+            "human_label_evidence_sha256",
+            "holdout_manifest_sha256",
+            "pilot_audit_sha256",
+            "pilot_campaign_sha256",
+            "semantic_contamination_evidence_sha256",
+        )
+    }
+    if (
+        set(review) != review_fields
+        or review.get("statistical_review_version") != "1.0.0"
+        or review.get("status") != "passed"
+        or review.get("suite") != expected_suite
+        or any(review.get(field) != value for field, value in linked_hashes.items())
+        or review.get("independent") is not True
+        or review.get("conflicts_resolved") is not True
+        or not all(
+            isinstance(review.get(field), str) and review[field].strip()
+            for field in ("reviewer_id", "conflicts", "decision_rationale", "completed_at")
+        )
+    ):
+        errors.append("official calibration statistical review is incomplete or not linked to the reconstructed evidence")
+
+    expected_results = {
+        "analysis_plan": "preregistered",
+        "human_label_cases": len(case_ids),
+        "holdout_cases": len(split_ids["holdout"]),
+        "pilot_runs": len(runs) if isinstance(runs, list) else 0,
+        "independent_reviewers": reviewers if isinstance(reviewers, int) and not isinstance(reviewers, bool) else 0,
+        "all_preregistered_gates": "passed",
+    }
+    if report.get("results") != expected_results or report.get("gates_passed") is not True:
+        errors.append("official calibration results do not match the reconstructed evidence")
+
+    completed_at = _evidence_time(report.get("completed_at"), "calibration completed_at", errors)
+    support_times = [
+        _evidence_time(analysis.get("frozen_at"), "calibration analysis frozen_at", errors),
+        _evidence_time(human.get("completed_at"), "calibration human-label completed_at", errors),
+        _evidence_time(holdout.get("completed_at"), "calibration holdout completed_at", errors),
+        _evidence_time(review.get("completed_at"), "calibration statistical-review completed_at", errors),
+    ]
+    if completed_at is not None and any(value is not None and value > completed_at for value in support_times):
+        errors.append("official calibration report predates its supporting evidence")
 
     if not require_approval:
         return errors
-    approval = loaded["independent_review_evidence"]
+    approval = _load_suite_json_evidence(
+        suite,
+        calibration.get("independent_review_evidence"),
+        calibration.get("independent_review_evidence_sha256"),
+        "calibration independent approval",
+        errors,
+    )
+    if approval is None:
+        return errors
+    approval_expected_fields = {
+        "approval_version",
+        "approval_id",
+        "scope",
+        "status",
+        "independent",
+        "calibration_sha256",
+        "approver_id",
+        "approver_qualification_evidence",
+        "approver_qualification_evidence_sha256",
+        "conflicts",
+        "conflicts_resolved",
+        "decision_rationale",
+        "approved_at",
+        "expires_at",
+        "revoked_at",
+        "revocation_reason",
+    }
     approval_fields = (
         "approval_id",
         "approver_id",
@@ -357,15 +1166,28 @@ def _calibration_evidence_errors(
         "expires_at",
     )
     if (
-        approval.get("approval_version") != "1.0.0"
+        set(approval) != approval_expected_fields
+        or approval.get("approval_version") != "2.0.0"
         or approval.get("scope") != "suite-calibration"
         or approval.get("status") != "passed"
         or approval.get("independent") is not True
+        or approval.get("conflicts_resolved") is not True
         or approval.get("calibration_sha256") != calibration.get("evidence_sha256")
         or not all(isinstance(approval.get(field), str) and approval[field].strip() for field in approval_fields)
     ):
         errors.append("official calibration independent approval is incomplete, unlinked, or did not pass")
         return errors
+    approver_evidence = approval.get("approver_qualification_evidence")
+    approver_evidence_hash = approval.get("approver_qualification_evidence_sha256")
+    _load_suite_json_evidence(
+        suite,
+        approver_evidence,
+        approver_evidence_hash,
+        "calibration approver qualification evidence",
+        errors,
+    )
+    if approval.get("revoked_at") is not None or approval.get("revocation_reason") != "":
+        errors.append("official calibration independent approval has been revoked")
     try:
         approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
         expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
@@ -375,6 +1197,8 @@ def _calibration_evidence_errors(
     current = now or datetime.now(timezone.utc)
     if approved_at.tzinfo is None or expires_at.tzinfo is None or approved_at > current or expires_at <= current or expires_at <= approved_at:
         errors.append("official calibration independent approval is not currently effective")
+    if completed_at is not None and approved_at < completed_at:
+        errors.append("official calibration independent approval predates the calibration report")
     return errors
 
 
@@ -414,9 +1238,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
     elif official and not TASK_PROFILES[str(profile)]["built_in"]:
         errors.append(f"official suite profile {profile!r} requires a pinned approved external adapter")
     if official:
-        unknown = sorted(set(config) - OFFICIAL_SUITE_FIELDS)
-        if unknown:
-            errors.append(f"official suite has unknown top-level fields: {unknown}")
+        errors.extend(_official_suite_structure_errors(suite))
     if not suite.cases:
         errors.append("dataset is empty")
     if contains_secret_like(config) or contains_secret_like(suite.rubric):
@@ -450,6 +1272,15 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
     target_kind = target.get("kind", "json") if isinstance(target, dict) else None
     if target_kind not in {"json", "openai", "recorded"}:
         errors.append("target.kind must be json, openai, or recorded")
+    request_defaults = target.get("request_defaults_json") if isinstance(target, dict) else None
+    if request_defaults is not None:
+        try:
+            request_defaults_value = _strict_json_loads(request_defaults) if isinstance(request_defaults, str) else None
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            errors.append(f"target.request_defaults_json must be strict finite JSON: {exc}")
+        else:
+            if not isinstance(request_defaults_value, dict):
+                errors.append("target.request_defaults_json must encode an object")
     if target_kind == "recorded":
         relative = target.get("responses")
         if not isinstance(relative, str):
@@ -499,6 +1330,8 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             for field in ("judge_input_per_million", "judge_output_per_million"):
                 if field in pricing and (not isinstance(pricing[field], (int, float)) or isinstance(pricing[field], bool) or float(pricing[field]) < 0):
                     errors.append(f"pricing.{field} must be a non-negative number")
+
+    errors.extend(_judge_blueprint_evidence_errors(suite, require=official))
 
     governance = config.get("governance")
     governance_fields = {
@@ -624,6 +1457,11 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append(f"{prefix}.metric_weights must map names to finite non-negative numbers")
         if "soft_checks" in case and (not isinstance(case["soft_checks"], list) or not all(isinstance(name, str) and name for name in case["soft_checks"])):
             errors.append(f"{prefix}.soft_checks must be an array of non-empty strings")
+        if "exact_tool_order" in case and (
+            not isinstance(case["exact_tool_order"], list)
+            or not all(isinstance(name, str) and name for name in case["exact_tool_order"])
+        ):
+            errors.append(f"{prefix}.exact_tool_order must be an array of non-empty strings")
         if "judge_gold_verdict" in case and case["judge_gold_verdict"] not in {"pass", "fail"}:
             errors.append(f"{prefix}.judge_gold_verdict must be pass or fail")
         if "performance_phase" in case and case["performance_phase"] not in {"cold", "warmup", "steady", "soak"}:
@@ -1057,7 +1895,10 @@ def git_evidence(root: Path) -> dict[str, Any]:
 
 def environment_evidence(root: Path) -> dict[str, Any]:
     lock = root / "uv.lock"
-    hardware: dict[str, Any] = {"machine": platform.machine(), "processor": platform.processor(), "cpu_count": os.cpu_count()}
+    hardware: dict[str, Any] = {"machine": platform.machine(), "cpu_count": os.cpu_count()}
+    processor = platform.processor()
+    if processor and len(processor) <= 256 and processor.isprintable() and not re.search(r"[{}\[\]]|\b(?:serial|uuid|secret|token)\b", processor, re.IGNORECASE):
+        hardware["processor"] = processor
     try:
         page_size = os.sysconf("SC_PAGE_SIZE")
         physical_pages = os.sysconf("SC_PHYS_PAGES")
@@ -1207,6 +2048,8 @@ def apply_gates(suite: Suite, metrics: dict[str, Any], categories: list[dict[str
             source = by_category.get(category, {}) if category else metrics
             scope = str(category or "overall")
         metric = str(gate.get("metric", "pass_rate_ci95.lower"))
+        if isinstance(source, dict) and "ci95_lower" in source:
+            source = {**source, "pass_rate_ci": {"lower": source.get("ci95_lower"), "upper": source.get("ci95_upper")}}
         value: Any = source
         for part in metric.split("."):
             value = value.get(part) if isinstance(value, dict) else None

@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/suite/2.0.0",
+  "title": "CavadaLabs Evaluation Suite v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version", "name", "version", "status", "description", "dataset", "rubric",
+    "data_classification", "governance", "gates"
+  ],
+  "properties": {
+    "protocol_version": {"const": "1.0.0"},
+    "name": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+    "version": {"$ref": "#/$defs/semver"},
+    "status": {"enum": ["draft", "candidate", "calibrated", "approved", "deprecated", "retired"]},
+    "description": {"type": "string", "minLength": 1},
+    "profile": {"type": "string", "minLength": 1},
+    "dataset": {"$ref": "#/$defs/path"},
+    "rubric": {"$ref": "#/$defs/path"},
+    "data_classification": {"enum": ["public", "synthetic", "internal", "confidential", "restricted"]},
+    "dataset_sha256": {"$ref": "#/$defs/hash"},
+    "rubric_sha256": {"$ref": "#/$defs/hash"},
+    "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+    "max_tokens": {"type": "integer", "minimum": 1},
+    "official_min_repetitions": {"type": "integer", "minimum": 1},
+    "official_min_judge_repetitions": {"type": "integer", "minimum": 1},
+    "governance": {"$ref": "#/$defs/governance"},
+    "target": {"$ref": "#/$defs/target"},
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/gate"}
+    },
+    "assets": {"$ref": "#/$defs/assets"},
+    "metrics": {"$ref": "#/$defs/metricConfiguration"},
+    "judge": {"$ref": "#/$defs/judge"},
+    "statistics": {"$ref": "#/$defs/statistics"},
+    "report": {"$ref": "#/$defs/report"},
+    "splits": {"$ref": "#/$defs/splits"},
+    "calibration": {"$ref": "#/$defs/calibration"},
+    "pricing": {"$ref": "#/$defs/pricing"},
+    "network": {"$ref": "#/$defs/network"},
+    "dataset_integrity": {"$ref": "#/$defs/datasetIntegrity"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "report": {
+            "required": ["assurance"],
+            "properties": {"assurance": {"const": "conformance-fixture"}}
+          }
+        },
+        "required": ["report"]
+      },
+      "then": {
+        "required": ["target"],
+        "properties": {
+          "target": {
+            "required": ["kind"],
+            "properties": {"kind": {"const": "recorded"}}
+          },
+          "report": {
+            "required": ["model_claim_allowed", "benchmark_claim_allowed"],
+            "properties": {
+              "model_claim_allowed": {"const": false},
+              "benchmark_claim_allowed": {"const": false}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "semver": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "optionalHash": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner", "purpose", "intended_use", "prohibited_use", "license", "origin", "created_at",
+        "retention", "personal_data", "legal_basis_reference", "rotation_due", "contamination_status",
+        "canary_strategy", "known_leaks", "representativeness", "transfer_restrictions",
+        "near_duplicate_threshold"
+      ],
+      "properties": {
+        "owner": {"type": "string", "minLength": 1},
+        "purpose": {"type": "string", "minLength": 1},
+        "intended_use": {"type": "string", "minLength": 1},
+        "prohibited_use": {"type": "string", "minLength": 1},
+        "license": {"type": "string", "minLength": 1},
+        "origin": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date"},
+        "retention": {"type": "string", "minLength": 1},
+        "personal_data": {"type": "string", "minLength": 1},
+        "legal_basis_reference": {"type": "string", "minLength": 1},
+        "rotation_due": {"type": "string", "format": "date"},
+        "contamination_status": {"type": "string", "minLength": 1},
+        "canary_strategy": {"type": "string", "minLength": 1},
+        "known_leaks": {"type": "string", "minLength": 1},
+        "representativeness": {"type": "string", "minLength": 1},
+        "transfer_restrictions": {"type": "string", "minLength": 1},
+        "near_duplicate_threshold": {"type": "number", "minimum": 0.8, "exclusiveMaximum": 1},
+        "semantic_duplicate_threshold": {"type": "number", "minimum": 0.8, "maximum": 1},
+        "minimum_category_cases": {"type": "integer", "minimum": 1},
+        "maximum_category_share": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["json", "openai", "recorded"]},
+        "responses": {"$ref": "#/$defs/path"},
+        "responses_sha256": {"$ref": "#/$defs/hash"},
+        "response_field": {"type": "string", "minLength": 1},
+        "reported_model_field": {"type": "string", "minLength": 1},
+        "retrieved_ids_field": {"type": "string", "minLength": 1},
+        "sources_field": {"type": "string", "minLength": 1},
+        "tools_field": {"type": "string", "minLength": 1},
+        "request_field": {"type": "string", "minLength": 1},
+        "request_defaults_json": {"type": "string", "minLength": 2},
+        "stream": {"type": "boolean"},
+        "system_prompt": {"$ref": "#/$defs/path"},
+        "system_prompt_sha256": {"$ref": "#/$defs/hash"},
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "min"],
+      "properties": {
+        "category": {"type": "string", "minLength": 1},
+        "slice": {"enum": ["risk_domain", "severity", "language", "locale", "split", "operating_condition"]},
+        "value": {"type": "string", "minLength": 1},
+        "metric": {"type": "string", "minLength": 1},
+        "min": {"type": "number"}
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_bytes": {"type": "integer", "minimum": 1},
+        "max_image_pixels": {"type": "integer", "minimum": 1},
+        "max_audio_seconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "metricConfiguration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deepeval": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/deepevalMetric"}
+        }
+      }
+    },
+    "deepevalMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "pattern": {"type": "string"},
+        "ignore_case": {"type": "boolean"},
+        "model": {"type": "string", "minLength": 1},
+        "hard_fail": {"type": "boolean"}
+      }
+    },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "additional_models": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/judgeModel"}
+        },
+        "consensus": {"enum": ["majority", "unanimous"]},
+        "minimum_calibration_accuracy": {"type": "number", "minimum": 0, "maximum": 1},
+        "qualification_blueprint": {"$ref": "#/$defs/path"},
+        "qualification_blueprint_sha256": {"$ref": "#/$defs/hash"},
+        "qualification_blueprint_approval": {"$ref": "#/$defs/path"},
+        "qualification_blueprint_approval_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "judgeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "expected_model", "revision"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "expected_model": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1}
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "bootstrap_samples": {"type": "integer", "minimum": 100},
+        "seed": {"type": "integer"}
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include_raw": {"type": "boolean"},
+        "public_redaction": {"type": "boolean"},
+        "limitations": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "assurance": {"enum": ["conformance-fixture", "development", "candidate", "official"]},
+        "model_claim_allowed": {"type": "boolean"},
+        "benchmark_claim_allowed": {"type": "boolean"}
+      }
+    },
+    "splits": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {"type": "string", "minLength": 1}
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "evidence", "evidence_sha256", "independent_review",
+        "independent_review_evidence", "independent_review_evidence_sha256"
+      ],
+      "properties": {
+        "status": {"enum": ["pending", "passed", "failed", "expired"]},
+        "evidence": {"type": "string"},
+        "evidence_sha256": {"$ref": "#/$defs/optionalHash"},
+        "independent_review": {"enum": ["pending", "passed", "failed", "expired"]},
+        "independent_review_evidence": {"type": "string"},
+        "independent_review_evidence_sha256": {"$ref": "#/$defs/optionalHash"}
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "source", "effective_at", "input_per_million", "output_per_million"],
+      "properties": {
+        "currency": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "input_per_million": {"type": "number", "minimum": 0},
+        "output_per_million": {"type": "number", "minimum": 0},
+        "judge_input_per_million": {"type": "number", "minimum": 0},
+        "judge_output_per_million": {"type": "number", "minimum": 0}
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_hosts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "datasetIntegrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "semantic_review_status", "semantic_review_evidence", "semantic_review_evidence_sha256",
+        "semantic_detector", "semantic_detector_revision", "cross_split_reviewed", "cross_suite_reviewed"
+      ],
+      "properties": {
+        "semantic_review_status": {"enum": ["pending", "passed", "failed", "expired"]},
+        "semantic_review_evidence": {"type": "string"},
+        "semantic_review_evidence_sha256": {"$ref": "#/$defs/optionalHash"},
+        "semantic_detector": {"type": "string"},
+        "semantic_detector_revision": {"type": "string"},
+        "cross_split_reviewed": {"type": "boolean"},
+        "cross_suite_reviewed": {"type": "boolean"}
+      }
+    }
+  }
+}

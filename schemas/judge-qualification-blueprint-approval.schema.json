@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint-approval/1.0.0",
+  "title": "CavadaLabs Independent Judge Qualification Blueprint Approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_version", "approval_id", "scope", "status", "independent",
+    "blueprint_sha256", "suite", "approver_id", "approver_qualification_evidence",
+    "approver_qualification_evidence_sha256", "conflicts", "conflicts_resolved",
+    "decision_rationale", "approved_at", "expires_at", "revoked_at", "revocation_reason"
+  ],
+  "properties": {
+    "approval_version": {"const": "1.0.0"},
+    "approval_id": {"type": "string", "minLength": 1},
+    "scope": {"const": "judge-qualification-blueprint"},
+    "status": {"enum": ["passed", "failed", "withdrawn", "revoked"]},
+    "independent": {"type": "boolean"},
+    "blueprint_sha256": {"$ref": "#/$defs/hash"},
+    "suite": {"$ref": "#/$defs/suite"},
+    "approver_id": {"type": "string", "minLength": 1},
+    "approver_qualification_evidence": {"type": "string", "minLength": 1},
+    "approver_qualification_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "conflicts": {"type": "string", "minLength": 1},
+    "conflicts_resolved": {"type": "boolean"},
+    "decision_rationale": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "revoked_at": {"type": ["string", "null"], "format": "date-time"},
+    "revocation_reason": {"type": "string"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "dataset_sha256", "rubric_sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dataset_sha256": {"$ref": "#/$defs/hash"},
+        "rubric_sha256": {"$ref": "#/$defs/hash"}
+      }
+    }
+  }
+}

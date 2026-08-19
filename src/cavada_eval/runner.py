@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .artifacts import verify_bundle, write_bundle
+from .artifacts import _read_regular, write_bundle
 from .assets import asset_inventory, content_text, encoded_content, encoded_messages, openai_content
+from .behavior_verify import engagement_snapshot_files, suite_snapshot_files, verify_behavior_run
 from .calibration import judge_evidence_errors
 from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
 from .metrics import METRIC_VERSION, deterministic_evaluation
@@ -29,6 +30,7 @@ from .protocol import (
     SCHEMA_VERSION,
     ProtocolError,
     Suite,
+    _strict_json_loads,
     append_jsonl,
     apply_gates,
     atomic_json,
@@ -47,6 +49,22 @@ from .protocol import (
 from .release import verified_engagement
 from .reporting import generate_reports
 from .statistics import bootstrap_mean_interval, distribution, paired_binary_comparison, stratified_bootstrap_mean_interval
+
+JUDGE_MAX_TOKENS = 600
+
+
+def _python_source_files(root: Path) -> dict[str, bytes]:
+    if not root.is_dir() or any(path.is_symlink() for path in root.rglob("*")):
+        raise ProtocolError(f"Python implementation source is missing or contains symlinks: {root}")
+    files = sorted(path.relative_to(root) for path in root.rglob("*.py") if path.is_file())
+    if not files:
+        raise ProtocolError(f"Python implementation source is missing: {root}")
+    return {path.as_posix(): _read_regular(root, path) for path in files}
+
+
+def _python_source_digest(root: Path) -> str:
+    payload = {path: sha256_bytes(raw) for path, raw in _python_source_files(root).items()}
+    return sha256_bytes(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
 
 
 def _scenario_analysis_rows(
@@ -157,19 +175,34 @@ def _get(value: Any, dotted: str) -> Any:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    if not path.is_file():
+    try:
+        lines = _read_regular(path.parent, Path(path.name)).decode("utf-8").splitlines()
+    except FileNotFoundError:
         return rows
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ProtocolError(f"invalid {path.name}") from exc
+    for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
         try:
-            value = json.loads(line)
-        except json.JSONDecodeError as exc:
+            value = _strict_json_loads(line)
+        except ValueError as exc:
             raise ProtocolError(f"invalid {path.name} line {line_number}") from exc
         if not isinstance(value, dict):
             raise ProtocolError(f"invalid {path.name} line {line_number}: expected object")
         rows.append(value)
     return rows
+
+
+def _read_json_object(path: Path, error: str) -> tuple[dict[str, Any], str]:
+    try:
+        raw = _read_regular(path.parent, Path(path.name))
+        value = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ProtocolError(error) from exc
+    if not isinstance(value, dict):
+        raise ProtocolError(error)
+    return value, sha256_bytes(raw)
 
 
 def _usage_tokens(raw: dict[str, Any]) -> tuple[float, float]:
@@ -237,8 +270,8 @@ def _post_json(
     else:  # pragma: no cover - loop always breaks or raises
         raise ProtocolError(str(last_error or "request failed"))
     try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError as exc:
+        parsed = _strict_json_loads(body)
+    except ValueError as exc:
         raise ProtocolError(f"Non-JSON response from {url}") from exc
     if not isinstance(parsed, dict):
         raise ProtocolError(f"Expected JSON object from {url}")
@@ -300,8 +333,8 @@ def _post_openai_stream(
             if data == "[DONE]":
                 break
             try:
-                event = json.loads(data)
-            except json.JSONDecodeError as exc:
+                event = _strict_json_loads(data)
+            except ValueError as exc:
                 raise ProtocolError("OpenAI stream contains invalid JSON") from exc
             if not isinstance(event, dict):
                 raise ProtocolError("OpenAI stream event must be an object")
@@ -353,43 +386,25 @@ def _manifest_endpoint(url: str) -> str:
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, safe_query, ""))
 
 
-def call_target(
+def target_case_prompt(case: dict[str, Any], kind: str) -> Any:
+    if kind == "recorded":
+        return {"case_id": case["id"], "input": case["input"], "messages": case.get("messages")}
+    return {"input": case["input"], "messages": case["messages"]} if case.get("messages") else case["input"]
+
+
+def build_target_payload(
     suite: Suite,
-    endpoint: str,
-    api_key: str,
     prompt: Any,
     request_model: str | None,
-    timeout: float,
-) -> tuple[str, dict[str, Any], str, dict[str, Any], dict[str, Any]]:
+    *,
+    recorded_responses_sha256: str | None = None,
+) -> dict[str, Any]:
     target = suite.config.get("target") or {}
     kind = target.get("kind", "json")
     if kind == "recorded":
-        if not isinstance(prompt, dict) or not isinstance(prompt.get("case_id"), str):
-            raise ProtocolError("recorded target requires a case ID")
-        relative = str(target.get("responses", ""))
-        path = (suite.root / relative).resolve()
-        try:
-            path.relative_to(suite.root.resolve())
-        except ValueError as exc:
-            raise ProtocolError("recorded responses path escapes the suite") from exc
-        for row in _read_jsonl(path):
-            if row.get("case_id") == prompt["case_id"]:
-                response = row.get("response")
-                recorded_raw = dict(response) if isinstance(response, dict) else row
-                recorded_payload = {"case_id": prompt["case_id"], "source_sha256": sha256_file(path)}
-                request_id = uuid.uuid4().hex
-                transport = {
-                    "request_id": request_id,
-                    "attempts": 0,
-                    "request_bytes": 0,
-                    "response_bytes": len(json.dumps(recorded_raw).encode()),
-                    "headers_ms": 0.0,
-                    "total_ms": 0.0,
-                    "recorded": True,
-                }
-                answer, reported_model = _target_answer(suite, recorded_raw)
-                return answer, recorded_raw, reported_model, recorded_payload, transport
-        raise ProtocolError(f"recorded target has no response for case {prompt['case_id']}")
+        if not isinstance(prompt, dict) or not isinstance(prompt.get("case_id"), str) or not recorded_responses_sha256:
+            raise ProtocolError("recorded target requires a case ID and response-source hash")
+        return {"case_id": prompt["case_id"], "source_sha256": recorded_responses_sha256}
     conversation = isinstance(prompt, dict) and isinstance(prompt.get("messages"), list)
     prompt_value = prompt.get("input") if conversation else prompt
     try:
@@ -419,13 +434,63 @@ def call_target(
         if target.get("stream"):
             payload["stream"] = True
             payload["stream_options"] = {"include_usage": True}
+        return payload
+    if kind == "json":
+        payload = _strict_json_loads(str(target.get("request_defaults_json", "{}")))
+        payload[str(target.get("request_field", "message"))] = conversation_messages if conversation else json_prompt
+        return payload
+    raise ProtocolError(f"Unsupported target kind: {kind}")
+
+
+def call_target(
+    suite: Suite,
+    endpoint: str,
+    api_key: str,
+    prompt: Any,
+    request_model: str | None,
+    timeout: float,
+) -> tuple[str, dict[str, Any], str, dict[str, Any], dict[str, Any]]:
+    target = suite.config.get("target") or {}
+    kind = target.get("kind", "json")
+    if kind == "recorded":
+        if not isinstance(prompt, dict) or not isinstance(prompt.get("case_id"), str):
+            raise ProtocolError("recorded target requires a case ID")
+        relative = str(target.get("responses", ""))
+        path = (suite.root / relative).resolve()
+        try:
+            path.relative_to(suite.root.resolve())
+        except ValueError as exc:
+            raise ProtocolError("recorded responses path escapes the suite") from exc
+        for row in _read_jsonl(path):
+            if row.get("case_id") == prompt["case_id"]:
+                response = row.get("response")
+                recorded_raw = dict(response) if isinstance(response, dict) else row
+                recorded_payload = build_target_payload(
+                    suite,
+                    prompt,
+                    request_model,
+                    recorded_responses_sha256=sha256_file(path),
+                )
+                request_id = uuid.uuid4().hex
+                transport = {
+                    "request_id": request_id,
+                    "attempts": 0,
+                    "request_bytes": 0,
+                    "response_bytes": len(json.dumps(recorded_raw).encode()),
+                    "headers_ms": 0.0,
+                    "total_ms": 0.0,
+                    "recorded": True,
+                }
+                answer, reported_model = _target_answer(suite, recorded_raw)
+                return answer, recorded_raw, reported_model, recorded_payload, transport
+        raise ProtocolError(f"recorded target has no response for case {prompt['case_id']}")
+    payload = build_target_payload(suite, prompt, request_model)
+    if kind == "openai":
+        if target.get("stream"):
             raw, transport = _post_openai_stream(_completion_url(endpoint), payload, api_key, timeout, request_id=uuid.uuid4().hex)
         else:
             raw, transport = _post_json(_completion_url(endpoint), payload, api_key, timeout, request_id=uuid.uuid4().hex)
     elif kind == "json":
-        request_field = str(target.get("request_field", "message"))
-        payload = json.loads(str(target.get("request_defaults_json", "{}")))
-        payload[request_field] = conversation_messages if conversation else json_prompt
         raw, transport = _post_json(endpoint, payload, api_key, timeout, request_id=uuid.uuid4().hex)
     else:
         raise ProtocolError(f"Unsupported target kind: {kind}")
@@ -460,8 +525,8 @@ def _judge_result(raw: dict[str, Any]) -> tuple[dict[str, Any], str]:
     if text.startswith("```"):
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
+        parsed = _strict_json_loads(text)
+    except ValueError as exc:
         raise ProtocolError("Judge output is not valid JSON") from exc
     if not isinstance(parsed, dict) or parsed.get("verdict") not in {"pass", "fail"}:
         raise ProtocolError("Judge verdict must be pass or fail")
@@ -480,6 +545,60 @@ def _judge_system_prompt(suite: Suite) -> str:
         + '{"verdict":"pass|fail","score":0,"reason":"concise reason","criteria":{}}. '
         + "The target model identity is intentionally hidden."
     )
+
+
+def build_judge_payload(
+    suite: Suite,
+    judge_model: str,
+    case: dict[str, Any],
+    answer: str,
+    target_raw: dict[str, Any],
+) -> dict[str, Any]:
+    target = suite.config.get("target") or {}
+    evidence = {
+        "sources": _get(target_raw, str(target.get("sources_field", "sources"))) or [],
+        "tool_calls": _get(target_raw, str(target.get("tools_field", "tool_calls"))) or [],
+    }
+    if contains_secret_like(evidence):
+        raise ProtocolError("Judge payload blocked: retrieved evidence contains secret-like material")
+    user_payload = {
+        "input": content_text(case["input"]),
+        "conversation": case.get("messages"),
+        "expected_behavior": case["expected_behavior"],
+        "expected_behavior_reason": case["expected_behavior_reason"],
+        "mandatory_criteria": case.get("mandatory_criteria", []),
+        "reference_answer": case.get("expected_output"),
+        "category": case["category"],
+        "risk_domain": case["risk_domain"],
+        "severity": case["severity"],
+        "answer": answer,
+        "evidence": evidence,
+    }
+    judge_user_content: Any = json.dumps(user_payload, ensure_ascii=False)
+    multimodal_inputs = [case.get("input")]
+    multimodal_inputs.extend(message.get("content") for message in case.get("messages", []) if isinstance(message, dict))
+    media_parts: list[dict[str, Any]] = []
+    try:
+        for value in multimodal_inputs:
+            if not isinstance(value, list):
+                continue
+            converted = openai_content(value, suite_root=suite.root)
+            if isinstance(converted, list):
+                media_parts.extend(part for part in converted if part.get("type") != "text")
+    except ValueError as exc:
+        raise ProtocolError(f"Judge adapter cannot evaluate this modality: {exc}") from exc
+    if media_parts:
+        unique_media = list({json.dumps(part, sort_keys=True): part for part in media_parts}.values())
+        judge_user_content = [{"type": "text", "text": judge_user_content}, *unique_media]
+    return {
+        "model": judge_model,
+        "messages": [
+            {"role": "system", "content": _judge_system_prompt(suite)},
+            {"role": "user", "content": judge_user_content},
+        ],
+        "temperature": 0,
+        "max_tokens": JUDGE_MAX_TOKENS,
+    }
 
 
 def _judge_calibration_summary(rows: list[dict[str, Any]], suite: Suite) -> dict[str, dict[str, Any]]:
@@ -577,52 +696,7 @@ def call_judge(
     target_raw: dict[str, Any],
     timeout: float,
 ) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any], dict[str, Any]]:
-    target = suite.config.get("target") or {}
-    evidence = {
-        "sources": _get(target_raw, str(target.get("sources_field", "sources"))) or [],
-        "tool_calls": _get(target_raw, str(target.get("tools_field", "tool_calls"))) or [],
-    }
-    if contains_secret_like(evidence):
-        raise ProtocolError("Judge payload blocked: retrieved evidence contains secret-like material")
-    user_payload = {
-        "input": content_text(case["input"]),
-        "conversation": case.get("messages"),
-        "expected_behavior": case["expected_behavior"],
-        "expected_behavior_reason": case["expected_behavior_reason"],
-        "mandatory_criteria": case.get("mandatory_criteria", []),
-        "reference_answer": case.get("expected_output"),
-        "category": case["category"],
-        "risk_domain": case["risk_domain"],
-        "severity": case["severity"],
-        "answer": answer,
-        "evidence": evidence,
-    }
-    system = _judge_system_prompt(suite)
-    judge_user_content: Any = json.dumps(user_payload, ensure_ascii=False)
-    multimodal_inputs = [case.get("input")]
-    multimodal_inputs.extend(message.get("content") for message in case.get("messages", []) if isinstance(message, dict))
-    media_parts: list[dict[str, Any]] = []
-    try:
-        for value in multimodal_inputs:
-            if not isinstance(value, list):
-                continue
-            converted = openai_content(value, suite_root=suite.root)
-            if isinstance(converted, list):
-                media_parts.extend(part for part in converted if part.get("type") != "text")
-    except ValueError as exc:
-        raise ProtocolError(f"Judge adapter cannot evaluate this modality: {exc}") from exc
-    if media_parts:
-        unique_media = list({json.dumps(part, sort_keys=True): part for part in media_parts}.values())
-        judge_user_content = [{"type": "text", "text": judge_user_content}, *unique_media]
-    request_payload = {
-        "model": judge_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": judge_user_content},
-        ],
-        "temperature": 0,
-        "max_tokens": 600,
-    }
+    request_payload = build_judge_payload(suite, judge_model, case, answer, target_raw)
     raw, transport = _post_json(
         _completion_url(endpoint),
         request_payload,
@@ -691,17 +765,27 @@ def run(
     if not 1 <= concurrency <= 64 or requests_per_second < 0 or max_total_tokens < 0 or max_cases < 0:
         raise ProtocolError("concurrency must be 1..64; rate, token, and case budgets cannot be negative")
     target_kind = (suite.config.get("target") or {}).get("kind", "json")
+    report_config = suite.config.get("report") or {}
+    conformance_fixture = report_config.get("assurance") == "conformance-fixture"
+    if conformance_fixture and (not official or target_kind != "recorded"):
+        raise ProtocolError("conformance fixtures require an official run with a recorded target")
+    if conformance_fixture and (
+        report_config.get("model_claim_allowed") is not False or report_config.get("benchmark_claim_allowed") is not False
+    ):
+        raise ProtocolError("conformance fixtures cannot allow model or benchmark claims")
     if official and ((target_kind != "recorded" and not _secure_endpoint(endpoint)) or not _secure_endpoint(judge_endpoint)):
         raise ProtocolError("Official runs require HTTPS or loopback endpoints")
     if official and max_cases > 0:
         raise ProtocolError("Official runs cannot use --max-cases")
-    if official and preset and preset != "reference":
+    if official and preset != "reference":
         raise ProtocolError("Official runs require the reference preset")
     if official and repetitions < int(suite.config.get("official_min_repetitions", 1)):
         raise ProtocolError("Official run has too few target repetitions")
     if official and judge_repetitions < int(suite.config.get("official_min_judge_repetitions", 1)):
         raise ProtocolError("Official run has too few judge repetitions")
     judge_host = urllib.parse.urlparse(judge_endpoint).hostname
+    if conformance_fixture and judge_host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ProtocolError("conformance fixtures require a loopback judge")
     external_judge = judge_host not in {"127.0.0.1", "localhost", "::1"}
     target_host = "recorded-local" if target_kind == "recorded" else urllib.parse.urlparse(endpoint).hostname
     if mode == "offline" and (external_judge or target_host not in {"127.0.0.1", "localhost", "::1", "recorded-local"}):
@@ -711,10 +795,9 @@ def run(
         raise ProtocolError("official endpoint host is not in suite.network.allowed_hosts")
     authorization_record: dict[str, Any] | None = None
     if external_authorization:
-        try:
-            authorization_record = json.loads(Path(external_authorization).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ProtocolError("external authorization must be a readable JSON object") from exc
+        authorization_record, _ = _read_json_object(
+            Path(external_authorization), "external authorization must be a readable JSON object"
+        )
         required = {"authorization_id", "approver", "purpose", "expires_at"}
         if not isinstance(authorization_record, dict) or not required <= set(authorization_record):
             raise ProtocolError(f"external authorization is missing fields: {sorted(required - set(authorization_record or {}))}")
@@ -743,10 +826,7 @@ def run(
 
     storage_record: dict[str, Any] | None = None
     if storage_attestation:
-        try:
-            storage_record = json.loads(Path(storage_attestation).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ProtocolError("storage attestation must be a readable JSON object") from exc
+        storage_record, _ = _read_json_object(Path(storage_attestation), "storage attestation must be a readable JSON object")
         required_storage = {
             "attestation_id",
             "approver",
@@ -778,8 +858,14 @@ def run(
         verified_engagement(Path(engagement), suite, expected_model=expected_model, model_revision=model_revision) if engagement else None
     )
     evidence = git_evidence(repo_root)
+    implementation_files = _python_source_files(Path(__file__).resolve().parent)
+    implementation_manifest = {path: sha256_bytes(raw) for path, raw in implementation_files.items()}
+    implementation_sha256 = sha256_bytes(json.dumps(implementation_manifest, sort_keys=True, separators=(",", ":")).encode())
+    evidence["implementation_sha256"] = implementation_sha256
     if official and (not evidence["commit"] or evidence["dirty"]):
         raise ProtocolError("Official runs require a committed, clean source tree")
+    if official and _python_source_digest(repo_root / "src" / "cavada_eval") != implementation_sha256:
+        raise ProtocolError("Official runs require the executed Python implementation to match the recorded source commit")
     if official and (not expected_model or not (expected_judge_model or judge_model)):
         raise ProtocolError("Official runs require expected target and judge identities")
     if official and (not model_revision or not judge_revision):
@@ -835,24 +921,28 @@ def run(
         "consensus": consensus,
     }
     judge_evidence: dict[str, Any] | None = None
+    qualification_record: dict[str, Any] | None = None
+    approval_record: dict[str, Any] | None = None
     if official and (not judge_qualification or not judge_approval):
         raise ProtocolError("official runs require judge qualification and independent approval evidence")
     if judge_qualification or judge_approval:
         if not judge_qualification or not judge_approval:
             raise ProtocolError("judge qualification and independent approval must be supplied together")
-        try:
-            qualification_record = json.loads(Path(judge_qualification).read_text(encoding="utf-8"))
-            approval_record = json.loads(Path(judge_approval).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ProtocolError("judge qualification and approval must be readable JSON objects") from exc
-        qualification_sha256 = sha256_file(Path(judge_qualification))
-        approval_sha256 = sha256_file(Path(judge_approval))
+        qualification_record, qualification_sha256 = _read_json_object(
+            Path(judge_qualification), "judge qualification and approval must be readable JSON objects"
+        )
+        approval_record, approval_sha256 = _read_json_object(
+            Path(judge_approval), "judge qualification and approval must be readable JSON objects"
+        )
+        suite_judge = suite.config.get("judge") or {}
         evidence_errors = judge_evidence_errors(
             qualification_record,
             approval_record,
             qualification_sha256=qualification_sha256,
             expected_judge=judge_manifest,
             rubric_sha256=sha256_file(suite.rubric_path),
+            expected_blueprint_sha256=suite_judge.get("qualification_blueprint_sha256"),
+            expected_blueprint_approval_sha256=suite_judge.get("qualification_blueprint_approval_sha256"),
         )
         if evidence_errors:
             raise ProtocolError("invalid judge qualification evidence:\n" + "\n".join(evidence_errors))
@@ -864,6 +954,10 @@ def run(
             "approved_at": approval_record["approved_at"],
             "expires_at": approval_record["expires_at"],
         }
+    if official and not conformance_fixture:
+        raise ProtocolError(
+            "official behavior runs remain fail-closed until judge qualification run and corpus support bytes are reconstructible"
+        )
 
     target_key = os.getenv(target_key_env, "")
     judge_key = os.getenv(judge_key_env, "")
@@ -873,10 +967,7 @@ def run(
         run_dir = resume_dir.resolve()
         if (run_dir / "bundle.json").exists():
             raise ProtocolError("a finalized run bundle cannot be resumed")
-        try:
-            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ProtocolError("resume directory requires a valid manifest.json") from exc
+        manifest, _ = _read_json_object(run_dir / "manifest.json", "resume directory requires a valid manifest.json")
         expected_resume = {
             "protocol_version": PROTOCOL_VERSION,
             "suite.name": suite.name,
@@ -996,6 +1087,9 @@ def run(
             "run_id": run_id,
             "status": "running",
             "official_requested": official,
+            "assurance": "conformance-fixture" if conformance_fixture else ("official" if official else "candidate"),
+            "model_claim_allowed": bool(official and not conformance_fixture),
+            "benchmark_claim_allowed": bool(official and not conformance_fixture),
             "started_at": started.isoformat(),
             "reproduction_command": shlex.join(reproduction),
             "suite": {
@@ -1073,8 +1167,53 @@ def run(
             protocol_source = Path(__file__).with_name("PROTOCOL.md")
         (run_dir / "protocol_snapshot.md").write_text(protocol_source.read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(run_dir / "protocol_snapshot.md", 0o600)
+        manifest["protocol_sha256"] = sha256_file(run_dir / "protocol_snapshot.md")
         (run_dir / "suite_snapshot.toml").write_text((suite.root / "suite.toml").read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(run_dir / "suite_snapshot.toml", 0o600)
+        if official:
+            (run_dir / "dataset_snapshot.jsonl").write_bytes(suite.dataset_path.read_bytes())
+            (run_dir / "rubric_snapshot.md").write_bytes(suite.rubric_path.read_bytes())
+            atomic_json(run_dir / "implementation_evidence_manifest.json", implementation_manifest)
+            for snapshot_raw in implementation_files.values():
+                digest = sha256_bytes(snapshot_raw)
+                destination = run_dir / "implementation_evidence" / digest
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.exists():
+                    destination.write_bytes(snapshot_raw)
+            suite_evidence = suite_snapshot_files(suite)
+            atomic_json(run_dir / "suite_evidence_manifest.json", {name: sha256_bytes(snapshot_raw) for name, snapshot_raw in suite_evidence.items()})
+            for snapshot_raw in suite_evidence.values():
+                digest = sha256_bytes(snapshot_raw)
+                destination = run_dir / "suite_evidence" / digest
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.exists():
+                    destination.write_bytes(snapshot_raw)
+            if qualification_record is None or approval_record is None or not engagement:
+                raise ProtocolError("official evidence snapshots are incomplete")
+            atomic_json(run_dir / "judge_qualification_snapshot.json", qualification_record)
+            atomic_json(run_dir / "judge_approval_snapshot.json", approval_record)
+            engagement_raw, engagement_evidence_files = engagement_snapshot_files(Path(engagement))
+            (run_dir / "engagement_snapshot.json").write_bytes(engagement_raw)
+            atomic_json(
+                run_dir / "engagement_evidence_manifest.json",
+                {name: sha256_bytes(snapshot_raw) for name, snapshot_raw in engagement_evidence_files.items()},
+            )
+            for snapshot_raw in engagement_evidence_files.values():
+                digest = sha256_bytes(snapshot_raw)
+                destination = run_dir / "engagement_evidence" / digest
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.exists():
+                    destination.write_bytes(snapshot_raw)
+            for path in (
+                run_dir / "dataset_snapshot.jsonl",
+                run_dir / "rubric_snapshot.md",
+                run_dir / "engagement_snapshot.json",
+                run_dir / "implementation_evidence_manifest.json",
+                *(run_dir / "implementation_evidence").glob("*"),
+                *(run_dir / "suite_evidence").glob("*"),
+                *(run_dir / "engagement_evidence").glob("*"),
+            ):
+                os.chmod(path, 0o600)
         (run_dir / "dataset_card.md").write_text(dataset_card(suite), encoding="utf-8")
         os.chmod(run_dir / "dataset_card.md", 0o600)
         for name in ("requests.jsonl", "raw_responses.jsonl", "judgments.jsonl", "case_results.jsonl", "failures.jsonl", "events.jsonl"):
@@ -1456,7 +1595,6 @@ def run(
     metrics["judge_calibration"] = calibration
     metrics["performance"] = {
         "target_latency_ms": distribution(row["target_latency_ms"] for row in result_rows if isinstance(row.get("target_latency_ms"), (int, float))),
-        "evaluation_duration_ms": distribution(row["duration_ms"] for row in result_rows if isinstance(row.get("duration_ms"), (int, float))),
         "target_response_bytes": distribution(
             row["target_response_bytes"] for row in result_rows if isinstance(row.get("target_response_bytes"), (int, float))
         ),
@@ -1467,7 +1605,20 @@ def run(
             row["output_tokens_per_second"] for row in result_rows if isinstance(row.get("output_tokens_per_second"), (int, float))
         ),
     }
-    elapsed_seconds = time.perf_counter() - run_perf_started
+    finished_at = datetime.now(timezone.utc)
+    try:
+        timing_started = datetime.fromisoformat(str(manifest["started_at"]).replace("Z", "+00:00"))
+    except ValueError as exc:  # pragma: no cover - generated manifests always contain this timestamp
+        raise ProtocolError("run start timestamp is invalid") from exc
+    if timing_started.tzinfo is None or timing_started.utcoffset() != timezone.utc.utcoffset(None):
+        raise ProtocolError("run timing is invalid")
+    elapsed_seconds = (finished_at - timing_started).total_seconds()
+    if elapsed_seconds <= 0:
+        raise ProtocolError("run timing is invalid")
+    atomic_json(
+        run_dir / "timing.json",
+        {"started_at": timing_started.isoformat(), "finished_at": finished_at.isoformat(), "elapsed_seconds": elapsed_seconds},
+    )
     metrics["performance"]["elapsed_seconds"] = elapsed_seconds
     metrics["performance"]["observations_per_second"] = len(result_rows) / elapsed_seconds if elapsed_seconds else 0.0
     metrics["performance"]["target_calls_per_second"] = target_calls / elapsed_seconds if elapsed_seconds else 0.0
@@ -1542,6 +1693,7 @@ def run(
         "case_results.jsonl",
         "scenario_results.jsonl",
         "metrics.json",
+        "timing.json",
         "category_results.csv",
         "failures.jsonl",
         "events.jsonl",
@@ -1550,10 +1702,21 @@ def run(
         "asset_inventory.json",
         "protocol_snapshot.md",
         "suite_snapshot.toml",
+        "dataset_snapshot.jsonl",
+        "rubric_snapshot.md",
+        "implementation_evidence_manifest.json",
+        "suite_evidence_manifest.json",
+        "judge_qualification_snapshot.json",
+        "judge_approval_snapshot.json",
+        "engagement_snapshot.json",
+        "engagement_evidence_manifest.json",
         "dataset_card.md",
     ]
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "assets").glob("*")) if path.is_file())
-    manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
+    artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "implementation_evidence").glob("*")) if path.is_file())
+    artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "suite_evidence").glob("*")) if path.is_file())
+    artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "engagement_evidence").glob("*")) if path.is_file())
+    manifest["finished_at"] = finished_at.isoformat()
     manifest["abort_reason"] = abort_reason
     manifest["metrics"] = metrics
     manifest["artifacts"] = {name: sha256_file(run_dir / name) for name in artifact_names if (run_dir / name).is_file()}
@@ -1564,7 +1727,7 @@ def run(
         manifest["artifacts"][name] = sha256_file(run_dir / name)
     atomic_json(run_dir / "manifest.json", manifest)
     write_bundle(run_dir, signing_key_env=signing_key_env, key_id=signing_key_id)
-    verification = verify_bundle(run_dir, signing_key_env=signing_key_env, write_result=True)
+    verification = verify_behavior_run(run_dir, signing_key_env=signing_key_env, write_result=True)
     if not verification["valid"]:
         raise ProtocolError("generated artifact bundle failed verification")
     return run_dir

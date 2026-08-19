@@ -1,6 +1,6 @@
 protocol_version = "1.0.0"
-schema_version = "1.0.0"
-report_version = "1.0.0"
+schema_version = "2.0.0"
+report_version = "1.1.0"
 confidence_level = 0.95
 bootstrap_samples = 10000
 bootstrap_seed = 0

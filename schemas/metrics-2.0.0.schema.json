@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/metrics/2.0.0",
+  "title": "CavadaLabs Behavior Run Metrics v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "total", "observations", "pass", "fail", "invalid", "error", "skipped",
+    "pass_rate", "pass_rate_ci", "officially_valid"
+  ],
+  "properties": {
+    "total": {"$ref": "#/$defs/count"},
+    "observations": {"$ref": "#/$defs/count"},
+    "pass": {"$ref": "#/$defs/count"},
+    "fail": {"$ref": "#/$defs/count"},
+    "invalid": {"$ref": "#/$defs/count"},
+    "error": {"$ref": "#/$defs/count"},
+    "skipped": {"$ref": "#/$defs/count"},
+    "pass_rate": {"$ref": "#/$defs/rate"},
+    "pass_rate_ci": {"$ref": "#/$defs/confidenceInterval"},
+    "pass_rate_ci95": {
+      "oneOf": [
+        {"$ref": "#/$defs/interval95"},
+        {"type": "null"}
+      ]
+    },
+    "officially_valid": {"type": "boolean"},
+    "analysis_unit": {"enum": ["case", "scenario"]},
+    "evaluation_cases": {"$ref": "#/$defs/count"},
+    "target_observations": {"$ref": "#/$defs/count"},
+    "case_level": {"$ref": "#/$defs/basicSummary"},
+    "case_categories": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/categorySummary"}
+    },
+    "pass_rate_bootstrap_ci": {"$ref": "#/$defs/bootstrapInterval"},
+    "pass_rate_stratified_bootstrap_ci": {"$ref": "#/$defs/stratifiedBootstrapInterval"},
+    "distribution_shift": {"$ref": "#/$defs/distributionShift"},
+    "slices": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/sliceValues"}
+    },
+    "slice_disparities": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    },
+    "stability": {"$ref": "#/$defs/stability"},
+    "judge_calibration": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/calibrationSummary"}
+    },
+    "performance": {"$ref": "#/$defs/performance"},
+    "performance_by_phase": {"$ref": "#/$defs/performanceByPhase"},
+    "budgets": {"$ref": "#/$defs/budgets"},
+    "cost": {"$ref": "#/$defs/cost"},
+    "gate_failures": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/gateFailure"}
+    },
+    "aborted": {"type": "boolean"}
+  },
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0},
+    "rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "nullableRate": {
+      "oneOf": [
+        {"$ref": "#/$defs/rate"},
+        {"type": "null"}
+      ]
+    },
+    "confidenceInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper", "confidence"],
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "nullableConfidenceInterval": {
+      "oneOf": [
+        {"$ref": "#/$defs/confidenceInterval"},
+        {"type": "null"}
+      ]
+    },
+    "interval95": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper"],
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"}
+      }
+    },
+    "bootstrapInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper", "confidence", "samples", "seed"],
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "samples": {"type": "integer", "minimum": 100},
+        "seed": {"type": "integer"}
+      }
+    },
+    "stratifiedBootstrapInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lower", "upper", "confidence", "samples", "seed"],
+      "properties": {
+        "lower": {"type": "number"},
+        "upper": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "samples": {"type": "integer", "minimum": 100},
+        "seed": {"type": "integer"},
+        "strata": {"type": "integer", "minimum": 1}
+      }
+    },
+    "basicSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total", "observations", "pass", "fail", "invalid", "error", "skipped",
+        "pass_rate", "pass_rate_ci", "pass_rate_ci95", "officially_valid"
+      ],
+      "properties": {
+        "total": {"$ref": "#/$defs/count"},
+        "observations": {"$ref": "#/$defs/count"},
+        "pass": {"$ref": "#/$defs/count"},
+        "fail": {"$ref": "#/$defs/count"},
+        "invalid": {"$ref": "#/$defs/count"},
+        "error": {"$ref": "#/$defs/count"},
+        "skipped": {"$ref": "#/$defs/count"},
+        "pass_rate": {"$ref": "#/$defs/rate"},
+        "pass_rate_ci": {"$ref": "#/$defs/confidenceInterval"},
+        "pass_rate_ci95": {
+          "oneOf": [
+            {"$ref": "#/$defs/interval95"},
+            {"type": "null"}
+          ]
+        },
+        "officially_valid": {"type": "boolean"}
+      }
+    },
+    "categorySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "total", "pass", "fail", "invalid", "error", "pass_rate", "ci95_lower", "ci95_upper", "confidence"],
+      "properties": {
+        "category": {"type": "string", "minLength": 1},
+        "total": {"$ref": "#/$defs/count"},
+        "pass": {"$ref": "#/$defs/count"},
+        "fail": {"$ref": "#/$defs/count"},
+        "invalid": {"$ref": "#/$defs/count"},
+        "error": {"$ref": "#/$defs/count"},
+        "pass_rate": {"$ref": "#/$defs/rate"},
+        "ci95_lower": {"type": "number"},
+        "ci95_upper": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "sliceValues": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/basicSummary"}
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "min", "max", "mean", "median", "stdev", "p50", "p90", "p95", "p99"],
+      "properties": {
+        "count": {"$ref": "#/$defs/count"},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "mean": {"type": "number"},
+        "median": {"type": "number"},
+        "stdev": {"type": "number", "minimum": 0},
+        "p50": {"type": "number"},
+        "p90": {"type": "number"},
+        "p95": {"type": "number"},
+        "p99": {"type": "number"}
+      }
+    },
+    "stability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_pass_fraction", "stable_case_fraction", "judge_agreement", "judge_score"],
+      "properties": {
+        "case_pass_fraction": {"$ref": "#/$defs/distribution"},
+        "stable_case_fraction": {"$ref": "#/$defs/rate"},
+        "judge_agreement": {"$ref": "#/$defs/distribution"},
+        "judge_score": {"$ref": "#/$defs/distribution"}
+      }
+    },
+    "calibrationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "true_pass", "true_fail", "false_pass", "false_fail", "cases", "samples", "invalid_cases",
+        "observations", "accuracy", "failure_sensitivity", "failure_sensitivity_ci", "pass_specificity",
+        "pass_specificity_ci", "false_pass_rate", "false_fail_rate", "balanced_accuracy", "repeated_cases",
+        "stable_repeated_case_fraction"
+      ],
+      "properties": {
+        "true_pass": {"$ref": "#/$defs/count"},
+        "true_fail": {"$ref": "#/$defs/count"},
+        "false_pass": {"$ref": "#/$defs/count"},
+        "false_fail": {"$ref": "#/$defs/count"},
+        "cases": {"$ref": "#/$defs/count"},
+        "samples": {"$ref": "#/$defs/count"},
+        "invalid_cases": {"$ref": "#/$defs/count"},
+        "observations": {"$ref": "#/$defs/count"},
+        "accuracy": {"$ref": "#/$defs/rate"},
+        "failure_sensitivity": {"$ref": "#/$defs/nullableRate"},
+        "failure_sensitivity_ci": {"$ref": "#/$defs/nullableConfidenceInterval"},
+        "pass_specificity": {"$ref": "#/$defs/nullableRate"},
+        "pass_specificity_ci": {"$ref": "#/$defs/nullableConfidenceInterval"},
+        "false_pass_rate": {"$ref": "#/$defs/nullableRate"},
+        "false_fail_rate": {"$ref": "#/$defs/nullableRate"},
+        "balanced_accuracy": {"$ref": "#/$defs/nullableRate"},
+        "repeated_cases": {"$ref": "#/$defs/count"},
+        "stable_repeated_case_fraction": {"$ref": "#/$defs/nullableRate"},
+        "slices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/calibrationSummary"}
+          }
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_latency_ms", "target_response_bytes", "input_tokens", "output_tokens",
+        "ttft_ms", "output_tokens_per_second", "elapsed_seconds", "observations_per_second",
+        "target_calls_per_second", "observation_success_rate", "observation_error_rate"
+      ],
+      "properties": {
+        "target_latency_ms": {"$ref": "#/$defs/distribution"},
+        "target_response_bytes": {"$ref": "#/$defs/distribution"},
+        "input_tokens": {"$ref": "#/$defs/distribution"},
+        "output_tokens": {"$ref": "#/$defs/distribution"},
+        "ttft_ms": {"$ref": "#/$defs/distribution"},
+        "output_tokens_per_second": {"$ref": "#/$defs/distribution"},
+        "elapsed_seconds": {"type": "number", "minimum": 0},
+        "observations_per_second": {"type": "number", "minimum": 0},
+        "target_calls_per_second": {"type": "number", "minimum": 0},
+        "observation_success_rate": {"$ref": "#/$defs/rate"},
+        "observation_error_rate": {"$ref": "#/$defs/rate"}
+      }
+    },
+    "performanceByPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cold", "warmup", "steady", "soak"],
+      "properties": {
+        "cold": {"$ref": "#/$defs/distribution"},
+        "warmup": {"$ref": "#/$defs/distribution"},
+        "steady": {"$ref": "#/$defs/distribution"},
+        "soak": {"$ref": "#/$defs/distribution"}
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_calls", "judge_calls", "total_tokens", "exhausted"],
+      "properties": {
+        "target_calls": {"$ref": "#/$defs/count"},
+        "judge_calls": {"$ref": "#/$defs/count"},
+        "total_tokens": {"$ref": "#/$defs/count"},
+        "exhausted": {"type": "boolean"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency", "source", "effective_at", "input_tokens", "output_tokens",
+        "judge_input_tokens", "judge_output_tokens", "estimated_total"
+      ],
+      "properties": {
+        "currency": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "input_tokens": {"$ref": "#/$defs/count"},
+        "output_tokens": {"$ref": "#/$defs/count"},
+        "judge_input_tokens": {"$ref": "#/$defs/count"},
+        "judge_output_tokens": {"$ref": "#/$defs/count"},
+        "estimated_total": {"type": "number", "minimum": 0}
+      }
+    },
+    "gateFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "metric", "minimum", "actual"],
+      "properties": {
+        "category": {"type": "string", "minLength": 1},
+        "metric": {"type": "string", "minLength": 1},
+        "minimum": {"type": "number"},
+        "actual": {
+          "oneOf": [
+            {"type": "number"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "pairedComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cases", "baseline_pass_rate", "candidate_pass_rate", "absolute_delta", "relative_delta",
+        "delta_ci", "mcnemar", "wins", "ties", "losses"
+      ],
+      "properties": {
+        "cases": {"$ref": "#/$defs/count"},
+        "baseline_pass_rate": {"$ref": "#/$defs/rate"},
+        "candidate_pass_rate": {"$ref": "#/$defs/rate"},
+        "absolute_delta": {"type": "number", "minimum": -1, "maximum": 1},
+        "relative_delta": {
+          "oneOf": [
+            {"type": "number"},
+            {"type": "null"}
+          ]
+        },
+        "delta_ci": {"$ref": "#/$defs/bootstrapInterval"},
+        "mcnemar": {"$ref": "#/$defs/mcnemar"},
+        "wins": {"$ref": "#/$defs/count"},
+        "ties": {"$ref": "#/$defs/count"},
+        "losses": {"$ref": "#/$defs/count"}
+      }
+    },
+    "mcnemar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_only", "candidate_only", "discordant", "p_value"],
+      "properties": {
+        "baseline_only": {"$ref": "#/$defs/count"},
+        "candidate_only": {"$ref": "#/$defs/count"},
+        "discordant": {"$ref": "#/$defs/count"},
+        "p_value": {"$ref": "#/$defs/rate"}
+      }
+    },
+    "distributionShift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared_pairs", "valid_pairs", "invalid_pairs", "comparison", "by_category"],
+      "properties": {
+        "declared_pairs": {"$ref": "#/$defs/count"},
+        "valid_pairs": {"$ref": "#/$defs/count"},
+        "invalid_pairs": {"$ref": "#/$defs/count"},
+        "comparison": {
+          "oneOf": [
+            {"$ref": "#/$defs/pairedComparison"},
+            {"type": "null"}
+          ]
+        },
+        "by_category": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/pairedComparison"}
+        }
+      }
+    }
+  }
+}

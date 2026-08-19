@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## Unreleased (0.4.0.dev0)
+
+- Started the canonical `next/0.4` line from the public `main` history for the
+  official-conformance milestone.
+- Added one fail-closed semantic verifier shared by verify and release, plus a
+  fully offline non-claiming official conformance fixture. The public results
+  registry remains schema-enforced empty until sanitized evidence, approval,
+  expiry, and revocation can all be independently verified.
+- Kept real behavior assurance fail-closed until judge-qualification run and
+  corpus support hashes are backed by a byte-reconstructible closure.
+- Added immutable preregistration approvals, reconstructible calibration,
+  versioned strict official schemas, and released-asset byte checks.
+- Withdrew the public pairwise-judging command until its A/B and B/A runtime is
+  qualified; paired statistical comparison of completed runs remains supported.
 
 - Distinguish configured server context capacity, prompt target, actual provider
   input, requested output, and actual output in cross-context performance
@@ -8,8 +21,6 @@
 
 All notable changes follow semantic versioning. Protocol, engine, schema,
 report, and suite versions are released independently.
-
-## Unreleased
 
 - Performance matrices can attach validated, hash-preserved per-run GPU
   telemetry and report lifecycle energy, board power, utilization, VRAM, and

@@ -19,7 +19,7 @@ Principal threats and controls:
 | Data exfiltration | classification, offline mode, egress allowlist, authorization record, telemetry off |
 | Secret or PII disclosure | secret scan, restricted artifacts, sanitized public reports, DLP hooks |
 | Benchmark gaming | private holdouts, canaries, contamination record, version rotation |
-| Judge bias | calibration, independent models, A/B and B/A, disagreement invalidation |
+| Judge bias | calibration, independent models, identity blinding, disagreement invalidation |
 | Denial of service/cost | response limits, timeouts, rate limit, bounded concurrency and budgets |
 | Dependency compromise | lockfile, CI, dependency review, SBOM, build provenance and signed release |
 
@@ -27,3 +27,6 @@ Residual risks include novel parser bugs, unknown attacks, provider compromise,
 judge error, incomplete data coverage, operator misuse, and missing external
 governance. Public multi-tenant operation requires an independent penetration
 test and provisioned KMS/RBAC/WORM controls.
+
+Paired statistical comparison of already evaluated outcomes is supported.
+Blinded output judging with retained A/B and B/A orders is not supported.

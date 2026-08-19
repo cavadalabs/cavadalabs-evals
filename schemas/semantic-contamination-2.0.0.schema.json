@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/semantic-contamination/2.0.0",
+  "title": "CavadaLabs Reconstructible Semantic Contamination Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_version", "dataset_sha256", "comparison_corpus", "comparison_corpus_sha256",
+    "candidate_pairs_evidence", "candidate_pairs_evidence_sha256", "reviewer_evidence",
+    "reviewer_evidence_sha256", "detector", "detector_revision", "detector_license",
+    "similarity_metric", "threshold", "cases", "candidate_pairs", "confirmed_duplicates",
+    "cross_split_reviewed", "cross_suite_reviewed", "independent_review_status", "performed_at", "passed"
+  ],
+  "properties": {
+    "evidence_version": {"const": "2.0.0"},
+    "dataset_sha256": {"$ref": "#/$defs/hash"},
+    "comparison_corpus": {"$ref": "#/$defs/path"},
+    "comparison_corpus_sha256": {"$ref": "#/$defs/hash"},
+    "candidate_pairs_evidence": {"$ref": "#/$defs/path"},
+    "candidate_pairs_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "reviewer_evidence": {"$ref": "#/$defs/path"},
+    "reviewer_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "detector": {"type": "string", "minLength": 1},
+    "detector_revision": {"type": "string", "minLength": 1},
+    "detector_license": {"type": "string", "minLength": 1},
+    "similarity_metric": {"type": "string", "minLength": 1},
+    "threshold": {"type": "number", "minimum": -1, "maximum": 1},
+    "cases": {"type": "integer", "minimum": 1},
+    "candidate_pairs": {"type": "integer", "minimum": 0},
+    "confirmed_duplicates": {"const": 0},
+    "cross_split_reviewed": {"const": true},
+    "cross_suite_reviewed": {"const": true},
+    "independent_review_status": {"const": "passed"},
+    "performed_at": {"type": "string", "format": "date-time"},
+    "passed": {"const": true}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "path": {"type": "string", "minLength": 1}
+  }
+}

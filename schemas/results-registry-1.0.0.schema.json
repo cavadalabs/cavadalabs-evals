@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/results-registry/1.0.0",
+  "title": "CavadaLabs Reserved Empty Results Registry v1",
+  "description": "Reserved empty registry. Non-empty publication requires a future schema with independently verifiable sanitized evidence, release approval, expiry, and revocation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_version", "results"],
+  "properties": {
+    "registry_version": {"const": "1.0.0"},
+    "results": {"type": "array", "maxItems": 0}
+  }
+}

@@ -5,10 +5,24 @@ import json
 import re
 import tomllib
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cavada_eval.protocol import ProtocolError, _read_jsonl, append_jsonl, atomic_json, atomic_text, load_suite, sha256_file
+from cavada_eval.program import (
+    validate_judge_qualification_blueprint,
+    validate_judge_qualification_blueprint_approval,
+)
+from cavada_eval.protocol import (
+    ProtocolError,
+    _read_jsonl,
+    append_jsonl,
+    atomic_json,
+    atomic_text,
+    load_suite,
+    sha256_bytes,
+    sha256_file,
+)
 
 REQUIRED = {
     "item_id",
@@ -118,6 +132,7 @@ def assemble(
     blueprint_path: Path,
     output: Path,
     *,
+    blueprint_approval_path: Path,
     corpus_version: str,
     frozen_at: str,
 ) -> dict[str, Any]:
@@ -132,10 +147,39 @@ def assemble(
         raise ProtocolError("frozen-at must be an ISO-8601 timestamp with timezone")
     source_suite = load_suite(source_suite_path)
     try:
-        with blueprint_path.open("rb") as handle:
-            blueprint = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        blueprint_raw = blueprint_path.read_bytes()
+        blueprint = tomllib.loads(blueprint_raw.decode("utf-8"))
+        approval_raw = blueprint_approval_path.read_bytes()
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot load qualification blueprint: {exc}") from exc
+    judge = source_suite.config.get("judge")
+    blueprint_sha = sha256_bytes(blueprint_raw)
+    approval_sha = sha256_bytes(approval_raw)
+    if (
+        not isinstance(judge, dict)
+        or judge.get("qualification_blueprint_sha256") != blueprint_sha
+        or judge.get("qualification_blueprint_approval_sha256") != approval_sha
+    ):
+        raise ProtocolError("source suite does not pin the supplied qualification blueprint and approval")
+    for field, supplied in (
+        ("qualification_blueprint", blueprint_path),
+        ("qualification_blueprint_approval", blueprint_approval_path),
+    ):
+        configured = judge.get(field)
+        if not isinstance(configured, str) or (source_suite.root / configured).resolve() != supplied.resolve():
+            raise ProtocolError(f"source suite {field} does not resolve to the supplied file")
+    blueprint_errors = validate_judge_qualification_blueprint(blueprint_path, source_suite, raw=blueprint_raw)
+    if blueprint_errors:
+        raise ProtocolError("invalid qualification blueprint:\n" + "\n".join(blueprint_errors))
+    approval_errors = validate_judge_qualification_blueprint_approval(
+        blueprint_approval_path,
+        source_suite,
+        blueprint_sha,
+        raw=approval_raw,
+        now=datetime.fromisoformat(frozen_at.replace("Z", "+00:00")),
+    )
+    if approval_errors:
+        raise ProtocolError("invalid qualification blueprint approval:\n" + "\n".join(approval_errors))
     items = _read_jsonl(items_path)
     _validate(items, blueprint)
 
@@ -180,6 +224,11 @@ def assemble(
             {"case_id": item["item_id"], "response": {"answer": item["response"], "model": "recorded-human-gold"}},
         )
     atomic_text(output / "rubric.md", source_suite.rubric)
+    atomic_text(output / "evidence" / "qualification_blueprint.toml", blueprint_raw.decode("utf-8"))
+    atomic_text(
+        output / "evidence" / "qualification_blueprint_approval.json",
+        approval_raw.decode("utf-8"),
+    )
     dataset_sha = sha256_file(dataset_path)
     responses_sha = sha256_file(responses_path)
     rubric_sha = sha256_file(output / "rubric.md")
@@ -237,8 +286,16 @@ seed = 20260805
         "corpus_version": corpus_version,
         "frozen_at": frozen_at,
         "blueprint_version": blueprint.get("version"),
-        "blueprint_sha256": sha256_file(blueprint_path),
-        "source_suite": f"{source_suite.name}@{source_suite.version}",
+        "blueprint_path": "evidence/qualification_blueprint.toml",
+        "blueprint_sha256": blueprint_sha,
+        "blueprint_approval_path": "evidence/qualification_blueprint_approval.json",
+        "blueprint_approval_sha256": approval_sha,
+        "source_suite": {
+            "name": source_suite.name,
+            "version": source_suite.version,
+            "dataset_sha256": sha256_file(source_suite.dataset_path),
+            "rubric_sha256": sha256_file(source_suite.rubric_path),
+        },
         "source_dataset_sha256": sha256_file(source_suite.dataset_path),
         "source_rubric_sha256": sha256_file(source_suite.rubric_path),
         "items_source_sha256": sha256_file(items_path),
@@ -262,6 +319,7 @@ def main() -> int:
     parser.add_argument("items", type=Path)
     parser.add_argument("blueprint", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--blueprint-approval", required=True, type=Path)
     parser.add_argument("--corpus-version", required=True)
     parser.add_argument("--frozen-at", required=True)
     args = parser.parse_args()
@@ -272,6 +330,7 @@ def main() -> int:
                 args.items,
                 args.blueprint,
                 args.output,
+                blueprint_approval_path=args.blueprint_approval,
                 corpus_version=args.corpus_version,
                 frozen_at=args.frozen_at,
             ),

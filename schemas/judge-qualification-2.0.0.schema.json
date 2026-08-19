@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/judge-qualification/2.0.0",
+  "title": "CavadaLabs Judge Qualification Report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "qualification_version", "passed", "run_manifest_sha256", "bundle_verification",
+    "corpus_manifest_sha256", "blueprint_sha256", "blueprint_approval_sha256",
+    "source_suite", "corpus_dataset_sha256", "judge_configuration", "rubric_sha256",
+    "judges", "limitations"
+  ],
+  "properties": {
+    "qualification_version": {"const": "2.0.0"},
+    "passed": {"type": "boolean"},
+    "run_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "bundle_verification": {"$ref": "#/$defs/bundleVerification"},
+    "corpus_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "blueprint_sha256": {"$ref": "#/$defs/hash"},
+    "blueprint_approval_sha256": {"$ref": "#/$defs/hash"},
+    "source_suite": {"$ref": "#/$defs/suite"},
+    "corpus_dataset_sha256": {"$ref": "#/$defs/hash"},
+    "judge_configuration": {"$ref": "#/$defs/judgeConfiguration"},
+    "rubric_sha256": {"$ref": "#/$defs/hash"},
+    "judges": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/judgeResult"}},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "suite": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version", "dataset_sha256", "rubric_sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dataset_sha256": {"$ref": "#/$defs/hash"},
+        "rubric_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "bundleVerification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["valid", "failures", "signature", "files"],
+      "properties": {
+        "valid": {"type": "boolean"},
+        "failures": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "signature": {"enum": ["absent", "unverified", "valid", "invalid"]},
+        "files": {"type": "integer", "minimum": 1}
+      },
+      "allOf": [{"if": {"properties": {"valid": {"const": true}}}, "then": {"properties": {"failures": {"maxItems": 0}}}}]
+    },
+    "judgeConfiguration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requested_model", "expected_reported_model", "revision", "endpoint", "prompt_sha256", "response_schema", "temperature", "models", "consensus"],
+      "properties": {
+        "requested_model": {"type": "string", "minLength": 1},
+        "expected_reported_model": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "endpoint": {"type": "string", "minLength": 1},
+        "prompt_sha256": {"$ref": "#/$defs/hash"},
+        "response_schema": {"type": "string", "minLength": 1},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "models": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/judgeModel"}},
+        "consensus": {"enum": ["majority", "unanimous"]}
+      }
+    },
+    "judgeModel": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "model", "expected_model", "revision"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "expected_model": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1}
+      }
+    },
+    "judgeResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["passed", "checks", "modules", "diagnostic_slices"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "checks": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {"$ref": "#/$defs/check"}},
+        "modules": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/moduleResult"}},
+        "diagnostic_slices": {"type": "object", "additionalProperties": {"$ref": "#/$defs/diagnosticValues"}}
+      }
+    },
+    "check": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "passed"],
+      "properties": {
+        "name": {"enum": ["all_modules", "invalid_cases", "judge_repetitions", "repeat_stability"]},
+        "passed": {"type": "boolean"}
+      }
+    },
+    "moduleResult": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["passed", "reason"],
+          "properties": {
+            "passed": {"type": "boolean"},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["passed", "cases", "expected_cases", "invalid_cases", "failure_sensitivity_ci", "failure_sensitivity_gate", "pass_specificity_ci", "pass_specificity_gate"],
+          "properties": {
+            "passed": {"type": "boolean"},
+            "cases": {"type": "integer", "minimum": 0},
+            "expected_cases": {"type": "integer", "minimum": 1},
+            "invalid_cases": {"type": "integer", "minimum": 0},
+            "failure_sensitivity_ci": {"oneOf": [{"$ref": "#/$defs/confidenceInterval"}, {"type": "null"}]},
+            "failure_sensitivity_gate": {"$ref": "#/$defs/rate"},
+            "pass_specificity_ci": {"oneOf": [{"$ref": "#/$defs/confidenceInterval"}, {"type": "null"}]},
+            "pass_specificity_gate": {"$ref": "#/$defs/rate"}
+          }
+        }
+      ]
+    },
+    "confidenceInterval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lower", "upper", "confidence"],
+      "properties": {
+        "lower": {"type": "number"}, "upper": {"type": "number"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "diagnosticValues": {"type": "object", "additionalProperties": {"$ref": "#/$defs/diagnosticMetric"}},
+    "diagnosticMetric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["true_pass", "true_fail", "false_pass", "false_fail", "cases", "samples", "invalid_cases", "observations", "accuracy", "failure_sensitivity", "failure_sensitivity_ci", "pass_specificity", "pass_specificity_ci", "false_pass_rate", "false_fail_rate", "balanced_accuracy", "repeated_cases", "stable_repeated_case_fraction"],
+      "properties": {
+        "true_pass": {"type": "integer", "minimum": 0}, "true_fail": {"type": "integer", "minimum": 0},
+        "false_pass": {"type": "integer", "minimum": 0}, "false_fail": {"type": "integer", "minimum": 0},
+        "cases": {"type": "integer", "minimum": 0}, "samples": {"type": "integer", "minimum": 0},
+        "invalid_cases": {"type": "integer", "minimum": 0}, "observations": {"type": "integer", "minimum": 0},
+        "accuracy": {"$ref": "#/$defs/rate"},
+        "failure_sensitivity": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+        "failure_sensitivity_ci": {"oneOf": [{"$ref": "#/$defs/confidenceInterval"}, {"type": "null"}]},
+        "pass_specificity": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+        "pass_specificity_ci": {"oneOf": [{"$ref": "#/$defs/confidenceInterval"}, {"type": "null"}]},
+        "false_pass_rate": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+        "false_fail_rate": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+        "balanced_accuracy": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]},
+        "repeated_cases": {"type": "integer", "minimum": 0},
+        "stable_repeated_case_fraction": {"oneOf": [{"$ref": "#/$defs/rate"}, {"type": "null"}]}
+      }
+    }
+  }
+}

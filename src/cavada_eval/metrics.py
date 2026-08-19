@@ -10,7 +10,7 @@ from typing import Any
 
 from .protocol import contains_secret_like
 
-METRIC_VERSION = "1.0.0"
+METRIC_VERSION = "2.0.0"
 PII_PATTERNS = (
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
     re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b"),

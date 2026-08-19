@@ -6,13 +6,21 @@ import re
 import tomllib
 import unicodedata
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .assets import content_text
 from .profiles import profile_summary
-from .protocol import PROTOCOL_VERSION, ProtocolError, Suite, load_suite, wilson_gate_power
+from .protocol import (
+    PROTOCOL_VERSION,
+    ProtocolError,
+    Suite,
+    _strict_json_loads,
+    load_suite,
+    sha256_file,
+    wilson_gate_power,
+)
 
 PROGRAM_STATUSES = {"planned", "draft", "candidate", "calibrated", "approved", "deprecated", "retired"}
 ASSURANCE_LEVELS = ("development", "candidate", "calibrated", "approved", "independently-reproduced")
@@ -371,25 +379,59 @@ def validate_reviewer_fixtures(path: Path, suite: Suite) -> list[str]:
     return errors
 
 
-def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str]:
+def validate_judge_qualification_blueprint(
+    path: Path,
+    suite: Suite,
+    *,
+    raw: bytes | None = None,
+) -> list[str]:
     try:
-        with path.open("rb") as handle:
-            blueprint = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        captured = path.read_bytes() if raw is None else raw
+        blueprint = tomllib.loads(captured.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         return [f"cannot load judge qualification blueprint: {exc}"]
     errors: list[str] = []
+    expected_fields = {
+        "version",
+        "status",
+        "target_unique_responses",
+        "minimum_model_families",
+        "minimum_target_repetitions",
+        "minimum_judge_repetitions",
+        "maximum_invalid_cases",
+        "minimum_repeat_stability",
+        "required_probe_types",
+        "allocations",
+        "modules",
+    }
+    if set(blueprint) != expected_fields:
+        errors.append(f"judge qualification blueprint fields must be exactly {sorted(expected_fields)}")
     target = blueprint.get("target_unique_responses")
     allocations = blueprint.get("allocations")
     modules = blueprint.get("modules")
     required_probes = blueprint.get("required_probe_types")
     if not isinstance(blueprint.get("version"), str) or not VERSION_PATTERN.fullmatch(blueprint["version"]):
         errors.append("judge qualification blueprint version must be semantic X.Y.Z")
-    if blueprint.get("status") != "preregistration-draft":
-        errors.append("status must remain preregistration-draft until independent approval")
+    if blueprint.get("status") != "preregistered":
+        errors.append("status must remain preregistered; approval is separate evidence")
     if not isinstance(target, int) or isinstance(target, bool) or target < 1:
         errors.append("target_unique_responses must be a positive integer")
     if not isinstance(blueprint.get("minimum_model_families"), int) or blueprint["minimum_model_families"] < 4:
         errors.append("minimum_model_families must be at least four")
+    for field in ("minimum_target_repetitions", "minimum_judge_repetitions"):
+        value = blueprint.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            errors.append(f"{field} must be a positive integer")
+    maximum_invalid = blueprint.get("maximum_invalid_cases")
+    if not isinstance(maximum_invalid, int) or isinstance(maximum_invalid, bool) or maximum_invalid < 0:
+        errors.append("maximum_invalid_cases must be a non-negative integer")
+    repeat_stability = blueprint.get("minimum_repeat_stability")
+    if (
+        not isinstance(repeat_stability, (int, float))
+        or isinstance(repeat_stability, bool)
+        or not 0 < float(repeat_stability) <= 1
+    ):
+        errors.append("minimum_repeat_stability must be in (0, 1]")
     required_dimensions = {"language", "severity", "response_length", "response_style", "probe_type"}
     if not isinstance(allocations, dict) or set(allocations) != required_dimensions:
         errors.append(f"allocations must define exactly {sorted(required_dimensions)}")
@@ -418,7 +460,11 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
     probe_ids = {str(value["id"]) for value in probe_values if isinstance(value, dict) and "id" in value}
     if not isinstance(required_probes, list) or set(required_probes) != probe_ids:
         errors.append("required_probe_types must exactly match the probe_type allocation")
-    suite_modules = {gate.get("category") for gate in suite.config.get("gates", []) if isinstance(gate, dict)}
+    suite_modules = {
+        str(gate["category"])
+        for gate in suite.config.get("gates", [])
+        if isinstance(gate, dict) and isinstance(gate.get("category"), str) and gate["category"]
+    }
     seen: set[str] = set()
     module_total = 0
     if not isinstance(modules, list) or not modules:
@@ -462,6 +508,106 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         errors.append("judge qualification modules must match suite gate categories")
     if isinstance(target, int) and module_total != target:
         errors.append("module targets do not equal target_unique_responses")
+    return errors
+
+
+def validate_judge_qualification_blueprint_approval(
+    path: Path,
+    suite: Suite,
+    blueprint_sha256: str,
+    *,
+    raw: bytes | None = None,
+    now: datetime | None = None,
+    require_effective: bool = True,
+) -> list[str]:
+    try:
+        captured = path.read_bytes() if raw is None else raw
+        approval = _strict_json_loads(captured)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"cannot load judge qualification blueprint approval: {exc}"]
+    if not isinstance(approval, dict):
+        return ["judge qualification blueprint approval must be a JSON object"]
+
+    expected_fields = {
+        "approval_version",
+        "approval_id",
+        "scope",
+        "status",
+        "independent",
+        "blueprint_sha256",
+        "suite",
+        "approver_id",
+        "approver_qualification_evidence",
+        "approver_qualification_evidence_sha256",
+        "conflicts",
+        "conflicts_resolved",
+        "decision_rationale",
+        "approved_at",
+        "expires_at",
+        "revoked_at",
+        "revocation_reason",
+    }
+    errors: list[str] = []
+    if set(approval) != expected_fields:
+        errors.append(f"judge qualification blueprint approval fields must be exactly {sorted(expected_fields)}")
+    expected_suite = {
+        "name": suite.name,
+        "version": suite.version,
+        "dataset_sha256": sha256_file(suite.dataset_path),
+        "rubric_sha256": sha256_file(suite.rubric_path),
+    }
+    required_text = (
+        "approval_id",
+        "approver_id",
+        "approver_qualification_evidence",
+        "conflicts",
+        "decision_rationale",
+        "approved_at",
+        "expires_at",
+    )
+    if (
+        approval.get("approval_version") != "1.0.0"
+        or approval.get("scope") != "judge-qualification-blueprint"
+        or approval.get("status") != "passed"
+        or approval.get("independent") is not True
+        or approval.get("conflicts_resolved") is not True
+        or approval.get("blueprint_sha256") != blueprint_sha256
+        or approval.get("suite") != expected_suite
+        or not all(isinstance(approval.get(field), str) and approval[field].strip() for field in required_text)
+    ):
+        errors.append("judge qualification blueprint approval is incomplete, unlinked, or did not pass")
+    evidence_hash = approval.get("approver_qualification_evidence_sha256")
+    if not isinstance(evidence_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", evidence_hash):
+        errors.append("judge qualification blueprint approver evidence SHA-256 is invalid")
+    else:
+        relative = approval.get("approver_qualification_evidence")
+        if isinstance(relative, str):
+            evidence_path = (suite.root / relative).resolve()
+            try:
+                evidence_path.relative_to(suite.root.resolve())
+            except ValueError:
+                errors.append("judge qualification blueprint approver evidence escapes the suite")
+            else:
+                if (suite.root / relative).is_symlink() or not evidence_path.is_file():
+                    errors.append("judge qualification blueprint approver evidence must be a regular suite-local file")
+                elif sha256_file(evidence_path) != evidence_hash:
+                    errors.append("judge qualification blueprint approver evidence hash mismatch")
+
+    revoked_at = approval.get("revoked_at")
+    revocation_reason = approval.get("revocation_reason")
+    if revoked_at is not None or revocation_reason != "":
+        errors.append("judge qualification blueprint approval has been revoked")
+    try:
+        approved_at = datetime.fromisoformat(str(approval.get("approved_at", "")).replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(approval.get("expires_at", "")).replace("Z", "+00:00"))
+        if approved_at.tzinfo is None or expires_at.tzinfo is None:
+            raise ValueError
+    except ValueError:
+        errors.append("judge qualification blueprint approval timestamps are invalid")
+    else:
+        current = now or datetime.now(timezone.utc)
+        if expires_at <= approved_at or (require_effective and (approved_at > current or expires_at <= current)):
+            errors.append("judge qualification blueprint approval is not currently effective")
     return errors
 
 

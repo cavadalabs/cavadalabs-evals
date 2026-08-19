@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/suite-calibration/2.0.0",
+  "title": "CavadaLabs Reconstructible Suite Calibration Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "calibration_version", "status", "protocol_version", "suite", "source_commit",
+    "analysis_plan", "analysis_plan_sha256", "human_label_evidence", "human_label_evidence_sha256",
+    "holdout_manifest", "holdout_manifest_sha256", "pilot_campaign", "pilot_campaign_sha256",
+    "pilot_audit", "pilot_audit_sha256",
+    "statistical_review", "statistical_review_sha256", "semantic_contamination_evidence",
+    "semantic_contamination_evidence_sha256", "gates_passed", "results", "completed_at", "limitations"
+  ],
+  "properties": {
+    "calibration_version": {"const": "2.0.0"},
+    "status": {"enum": ["passed", "failed", "withdrawn"]},
+    "protocol_version": {"const": "1.0.0"},
+    "suite": {"$ref": "#/$defs/suite"},
+    "source_commit": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+    "analysis_plan": {"$ref": "#/$defs/path"},
+    "analysis_plan_sha256": {"$ref": "#/$defs/hash"},
+    "human_label_evidence": {"$ref": "#/$defs/path"},
+    "human_label_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "holdout_manifest": {"$ref": "#/$defs/path"},
+    "holdout_manifest_sha256": {"$ref": "#/$defs/hash"},
+    "pilot_campaign": {"$ref": "#/$defs/path"},
+    "pilot_campaign_sha256": {"$ref": "#/$defs/hash"},
+    "pilot_audit": {"$ref": "#/$defs/path"},
+    "pilot_audit_sha256": {"$ref": "#/$defs/hash"},
+    "statistical_review": {"$ref": "#/$defs/path"},
+    "statistical_review_sha256": {"$ref": "#/$defs/hash"},
+    "semantic_contamination_evidence": {"$ref": "#/$defs/path"},
+    "semantic_contamination_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "gates_passed": {"type": "boolean"},
+    "results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analysis_plan", "human_label_cases", "holdout_cases", "pilot_runs", "independent_reviewers", "all_preregistered_gates"],
+      "properties": {
+        "analysis_plan": {"const": "preregistered"},
+        "human_label_cases": {"type": "integer", "minimum": 1},
+        "holdout_cases": {"type": "integer", "minimum": 1},
+        "pilot_runs": {"type": "integer", "minimum": 6},
+        "independent_reviewers": {"type": "integer", "minimum": 2},
+        "all_preregistered_gates": {"const": "passed"}
+      }
+    },
+    "completed_at": {"type": "string", "format": "date-time"},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "path": {"type": "string", "minLength": 1},
+    "suite": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version", "dataset_sha256", "rubric_sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dataset_sha256": {"$ref": "#/$defs/hash"},
+        "rubric_sha256": {"$ref": "#/$defs/hash"}
+      }
+    }
+  }
+}

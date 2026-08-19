@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/suite-calibration-approval/2.0.0",
+  "title": "CavadaLabs Independent Suite Calibration Approval v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_version", "approval_id", "scope", "status", "independent", "calibration_sha256",
+    "approver_id", "approver_qualification_evidence", "approver_qualification_evidence_sha256",
+    "conflicts", "conflicts_resolved", "decision_rationale", "approved_at", "expires_at",
+    "revoked_at", "revocation_reason"
+  ],
+  "properties": {
+    "approval_version": {"const": "2.0.0"},
+    "approval_id": {"type": "string", "minLength": 1},
+    "scope": {"const": "suite-calibration"},
+    "status": {"enum": ["passed", "failed", "withdrawn", "revoked"]},
+    "independent": {"type": "boolean"},
+    "calibration_sha256": {"$ref": "#/$defs/hash"},
+    "approver_id": {"type": "string", "minLength": 1},
+    "approver_qualification_evidence": {"type": "string", "minLength": 1},
+    "approver_qualification_evidence_sha256": {"$ref": "#/$defs/hash"},
+    "conflicts": {"type": "string", "minLength": 1},
+    "conflicts_resolved": {"type": "boolean"},
+    "decision_rationale": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "revoked_at": {"type": ["string", "null"], "format": "date-time"},
+    "revocation_reason": {"type": "string"}
+  },
+  "$defs": {"hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+}

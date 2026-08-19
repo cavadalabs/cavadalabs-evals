@@ -4,8 +4,7 @@ title: "CavadaLabs Evals"
 type: software
 authors:
   - name: CavadaLabs
-version: 0.3.1
-date-released: 2026-08-06
+version: 0.4.0.dev0
 license: Apache-2.0
 repository-code: "https://github.com/cavadalabs/cavadalabs-evals"
 abstract: "A local-first protocol and engine for reproducible, auditable AI quality, safety, security, compliance-evidence, and serving-performance evaluations."

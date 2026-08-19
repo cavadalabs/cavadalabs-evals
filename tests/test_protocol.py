@@ -197,19 +197,41 @@ def test_suite_calibration_and_independent_approval_are_hash_linked(tmp_path: Pa
         "independent_review_evidence_sha256": sha256_file(approval_path),
     }
     now = datetime(2026, 8, 5, tzinfo=timezone.utc)
-    assert not _calibration_evidence_errors(suite, calibration, now=now)
-    approval["calibration_sha256"] = "0" * 64
-    approval_path.write_text(json.dumps(approval))
-    calibration["independent_review_evidence_sha256"] = sha256_file(approval_path)
-    assert "official calibration independent approval is incomplete, unlinked, or did not pass" in _calibration_evidence_errors(
-        suite, calibration, now=now
-    )
+    errors = _calibration_evidence_errors(suite, calibration, now=now)
+    assert "official calibration report is incomplete or did not pass" in errors
+    assert any("path and SHA-256 are required" in error for error in errors)
 
 
 def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "uv.lock").touch()
-    assert _doctor(tmp_path)["ready"] is False
+    result = _doctor(tmp_path)
+    assert result["ready"] is result["structural_ready"] is False
+    assert result["official_ready"] is False
+
+
+def test_doctor_distinguishes_structural_from_official_readiness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "suite.json").write_text("{}")
+    (tmp_path / "uv.lock").touch()
+    (tmp_path / "PROTOCOL.md").touch()
+    monkeypatch.setattr(
+        "cavada_eval.cli.load_program_registry",
+        lambda *_args, **_kwargs: {"summary": {"official_capable": 0}},
+    )
+    for name in (
+        "DEEPEVAL_TELEMETRY_OPT_OUT",
+        "DEEPEVAL_DISABLE_DOTENV",
+        "DEEPEVAL_DISABLE_LEGACY_KEYFILE",
+        "DEEPEVAL_UPDATE_WARNING_OPT_IN",
+        "ERROR_REPORTING",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = _doctor(tmp_path)
+    assert result["ready"] is result["structural_ready"] is True
+    assert result["official_ready"] is False
 
 
 @pytest.mark.parametrize(("field", "message"), [("tags", "valid tags"), ("source", "source and review method")])

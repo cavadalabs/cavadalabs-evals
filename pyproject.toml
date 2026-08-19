@@ -1,6 +1,6 @@
 [project]
 name = "cavadalabs-evals"
-version = "0.3.1"
+version = "0.4.0.dev0"
 description = "CavadaLabs protocol for reproducible, auditable AI evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,13 @@ packages = ["src/cavada_eval"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "PROTOCOL.md" = "cavada_eval/PROTOCOL.md"
+"schemas" = "cavada_eval/schemas"
+"program" = "cavada_eval/program"
+"standards/evidence_crosswalk.toml" = "cavada_eval/standards/evidence_crosswalk.toml"
+"performance/plans" = "cavada_eval/performance/plans"
+"performance/workloads" = "cavada_eval/performance/workloads"
+"suites/security-privacy-smoke-v1" = "cavada_eval/suites/security-privacy-smoke-v1"
+"suites/template" = "cavada_eval/suites/template"
 "suites/demo-v1" = "cavada_eval/demo_suite"
 
 [tool.pytest.ini_options]

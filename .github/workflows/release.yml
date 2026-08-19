@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.11"
@@ -30,13 +31,26 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest
       - run: uv run python scripts/check_secrets.py
+      - run: uv run python scripts/check_released_assets.py
+      - name: Enforce empty results registry v1
+        run: |
+          previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$GITHUB_SHA^" 2>/dev/null || true)
+          if [[ -n "$previous_tag" ]] && git cat-file -e "$previous_tag:results/registry.json"; then
+            git show "$previous_tag:results/registry.json" > "$RUNNER_TEMP/previous-registry.json"
+            uv run python scripts/validate_results_registry.py --previous "$RUNNER_TEMP/previous-registry.json"
+          else
+            uv run python scripts/validate_results_registry.py --initial-empty
+          fi
       - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
       - run: uv build
-      - name: Verify the wheel demo outside the checkout
+      - name: Verify the wheel outside the checkout
         run: |
           cd "$(mktemp -d)"
           wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print | sort | tail -1)
           uvx --from "${wheel}[reports]" cavada-eval demo
+          uvx --from "$wheel" cavada-eval doctor
+          uvx --from "$wheel" cavada-eval program
+          uvx --from "$wheel" cavada-eval perf validate --preset reference
       - run: uv run python scripts/generate_provenance.py
       - name: Attest package provenance
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
