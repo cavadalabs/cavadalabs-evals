@@ -18,6 +18,8 @@ from cavada_eval.protocol import ProtocolError, sha256_file
 
 ROOT = Path(__file__).parents[1]
 SCHEMAS = ROOT / "schemas"
+BEHAVIOR_MANIFEST_SCHEMA = "manifest-1.1.0.schema.json"
+BEHAVIOR_MANIFEST_SCHEMAS = ("manifest.schema.json", BEHAVIOR_MANIFEST_SCHEMA)
 PERFORMANCE_MANIFEST_SCHEMAS = (
     "performance-manifest.schema.json",
     "performance-manifest-2.0.0.schema.json",
@@ -135,6 +137,18 @@ def test_every_schema_is_valid_draft_2020_12() -> None:
         Draft202012Validator.check_schema(json.loads(path.read_text(encoding="utf-8")))
 
 
+def test_behavior_schema_1_1_preserves_existing_branch_aliases() -> None:
+    assert sha256_file(SCHEMAS / "case.schema.json") == "605a5caaff78084926a1adb36eb1db51e6f0be6f53aa1132448f99f4820b7a24"
+    assert sha256_file(SCHEMAS / "manifest.schema.json") == "90536bb0b495189665c65630b5db9199a5ec50a329ba23dae9dd3de035aa6699"
+    case_schema = _schema("case-1.1.0.schema.json")
+    manifest_schema = _schema(BEHAVIOR_MANIFEST_SCHEMA)
+    assert case_schema["$id"].endswith("/case/1.1.0")
+    assert {"expected_retrieval_ids", "retrieval_recall_min"} <= set(case_schema["properties"])
+    assert manifest_schema["$id"].endswith("/manifest/1.1.0")
+    assert manifest_schema["properties"]["schema_version"] == {"const": "1.1.0"}
+    assert "private-ai" in manifest_schema["$defs"]["target"]["properties"]["kind"]["enum"]
+
+
 def test_real_behavior_manifest_metrics_and_bundle_conform(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -148,18 +162,19 @@ def test_real_behavior_manifest_metrics_and_bundle_conform(
     metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     bundle = json.loads((run_dir / "bundle.json").read_text(encoding="utf-8"))
 
-    _validate("manifest.schema.json", manifest)
+    _validate(BEHAVIOR_MANIFEST_SCHEMA, manifest)
+    assert _matching_schemas(BEHAVIOR_MANIFEST_SCHEMAS, manifest) == [BEHAVIOR_MANIFEST_SCHEMA]
     _validate("metrics.schema.json", metrics)
     _validate("bundle.schema.json", bundle)
 
     missing_reproduction = dict(manifest)
     missing_reproduction.pop("reproduction_command")
     with pytest.raises(ValidationError, match="reproduction_command"):
-        _validate("manifest.schema.json", missing_reproduction)
+        _validate(BEHAVIOR_MANIFEST_SCHEMA, missing_reproduction)
 
     unknown = {**manifest, "unknown_contract_field": True}
     with pytest.raises(ValidationError, match="Additional properties"):
-        _validate("manifest.schema.json", unknown)
+        _validate(BEHAVIOR_MANIFEST_SCHEMA, unknown)
 
     official = copy.deepcopy(manifest)
     official.update({"status": "passed", "official_requested": True, "official": True})
@@ -195,10 +210,10 @@ def test_real_behavior_manifest_metrics_and_bundle_conform(
         "legal_applicability_evidence_sha256": "1" * 64,
         "approver_qualification_evidence_sha256": "2" * 64,
     }
-    _validate("manifest.schema.json", official)
+    _validate(BEHAVIOR_MANIFEST_SCHEMA, official)
     official["engagement"] = None
     with pytest.raises(ValidationError):
-        _validate("manifest.schema.json", official)
+        _validate(BEHAVIOR_MANIFEST_SCHEMA, official)
 
 
 def test_real_performance_manifest_and_bundle_cover_final_abort_and_official_contract(tmp_path: Path) -> None:

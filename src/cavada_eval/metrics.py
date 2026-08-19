@@ -10,7 +10,7 @@ from typing import Any
 
 from .protocol import contains_secret_like
 
-METRIC_VERSION = "1.0.0"
+METRIC_VERSION = "1.1.0"
 PII_PATTERNS = (
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
     re.compile(r"\b(?:\+?\d[\d .()-]{7,}\d)\b"),
@@ -21,7 +21,6 @@ _DEFERRED_FIELDS = {
     "citation_pattern",
     "citation_required",
     "exact_tool_order",
-    "expected_retrieval_ids",
     "expected_set",
     "expected_tool_arguments",
     "expected_transcript",
@@ -75,6 +74,25 @@ def metric_config_errors(case: dict[str, Any]) -> list[str]:
             not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or not 0 <= float(value) <= 1
         ):
             errors.append(f"{field} must be a finite number from 0 to 1")
+    expected_retrieval = case.get("expected_retrieval_ids")
+    expected_retrieval_valid = (
+        isinstance(expected_retrieval, list)
+        and bool(expected_retrieval)
+        and all(isinstance(value, str) and value for value in expected_retrieval)
+        and len(expected_retrieval) == len(set(expected_retrieval))
+    )
+    if expected_retrieval is not None and not expected_retrieval_valid:
+        errors.append("expected_retrieval_ids must be a non-empty array of unique non-empty strings")
+    retrieval_recall_min = case.get("retrieval_recall_min")
+    if retrieval_recall_min is not None and (
+        not isinstance(retrieval_recall_min, (int, float))
+        or isinstance(retrieval_recall_min, bool)
+        or not math.isfinite(float(retrieval_recall_min))
+        or not 0 <= float(retrieval_recall_min) <= 1
+    ):
+        errors.append("retrieval_recall_min must be a finite number from 0 to 1")
+    if retrieval_recall_min is not None and not expected_retrieval_valid:
+        errors.append("retrieval_recall_min requires non-empty expected_retrieval_ids")
     tolerance = case.get("numeric_tolerance")
     if tolerance is not None and (
         not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool) or not math.isfinite(float(tolerance)) or float(tolerance) < 0
@@ -162,6 +180,7 @@ def deterministic_evaluation(
     answer: str,
     *,
     tool_calls: Sequence[object] | None = None,
+    retrieved_ids: Sequence[object] | None = None,
 ) -> dict[str, Any]:
     folded = normalize_text(answer)
     checks: dict[str, bool] = {
@@ -211,6 +230,17 @@ def deterministic_evaluation(
         match = re.fullmatch(r"\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)\s*", answer)
         tolerance = float(case.get("numeric_tolerance", 0.0))
         checks["numeric_tolerance"] = bool(match) and abs(float(answer) - float(case["expected_number"])) <= tolerance
+
+    expected_retrieval = case.get("expected_retrieval_ids")
+    if isinstance(expected_retrieval, list) and expected_retrieval:
+        retrieved = [str(value) for value in retrieved_ids or [] if isinstance(value, str)]
+        expected_ids = set(expected_retrieval)
+        found = expected_ids & set(retrieved)
+        scores["retrieval_recall"] = len(found) / len(expected_ids)
+        scores["retrieval_precision"] = len(found) / len(set(retrieved)) if retrieved else 0.0
+        checks["retrieval_recall"] = scores["retrieval_recall"] >= float(case.get("retrieval_recall_min", 1.0))
+        details["missing_retrieval_ids"] = sorted(expected_ids - found)
+        details["unexpected_retrieval_ids"] = sorted(set(retrieved) - expected_ids)
 
     calls_valid = False
     calls: list[dict[str, Any]] = []

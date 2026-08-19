@@ -5,6 +5,9 @@ report, and suite versions are released independently.
 
 ## Unreleased
 
+- Added behavior schema 1.1.0 and deterministic-metric implementation 1.1.0
+  for candidate-only Private AI and retrieval
+  evidence while preserving the existing branch's 1.0 schema aliases byte-for-byte.
 - Hardened official behavior execution and release verification with current
   hash-linked authorization evidence, exact target and judge identity, raw
   ledger reconciliation, CI-lower gate recomputation, and immutable outputs.

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from . import private_ai
 from .artifacts import verify_bundle, write_bundle
 from .assets import asset_inventory, content_text, encoded_content, encoded_messages, openai_content
 from .calibration import judge_evidence_errors
@@ -345,7 +346,30 @@ def _reject_non_finite_json(constant: str) -> Any:
 
 
 def _strict_json_loads(value: str | bytes) -> Any:
-    return json.loads(value, parse_constant=_reject_non_finite_json)
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        parsed: dict[str, Any] = {}
+        for key, item in items:
+            if key in parsed:
+                raise ValueError(f"duplicate JSON key: {key}")
+            parsed[key] = item
+        return parsed
+
+    def finite(item: Any) -> bool:
+        if isinstance(item, float):
+            return math.isfinite(item)
+        if isinstance(item, dict):
+            return all(finite(child) for child in item.values())
+        if isinstance(item, list):
+            return all(finite(child) for child in item)
+        return True
+
+    try:
+        parsed = json.loads(value, object_pairs_hook=pairs, parse_constant=_reject_non_finite_json)
+        if not finite(parsed):
+            raise ValueError("non-finite JSON number")
+    except RecursionError as exc:
+        raise ValueError("JSON nesting exceeds the supported limit") from exc
+    return parsed
 
 
 def _usage_tokens(raw: dict[str, Any], *, required: bool = False) -> tuple[float, float]:
@@ -1037,6 +1061,8 @@ def call_target(
     prompt: Any,
     request_model: str | None,
     timeout: float,
+    *,
+    private_ai_context: private_ai.PrivateAIContext | None = None,
 ) -> tuple[str, dict[str, Any], str, dict[str, Any], dict[str, Any]]:
     target = suite.config.get("target") or {}
     kind = target.get("kind", "json")
@@ -1080,6 +1106,23 @@ def call_target(
                     ) from exc
                 return answer, recorded_raw, reported_model, payload, transport
         raise ProtocolError(f"recorded target has no response for case {prompt['case_id']}")
+    if kind == "private-ai":
+        if private_ai_context is None:
+            raise ProtocolError("private-ai target was not prepared")
+        try:
+            return private_ai.call(private_ai_context, prompt, timeout)
+        except private_ai.PrivateAIAdapterError as exc:
+            transport = exc.transport
+            if not isinstance(transport.get("request_id"), str) or not transport["request_id"] or not isinstance(
+                transport.get("total_ms"), (int, float)
+            ):
+                raise ProtocolError("private-ai adapter error omitted real transport evidence") from exc
+            raise _ResponseError(
+                str(exc),
+                request=exc.request,
+                raw=exc.raw,
+                transport=transport,
+            ) from exc
     payload = build_target_payload(suite, prompt, request_model)
     if kind == "openai":
         if target.get("stream"):
@@ -1553,6 +1596,16 @@ def run(
         raise ProtocolError("official additional judges must have distinct expected model identities")
 
     selected_cases = stratified_cases(suite.cases, max_cases) if preset else (suite.cases[:max_cases] if max_cases > 0 else suite.cases)
+    private_ai_corpus: private_ai.CorpusSnapshot | None = None
+    if target_kind == "private-ai":
+        target_config = suite.config.get("target") or {}
+        adapter_errors = private_ai.preflight_errors(suite.cases, target_config)
+        if adapter_errors:
+            raise ProtocolError("private-ai preflight failed before network access:\n" + "\n".join(adapter_errors))
+        try:
+            private_ai_corpus = private_ai.snapshot_corpus(suite.root, target_config)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise ProtocolError(f"private-ai corpus snapshot failed before network access: {exc}") from exc
     selection_policy = "deterministic stratified scenario groups" if preset and max_cases > 0 else "dataset order"
     case_order_sha256 = sha256_bytes("\n".join(str(case["id"]) for case in selected_cases).encode("utf-8"))
     planned_target_calls = sum((case.get("review") or {}).get("status") != "rejected" for case in selected_cases) * repetitions
@@ -1931,12 +1984,24 @@ def run(
             "dataset_snapshot.jsonl": (dataset_raw, suite_manifest["dataset_sha256"]),
             "rubric_snapshot.md": (rubric_raw, suite_manifest["rubric_sha256"]),
         }
+        if private_ai_corpus is not None:
+            snapshots["corpus_snapshot.jsonl"] = (private_ai_corpus.raw, private_ai_corpus.sha256)
         for name, (snapshot_raw, expected_hash) in snapshots.items():
             path = run_dir / name
             path.write_bytes(snapshot_raw)
             os.chmod(path, 0o600)
             if sha256_file(path) != expected_hash:
                 raise ProtocolError("behavior input snapshot hash mismatch; no network request was sent")
+        if private_ai_corpus is not None:
+            corpus_assets = run_dir / "corpus_assets"
+            corpus_assets.mkdir(mode=0o700)
+            for document in private_ai_corpus.documents:
+                path = corpus_assets / document.sha256
+                if not path.exists():
+                    path.write_bytes(document.content)
+                    os.chmod(path, 0o600)
+                if path.read_bytes() != document.content:
+                    raise ProtocolError("private-ai corpus asset snapshot mismatch; no network request was sent")
         atomic_json(run_dir / "suite_evidence_manifest.json", suite_evidence_manifest)
         suite_evidence_dir = run_dir / "suite_evidence"
         for raw_bytes in suite_evidence_raw.values():
@@ -2058,6 +2123,42 @@ def run(
         if progress:
             print(json.dumps(value, sort_keys=True), file=sys.stderr, flush=True)
 
+    private_ai_context: private_ai.PrivateAIContext | None = None
+    if target_kind == "private-ai":
+        require_current_official_evidence()
+        require_current_official_timestamps()
+        workspace_env = str((suite.config.get("target") or {}).get("workspace_id_env", "PRIVATE_AI_WORKSPACE_ID"))
+        try:
+            private_ai_context, setup_evidence = private_ai.prepare(
+                suite.root,
+                suite.config.get("target") or {},
+                endpoint,
+                target_key,
+                os.getenv(workspace_env, ""),
+                timeout,
+                run_id,
+                corpus_snapshot=private_ai_corpus,
+            )
+        except private_ai.PrivateAIAdapterError as exc:
+            setup_failure = exc.setup_evidence or {
+                "adapter_version": private_ai.ADAPTER_VERSION,
+                "status": "error",
+                "requests": exc.evidence,
+                "cleanup": {"status": "not_attempted", "reason": "setup did not complete"},
+            }
+            atomic_json(
+                run_dir / "target_setup.json",
+                {
+                    **setup_failure,
+                    "error": str(exc),
+                    "raw": exc.raw,
+                },
+            )
+            abort_reasons.append(f"private-ai setup failed: {exc}")
+            abort_event.set()
+        else:
+            atomic_json(run_dir / "target_setup.json", setup_evidence)
+
     def wait_for_rate_limit() -> None:
         nonlocal next_request_at
         if not requests_per_second:
@@ -2165,9 +2266,20 @@ def run(
                 raise _RunAborted("run aborted by a prior observation")
             target_input = target_case_prompt(case, target_kind)
             try:
-                answer, target_raw, reported_model, target_request, target_transport = call_target(
-                    suite, endpoint, target_key, target_input, request_model, timeout
-                )
+                if target_kind == "private-ai":
+                    answer, target_raw, reported_model, target_request, target_transport = call_target(
+                        suite,
+                        endpoint,
+                        target_key,
+                        target_input,
+                        request_model,
+                        timeout,
+                        private_ai_context=private_ai_context,
+                    )
+                else:
+                    answer, target_raw, reported_model, target_request, target_transport = call_target(
+                        suite, endpoint, target_key, target_input, request_model, timeout
+                    )
             except _CallEvidenceError as exc:
                 target_raw = dict(exc.raw) if isinstance(exc.raw, dict) else {}
                 target_transport = exc.transport
@@ -2209,7 +2321,7 @@ def run(
             consume_tokens(target_raw, "target")
             target = suite.config.get("target") or {}
             tools = _get(target_raw, str(target.get("tools_field", "tool_calls"))) or []
-            deterministic = deterministic_evaluation(case, answer, tool_calls=tools)
+            deterministic = deterministic_evaluation(case, answer, tool_calls=tools, retrieved_ids=target_raw.get("retrieved_ids"))
             if not deterministic["hard_pass"]:
                 result = {**base, "status": "fail", "reason": "deterministic check failed", "deterministic": deterministic}
             else:
@@ -2624,12 +2736,15 @@ def run(
         "suite_snapshot.toml",
         "dataset_snapshot.jsonl",
         "rubric_snapshot.md",
+        "corpus_snapshot.jsonl",
+        "target_setup.json",
         "suite_evidence_manifest.json",
         "judge_qualification_snapshot.json",
         "judge_approval_snapshot.json",
         "dataset_card.md",
     ]
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "assets").glob("*")) if path.is_file())
+    artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "corpus_assets").glob("*")) if path.is_file())
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "suite_evidence").glob("*")) if path.is_file())
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "judge_evidence").glob("*")) if path.is_file())
     try:

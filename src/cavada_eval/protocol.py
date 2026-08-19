@@ -27,7 +27,7 @@ from .assets import content_text, validate_content_parts, validate_messages
 from .profiles import TASK_PROFILES
 
 PROTOCOL_VERSION = "1.0.0"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 REPORT_VERSION = "1.0.0"
 BEHAVIORS = {"answer", "refuse", "abstain", "redirect", "safe_complete"}
 RISK_DOMAINS = {"quality", "security", "privacy", "safety", "reliability", "performance", "fairness"}
@@ -513,8 +513,10 @@ def validate_suite(
             errors.append("statistics.seed must be an integer")
     target = config.get("target") or {}
     target_kind = target.get("kind", "json") if isinstance(target, dict) else None
-    if target_kind not in {"json", "openai", "recorded"}:
-        errors.append("target.kind must be json, openai, or recorded")
+    if target_kind not in {"json", "openai", "private-ai", "recorded"}:
+        errors.append("target.kind must be json, openai, private-ai, or recorded")
+    if official and any({"expected_retrieval_ids", "retrieval_recall_min"} & set(case) for case in suite.cases):
+        errors.append("official retrieval metrics require a qualified retrieval-evidence adapter")
     if target_kind == "recorded":
         relative = target.get("responses")
         if not isinstance(relative, str):
@@ -529,6 +531,12 @@ def validate_suite(
                     errors.append("recorded target responses must be a regular in-suite file")
                 elif official and target.get("responses_sha256") != sha256_file(responses_path):
                     errors.append("official recorded target requires matching target.responses_sha256")
+    if target_kind == "private-ai":
+        from .private_ai import config_errors
+
+        errors.extend(config_errors(suite.root, target, suite.cases))
+        if official:
+            errors.append("private-ai targets are candidate-only until the official protocol defines corpus and setup evidence")
     system_prompt = target.get("system_prompt") if isinstance(target, dict) else None
     if system_prompt is not None:
         if target_kind != "openai" or not isinstance(system_prompt, str) or not system_prompt:

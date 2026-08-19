@@ -828,7 +828,7 @@ def _deterministic_result_errors(
         try:
             answer, _ = _target_answer(Suite(Path(), suite_config, (), "", Path(), Path()), raw)
             tools = _get(raw, str(target.get("tools_field", "tool_calls"))) or []
-            deterministic = deterministic_evaluation(case, answer, tool_calls=tools)
+            deterministic = deterministic_evaluation(case, answer, tool_calls=tools, retrieved_ids=raw.get("retrieved_ids"))
         except ProtocolError as exc:
             errors.append(f"deterministic evaluation cannot be reconstructed: {exc}")
             continue

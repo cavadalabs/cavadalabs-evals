@@ -191,13 +191,15 @@ def test_registry_history_checks_use_trusted_base_revisions() -> None:
     assert "HEAD^:results/registry.json" not in ci + release
 
 
-def test_distribution_inventory_requires_versioned_open_loop_contracts() -> None:
+def test_distribution_inventory_requires_versioned_contracts() -> None:
     inventory = runpy.run_path(str(CHECK_DISTRIBUTION))
     wheel = inventory["REQUIRED_WHEEL"]
     sdist = inventory["REQUIRED_SDIST_SUFFIXES"]
     required = {
         "PERFORMANCE_PROTOCOL_V2.md",
         "performance/VERSION_PROVENANCE.md",
+        "schemas/case-1.1.0.schema.json",
+        "schemas/manifest-1.1.0.schema.json",
         "schemas/performance-plan-2.0.0.schema.json",
         "schemas/performance-manifest-2.0.0.schema.json",
         "schemas/performance-publication-2.0.0.schema.json",
