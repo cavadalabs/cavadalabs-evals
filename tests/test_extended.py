@@ -248,12 +248,14 @@ def test_complete_pilot_campaign_is_verified(tmp_path: Path) -> None:
         (run_dir / "manifest.json").write_text(json.dumps(manifest))
         write_bundle(run_dir)
         campaign_runs.append({"role": role, "family_alias": alias, "path": run_dir.name})
+    corpus_snapshot = json.dumps({"blueprint_sha256": "3" * 64}, sort_keys=True)
     qualification = {
         "qualification_version": "2.0.0",
         "passed": True,
         "rubric_sha256": suite["rubric_sha256"],
         "run_manifest_sha256": "1" * 64,
-        "corpus_manifest_sha256": "2" * 64,
+        "corpus_manifest_sha256": sha256_bytes(corpus_snapshot.encode()),
+        "corpus_manifest_snapshot": corpus_snapshot,
         "blueprint_sha256": "3" * 64,
         "corpus_dataset_sha256": "4" * 64,
         "bundle_verification": {"valid": True},
@@ -444,6 +446,31 @@ def test_judge_qualification_blueprint_rejects_underpowered_samples(tmp_path: Pa
     suite = Suite(root, config, (), "rubric", root / config["dataset"], root / config["rubric"])
     errors = validate_judge_qualification_blueprint(weak, suite)
     assert "module[1].pass_target does not achieve minimum_power" in errors
+
+    missing_control = tmp_path / "missing-control.toml"
+    missing_control.write_text(
+        source.read_text(encoding="utf-8").replace("minimum_repeat_stability = 0.95\n", ""),
+        encoding="utf-8",
+    )
+    assert "minimum_repeat_stability must be in (0, 1]" in validate_judge_qualification_blueprint(missing_control, suite)
+
+
+def test_judge_qualification_blueprint_is_suite_pinned_and_development_only() -> None:
+    root = Path("suites/cavada-core-assistant-text-v1").resolve()
+    suite = load_suite(root)
+    judge = suite.config["judge"]
+    assert judge["qualification_blueprint_sha256"] == sha256_file(root / judge["qualification_blueprint"])
+    assert "official judge qualification blueprint remains preregistration-draft" in validate_suite(suite, official=True)
+
+    tampered = Suite(
+        root,
+        {**suite.config, "judge": {**judge, "qualification_blueprint_sha256": "0" * 64}},
+        suite.cases,
+        suite.rubric,
+        suite.dataset_path,
+        suite.rubric_path,
+    )
+    assert "judge qualification blueprint hash mismatch" in validate_suite(tampered)
 
 
 def test_deterministic_structured_and_tool_metrics() -> None:

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from shutil import copyfile as _snapshot_copyfile
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from .artifacts import verify_bundle
 from .protocol import ProtocolError, Suite, _read_jsonl, atomic_json, require_mutable_output_root, sha256_bytes, sha256_file
@@ -71,6 +71,7 @@ def judge_evidence_errors(
     qualification_sha256: str,
     expected_judge: Any,
     rubric_sha256: str,
+    expected_blueprint_sha256: str | None,
     approval_root: Path | None = None,
     now: datetime | None = None,
 ) -> list[str]:
@@ -95,6 +96,24 @@ def judge_evidence_errors(
         or not all(isinstance(result, dict) and result.get("passed") is True for result in judges.values())
     ):
         errors.append("judge qualification report is incomplete or did not pass")
+    corpus_snapshot = qualification.get("corpus_manifest_snapshot") if isinstance(qualification, dict) else None
+    try:
+        corpus = json.loads(corpus_snapshot) if isinstance(corpus_snapshot, str) else None
+        corpus_sha256 = sha256_bytes(corpus_snapshot.encode("utf-8")) if isinstance(corpus_snapshot, str) else None
+    except (UnicodeEncodeError, json.JSONDecodeError):
+        corpus = None
+        corpus_sha256 = None
+    if (
+        not isinstance(corpus_snapshot, str)
+        or not isinstance(corpus, dict)
+        or corpus_sha256 != qualification.get("corpus_manifest_sha256")
+        or corpus.get("blueprint_sha256") != qualification.get("blueprint_sha256")
+    ):
+        errors.append("judge qualification corpus and blueprint evidence do not reconcile")
+    if expected_blueprint_sha256 is not None and (
+        not isinstance(qualification, dict) or qualification.get("blueprint_sha256") != expected_blueprint_sha256
+    ):
+        errors.append("judge qualification does not match the suite-pinned blueprint")
     qualification_judge = qualification.get("judge_configuration") if isinstance(qualification, dict) else None
     if judge_signature(qualification_judge) != judge_signature(expected_judge) or not judge_signature(expected_judge):
         errors.append("judge qualification does not match the exact run configuration")
@@ -174,8 +193,9 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
         raise ProtocolError("calibration corpus manifest must be a regular file")
     try:
         corpus_raw = corpus_manifest_path.read_bytes()
-        corpus = json.loads(corpus_raw)
-    except (OSError, json.JSONDecodeError) as exc:
+        corpus_text = corpus_raw.decode("utf-8")
+        corpus = json.loads(corpus_text)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProtocolError(f"cannot read calibration evidence {corpus_manifest_path}: {exc}") from exc
     if not isinstance(corpus, dict):
         raise ProtocolError(f"calibration evidence must be an object: {corpus_manifest_path}")
@@ -230,7 +250,16 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
         raise ProtocolError(f"cannot read judge qualification suite snapshots: {exc}") from exc
     cases = _read_jsonl(run / "dataset_snapshot.jsonl")
     judgments = _read_jsonl(run / "judgments.jsonl")
-    if not cases or not judgments or any(case.get("judge_gold_verdict") not in {"pass", "fail"} for case in cases):
+    if (
+        not cases
+        or not judgments
+        or any(
+            case.get("judge_gold_verdict") not in {"pass", "fail"}
+            or not isinstance(case.get("category"), str)
+            or not case["category"]
+            for case in cases
+        )
+    ):
         raise ProtocolError("judge qualification requires complete gold cases and judgment evidence")
     snapshot_suite = Suite(
         run,
@@ -240,25 +269,89 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
         run / "dataset_snapshot.jsonl",
         run / "rubric_snapshot.md",
     )
+    suite_judge = suite_config.get("judge")
+    if (
+        not isinstance(suite_judge, dict)
+        or not isinstance(suite_judge.get("qualification_blueprint"), str)
+        or not suite_judge["qualification_blueprint"]
+        or suite_judge.get("qualification_blueprint_sha256") != blueprint_sha256
+    ):
+        raise ProtocolError("judge qualification blueprint does not match the immutable suite snapshot pin")
+    from .program import validate_judge_qualification_blueprint
+
+    blueprint_errors = validate_judge_qualification_blueprint(blueprint_path, snapshot_suite, raw=blueprint_raw)
+    if blueprint_errors:
+        raise ProtocolError("invalid judge qualification blueprint:\n" + "\n".join(blueprint_errors))
+    judge = manifest.get("judge")
+    parameters = manifest.get("parameters")
+    judge_models = judge.get("models") if isinstance(judge, dict) else None
+    target_repetitions = parameters.get("repetitions") if isinstance(parameters, dict) else None
+    judge_repetitions = parameters.get("judge_repetitions") if isinstance(parameters, dict) else None
+    if (
+        not isinstance(judge, dict)
+        or not isinstance(judge_models, list)
+        or not judge_models
+        or not all(isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"] for model in judge_models)
+        or not isinstance(target_repetitions, int)
+        or isinstance(target_repetitions, bool)
+        or target_repetitions < 1
+        or not isinstance(judge_repetitions, int)
+        or isinstance(judge_repetitions, bool)
+        or judge_repetitions < 1
+        or judge.get("judge_repetitions") != judge_repetitions
+    ):
+        raise ProtocolError("judge qualification requires exact judge repetition evidence")
+    case_ids = [case.get("id") for case in cases]
+    ordered_judge_ids = [model["id"] for model in judge_models]
+    if (
+        any(not isinstance(case_id, str) or not case_id for case_id in case_ids)
+        or len(set(case_ids)) != len(case_ids)
+        or len(set(ordered_judge_ids)) != len(ordered_judge_ids)
+    ):
+        raise ProtocolError("judge qualification judgments do not match the exact scheduled judge grid")
+    judge_indexes = {judge_id: index for index, judge_id in enumerate(ordered_judge_ids)}
+    expected = {
+        (case_id, repetition, judge_id, model_repetition, judge_index * judge_repetitions + model_repetition)
+        for case_id in case_ids
+        for repetition in range(1, target_repetitions + 1)
+        for judge_index, judge_id in enumerate(ordered_judge_ids)
+        for model_repetition in range(1, judge_repetitions + 1)
+    }
+    observed = set()
+    for row in judgments:
+        case_id, repetition, judge_id = row.get("case_id"), row.get("repetition"), row.get("judge_id")
+        model_repetition, judge_repetition = row.get("model_repetition"), row.get("judge_repetition")
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or not isinstance(judge_id, str)
+            or not judge_id
+            or case_id not in case_ids
+            or judge_id not in judge_indexes
+            or any(not isinstance(value, int) or isinstance(value, bool) for value in (repetition, model_repetition, judge_repetition))
+        ):
+            raise ProtocolError("judge qualification judgments do not match the exact scheduled judge grid")
+        repetition, model_repetition, judge_repetition = cast(tuple[int, int, int], (repetition, model_repetition, judge_repetition))
+        if (
+            not 1 <= repetition <= target_repetitions
+            or not 1 <= model_repetition <= judge_repetitions
+            or judge_repetition != judge_indexes[judge_id] * judge_repetitions + model_repetition
+        ):
+            raise ProtocolError("judge qualification judgments do not match the exact scheduled judge grid")
+        coordinate = (case_id, repetition, judge_id, model_repetition, judge_repetition)
+        if coordinate in observed:
+            raise ProtocolError("judge qualification judgments do not match the exact scheduled judge grid")
+        observed.add(coordinate)
+    if observed != expected:
+        raise ProtocolError("judge qualification judgments do not match the exact scheduled judge grid")
+    demonstrated_judge_repetitions = len({coordinate[3] for coordinate in observed})
     from .runner import _judge_calibration_summary
 
     calculated_calibration = _judge_calibration_summary(judgments, snapshot_suite)
     if calibration != calculated_calibration:
         raise ProtocolError("judge calibration metrics do not reconcile with the immutable judgments and gold dataset")
-    judge_models = (manifest.get("judge") or {}).get("models")
-    if not isinstance(judge_models, list) or not judge_models:
-        raise ProtocolError("run does not identify the qualified judge configuration")
-    judge_ids = {str(model.get("id")) for model in judge_models if isinstance(model, dict) and model.get("id")}
-    if judge_ids != set(calibration):
+    if set(ordered_judge_ids) != set(calibration):
         raise ProtocolError("judge calibration metrics do not match the declared judge identities")
-    judge_repetitions = (manifest.get("parameters") or {}).get("judge_repetitions")
-    if (
-        not isinstance(judge_repetitions, int)
-        or isinstance(judge_repetitions, bool)
-        or judge_repetitions < 1
-        or (manifest.get("judge") or {}).get("judge_repetitions") != judge_repetitions
-    ):
-        raise ProtocolError("judge qualification requires exact judge repetition evidence")
     minimum_repetitions = int(blueprint.get("minimum_judge_repetitions", 1))
     maximum_invalid = int(blueprint.get("maximum_invalid_cases", 0))
     minimum_stability = float(blueprint.get("minimum_repeat_stability", 0.0))
@@ -298,12 +391,11 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
                 "pass_specificity_ci": specificity,
                 "pass_specificity_gate": rule["pass_specificity_gate"],
             }
-        repetitions = result.get("observations", 0) / result.get("cases", 1) if result.get("cases") else 0
         checks.extend(
             [
                 {"name": "all_modules", "passed": bool(module_results) and all(row["passed"] for row in module_results.values())},
                 {"name": "invalid_cases", "passed": int(result.get("invalid_cases", 0)) <= maximum_invalid},
-                {"name": "judge_repetitions", "passed": repetitions >= minimum_repetitions},
+                {"name": "judge_repetitions", "passed": demonstrated_judge_repetitions >= minimum_repetitions},
                 {
                     "name": "repeat_stability",
                     "passed": isinstance(result.get("stable_repeated_case_fraction"), (int, float))
@@ -328,6 +420,7 @@ def _qualify_judge_run_snapshot(run: Path, blueprint_path: Path, corpus_manifest
         "run_bundle_sha256": run_bundle_sha256,
         "bundle_verification": verification,
         "corpus_manifest_sha256": sha256_bytes(corpus_raw),
+        "corpus_manifest_snapshot": corpus_text,
         "blueprint_sha256": blueprint_sha256,
         "corpus_dataset_sha256": corpus["dataset_sha256"],
         "judge_configuration": manifest["judge"],

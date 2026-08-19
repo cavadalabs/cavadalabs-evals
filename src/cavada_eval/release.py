@@ -216,6 +216,7 @@ def suite_governance_snapshots(root: Path, config: dict[str, Any]) -> dict[str, 
 
     calibration = config.get("calibration")
     integrity = config.get("dataset_integrity")
+    evidence(config.get("judge"), "qualification_blueprint", "judge qualification blueprint")
     report = evidence(calibration, "evidence", "calibration report", record=True)
     approval = evidence(calibration, "independent_review_evidence", "calibration independent approval", record=True)
     semantic = evidence(integrity, "semantic_review_evidence", "semantic contamination evidence", record=True)
@@ -957,6 +958,7 @@ def _judge_evidence_snapshot_errors(
     manifest: dict[str, Any],
     artifacts: dict[str, Any],
     now: datetime,
+    expected_blueprint_sha256: str | None,
 ) -> list[str]:
     errors: list[str] = []
     projected_value = manifest.get("judge_qualification")
@@ -1015,6 +1017,7 @@ def _judge_evidence_snapshot_errors(
                     qualification_sha256=str(projected.get("qualification_sha256") or ""),
                     expected_judge=manifest.get("judge"),
                     rubric_sha256=str((manifest.get("suite") or {}).get("rubric_sha256") or ""),
+                    expected_blueprint_sha256=expected_blueprint_sha256,
                     approval_root=approval_root,
                     now=now,
                 )
@@ -1292,7 +1295,6 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
             errors.append(f"{name} hash differs from its authoritative manifest digest")
     suite_evidence, suite_evidence_errors = _suite_evidence_snapshot(run_dir, artifacts)
     errors.extend(suite_evidence_errors)
-    errors.extend(_judge_evidence_snapshot_errors(run_dir, manifest, artifacts, now))
     try:
         canonical_protocol = canonical_protocol_path().read_bytes()
         recorded_protocol = (run_dir / "protocol_snapshot.md").read_bytes()
@@ -1309,6 +1311,11 @@ def _official_behavior_run_errors(run_dir: Path, manifest: dict[str, Any], bundl
         snapshot_rubric = (run_dir / "rubric_snapshot.md").read_text(encoding="utf-8")
     except OSError as exc:
         raise ProtocolError("rubric_snapshot.md must be readable") from exc
+    snapshot_judge = suite_config.get("judge")
+    expected_blueprint_sha256 = (
+        snapshot_judge.get("qualification_blueprint_sha256") if isinstance(snapshot_judge, dict) else ""
+    )
+    errors.extend(_judge_evidence_snapshot_errors(run_dir, manifest, artifacts, now, expected_blueprint_sha256))
     if any(suite_config.get(field) != suite.get(field) for field in ("name", "version", "status", "data_classification")):
         errors.append("suite snapshot identity differs from the manifest suite")
     if (suite_config.get("pricing") or None) != manifest.get("pricing"):

@@ -9,10 +9,35 @@ import pytest
 
 from cavada_eval.artifacts import verify_bundle, write_bundle
 from cavada_eval.calibration import judge_evidence_errors, qualify_judge_run
-from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file
+from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_bytes, sha256_file
 from cavada_eval.runner import _judge_calibration_summary
 
 assemble = runpy.run_path("scripts/assemble_judge_calibration.py")["assemble"]
+
+QUALIFICATION_BLUEPRINT = '''version = "1.0.0"
+status = "preregistration-draft"
+target_unique_responses = 2
+minimum_model_families = 4
+minimum_judge_repetitions = 2
+maximum_invalid_cases = 0
+minimum_repeat_stability = 0.95
+required_probe_types = ["standard"]
+[allocations]
+language = [{id="en", target=2}]
+severity = [{id="low", target=2}]
+response_length = [{id="short", target=2}]
+response_style = [{id="direct", target=2}]
+probe_type = [{id="standard", target=2}]
+[[modules]]
+id = "instruction-following"
+target = 2
+pass_target = 1
+fail_target = 1
+failure_sensitivity_gate = 0.2
+pass_specificity_gate = 0.2
+design_rate = 0.9
+minimum_power = 0.8
+'''
 
 
 def test_exact_judge_qualification_requires_current_linked_independent_approval(tmp_path: Path) -> None:
@@ -31,12 +56,14 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         "models": [{"id": "primary", "model": "judge", "expected_model": "judge", "revision": "fixed"}],
         "consensus": "unanimous",
     }
+    corpus_snapshot = json.dumps({"blueprint_sha256": "e" * 64}, sort_keys=True)
     qualification = {
         "qualification_version": "2.0.0",
         "passed": True,
         "rubric_sha256": "b" * 64,
         "run_manifest_sha256": "c" * 64,
-        "corpus_manifest_sha256": "d" * 64,
+        "corpus_manifest_sha256": sha256_bytes(corpus_snapshot.encode()),
+        "corpus_manifest_snapshot": corpus_snapshot,
         "blueprint_sha256": "e" * 64,
         "corpus_dataset_sha256": "f" * 64,
         "bundle_verification": {"valid": True},
@@ -65,6 +92,7 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=judge,
         rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
         approval_root=tmp_path,
         now=now,
     )
@@ -75,6 +103,7 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=judge,
         rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
         approval_root=tmp_path,
         now=now,
     )
@@ -86,10 +115,36 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=changed,
         rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
         approval_root=tmp_path,
         now=now,
     )
     assert "judge qualification does not match the exact run configuration" in errors
+
+    errors = judge_evidence_errors(
+        qualification,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=judge,
+        rubric_sha256="b" * 64,
+        expected_blueprint_sha256="0" * 64,
+        approval_root=tmp_path,
+        now=now,
+    )
+    assert "judge qualification does not match the suite-pinned blueprint" in errors
+
+    tampered = {**qualification, "corpus_manifest_snapshot": '{"blueprint_sha256":"0"}'}
+    errors = judge_evidence_errors(
+        tampered,
+        approval,
+        qualification_sha256="1" * 64,
+        expected_judge=judge,
+        rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
+        approval_root=tmp_path,
+        now=now,
+    )
+    assert "judge qualification corpus and blueprint evidence do not reconcile" in errors
 
     changed = {**judge, "judge_repetitions": 4}
     errors = judge_evidence_errors(
@@ -98,6 +153,7 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=changed,
         rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
         approval_root=tmp_path,
         now=now,
     )
@@ -110,32 +166,73 @@ def test_exact_judge_qualification_requires_current_linked_independent_approval(
         qualification_sha256="1" * 64,
         expected_judge=changed,
         rubric_sha256="b" * 64,
+        expected_blueprint_sha256="e" * 64,
         approval_root=tmp_path,
         now=now,
     )
     assert "judge qualification does not match the exact run configuration" in errors
 
 
-def test_restricted_judge_calibration_corpus_is_balanced_and_runnable(tmp_path: Path) -> None:
+def test_restricted_judge_calibration_corpus_is_balanced_and_runnable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     blueprint = tmp_path / "blueprint.toml"
     blueprint.write_text(
-        '''version = "test"
-target_unique_responses = 2
-minimum_model_families = 2
+        '''version = "1.0.0"
+status = "preregistration-draft"
+target_unique_responses = 4
+minimum_model_families = 4
+minimum_judge_repetitions = 2
+maximum_invalid_cases = 0
+minimum_repeat_stability = 0.95
+required_probe_types = ["standard", "borderline"]
 [allocations]
-language = [{id="en", target=1}, {id="it", target=1}]
-severity = [{id="low", target=2}]
-response_length = [{id="short", target=1}, {id="long", target=1}]
-response_style = [{id="direct", target=1}, {id="terse", target=1}]
-probe_type = [{id="standard", target=1}, {id="borderline", target=1}]
+language = [{id="en", target=2}, {id="it", target=2}]
+severity = [{id="low", target=4}]
+response_length = [{id="short", target=2}, {id="long", target=2}]
+response_style = [{id="direct", target=2}, {id="terse", target=2}]
+probe_type = [{id="standard", target=2}, {id="borderline", target=2}]
 [[modules]]
 id = "instruction-following"
-target = 2
-pass_target = 1
-fail_target = 1
+target = 4
+pass_target = 2
+fail_target = 2
+failure_sensitivity_gate = 0.2
+pass_specificity_gate = 0.2
+design_rate = 0.9
+minimum_power = 0.8
 ''',
         encoding="utf-8",
     )
+    source_root = tmp_path / "source-suite"
+    source_root.mkdir()
+    source_dataset = source_root / "dataset.jsonl"
+    source_dataset.write_text("{}\n", encoding="utf-8")
+    source_rubric = source_root / "rubric.md"
+    source_rubric.write_text("Judge exact instruction following.\n", encoding="utf-8")
+    source_suite = Suite(
+        source_root,
+        {
+            "name": "source-suite",
+            "version": "1.0.0",
+            "status": "draft",
+            "gates": [{"category": "instruction-following", "metric": "pass_rate_ci.lower", "min": 0.2}],
+            "judge": {
+                "qualification_blueprint": "blueprint.toml",
+                "qualification_blueprint_sha256": sha256_file(blueprint),
+            },
+        },
+        (),
+        source_rubric.read_text(encoding="utf-8"),
+        source_dataset,
+        source_rubric,
+    )
+    real_load_suite = assemble.__globals__["load_suite"]
+
+    def load_fixture(path: Path, *args: object, **kwargs: object) -> Suite:
+        return source_suite if Path(path).resolve() == source_root.resolve() else real_load_suite(path, *args, **kwargs)
+
+    monkeypatch.setitem(assemble.__globals__, "load_suite", load_fixture)
     common = {
         "source_case_id": "source",
         "mandatory_criteria": ["Follow the explicit instruction."],
@@ -177,11 +274,23 @@ fail_target = 1
             "model_family_alias": "family-b",
         },
     ]
+    items.extend(
+        (
+            {**items[0], "item_id": "cal-3", "input": "Reply only RED.", "response": "RED", "model_family_alias": "family-c"},
+            {
+                **items[1],
+                "item_id": "cal-4",
+                "input": "Rispondi soltanto GIALLO.",
+                "response": "Il colore è GIALLO.",
+                "model_family_alias": "family-d",
+            },
+        )
+    )
     source = tmp_path / "items.jsonl"
     source.write_text("".join(json.dumps(item) + "\n" for item in items), encoding="utf-8")
     output = tmp_path / "assembled"
     manifest = assemble(
-        Path("suites/cavada-core-assistant-text-v1"),
+        source_root,
         source,
         blueprint,
         output,
@@ -189,15 +298,16 @@ fail_target = 1
         frozen_at="2026-08-05T18:00:00+02:00",
     )
     suite = load_suite(output)
-    assert manifest["items"] == len(suite.cases) == 2
+    assert manifest["items"] == len(suite.cases) == 4
     assert manifest["identity_blinded_to_judge"] is True
     assert suite.config["target"]["kind"] == "recorded"
+    assert suite.config["judge"]["qualification_blueprint_sha256"] == sha256_file(output / "qualification-blueprint.toml")
 
     items[1]["gold_evidence_sha256"] = "invalid"
     source.write_text("".join(json.dumps(item) + "\n" for item in items), encoding="utf-8")
     with pytest.raises(ProtocolError, match="evidence hashes"):
         assemble(
-            Path("suites/cavada-core-assistant-text-v1"),
+            source_root,
             source,
             blueprint,
             tmp_path / "rejected",
@@ -206,10 +316,49 @@ fail_target = 1
         )
 
 
-def _calibration_run(root: Path, blueprint: Path) -> tuple[Path, Path]:
+def test_assembler_rejects_noncanonical_blueprint_before_output(tmp_path: Path) -> None:
+    blueprint = tmp_path / "weak.toml"
+    blueprint.write_text('version = "test"\ntarget_unique_responses = 1\n', encoding="utf-8")
+    items = tmp_path / "items.jsonl"
+    items.write_text("", encoding="utf-8")
+    output = tmp_path / "output"
+
+    with pytest.raises(ProtocolError, match="invalid qualification blueprint"):
+        assemble(
+            Path("suites/cavada-core-assistant-text-v1"),
+            items,
+            blueprint,
+            output,
+            corpus_version="1.0.0",
+            frozen_at="2026-08-05T18:00:00+02:00",
+        )
+
+    assert not output.exists()
+
+
+def _calibration_run(
+    root: Path,
+    blueprint: Path,
+    *,
+    target_repetitions: int = 1,
+    judge_repetitions: int = 2,
+) -> tuple[Path, Path]:
     root.mkdir()
     suite_config = root / "suite_snapshot.toml"
-    suite_config.write_text('name = "calibration-test"\nversion = "1.0.0"\nstatus = "candidate"\n', encoding="utf-8")
+    suite_config.write_text(
+        f'''name = "calibration-test"
+version = "1.0.0"
+status = "candidate"
+[[gates]]
+category = "instruction-following"
+metric = "pass_rate_ci.lower"
+min = 0.2
+[judge]
+qualification_blueprint = "qualification-blueprint.toml"
+qualification_blueprint_sha256 = "{sha256_file(blueprint)}"
+''',
+        encoding="utf-8",
+    )
     cases = (
         {
             "id": "pass-case",
@@ -231,14 +380,15 @@ def _calibration_run(root: Path, blueprint: Path) -> tuple[Path, Path]:
     judgments = [
         {
             "case_id": case["id"],
-            "repetition": 1,
+            "repetition": target_repetition,
             "judge_id": "primary",
-            "judge_repetition": repetition,
-            "model_repetition": repetition,
+            "judge_repetition": judge_repetition,
+            "model_repetition": judge_repetition,
             "judgment": {"verdict": case["judge_gold_verdict"]},
         }
         for case in cases
-        for repetition in (1, 2)
+        for target_repetition in range(1, target_repetitions + 1)
+        for judge_repetition in range(1, judge_repetitions + 1)
     ]
     judgments_path = root / "judgments.jsonl"
     judgments_path.write_text("".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8")
@@ -259,9 +409,9 @@ def _calibration_run(root: Path, blueprint: Path) -> tuple[Path, Path]:
             "models": [{"id": "primary", "model": "judge", "revision": "fixed"}],
             "prompt_sha256": "p" * 64,
             "max_tokens": 600,
-            "judge_repetitions": 2,
+            "judge_repetitions": judge_repetitions,
         },
-        "parameters": {"judge_repetitions": 2},
+        "parameters": {"repetitions": target_repetitions, "judge_repetitions": judge_repetitions},
         "metrics": metrics,
         "artifacts": {
             "suite_snapshot.toml": sha256_file(suite_config),
@@ -301,18 +451,7 @@ def _reseal_calibration_run(run: Path) -> None:
 
 def test_judge_qualification_applies_lower_bound_and_stability_gates(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint.toml"
-    blueprint.write_text(
-        '''minimum_judge_repetitions = 2
-maximum_invalid_cases = 0
-minimum_repeat_stability = 0.95
-[[modules]]
-id = "instruction-following"
-target = 2
-failure_sensitivity_gate = 0.2
-pass_specificity_gate = 0.2
-''',
-        encoding="utf-8",
-    )
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
     run, corpus = _calibration_run(tmp_path / "run", blueprint)
     report = qualify_judge_run(run, blueprint, corpus, tmp_path / "passed.json")
     assert report["passed"] is True
@@ -334,12 +473,137 @@ pass_specificity_gate = 0.2
     assert failed["passed"] is False
 
 
+@pytest.mark.parametrize(
+    ("target_repetitions", "mutation"),
+    (
+        (2, "single-judge-repetition"),
+        (3, "single-judge-repetition"),
+        (2, "duplicate"),
+        (2, "missing"),
+        (2, "model-repetition-out-of-range"),
+        (2, "judge-repetition-incoherent"),
+        (2, "unknown-case"),
+        (2, "malformed-judge-id"),
+    ),
+)
+def test_judge_qualification_rejects_malformed_judge_grid(
+    tmp_path: Path,
+    target_repetitions: int,
+    mutation: str,
+) -> None:
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
+    run, corpus = _calibration_run(
+        tmp_path / "run",
+        blueprint,
+        target_repetitions=target_repetitions,
+        judge_repetitions=2,
+    )
+    judgments_path = run / "judgments.jsonl"
+    judgments = [json.loads(line) for line in judgments_path.read_text(encoding="utf-8").splitlines()]
+    if mutation == "single-judge-repetition":
+        judgments = [row for row in judgments if row["model_repetition"] == 1]
+    elif mutation == "duplicate":
+        judgments.append(judgments[0])
+    elif mutation == "missing":
+        judgments.pop()
+    elif mutation == "model-repetition-out-of-range":
+        judgments[0]["model_repetition"] = judgments[0]["judge_repetition"] = 3
+    elif mutation == "judge-repetition-incoherent":
+        judgments[0]["judge_repetition"] = 2
+    elif mutation == "unknown-case":
+        judgments[0]["case_id"] = "unknown"
+    else:
+        judgments[0]["judge_id"] = []
+    judgments_path.write_text("".join(json.dumps(row) + "\n" for row in judgments), encoding="utf-8")
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    cases = tuple(json.loads(line) for line in (run / "dataset_snapshot.jsonl").read_text(encoding="utf-8").splitlines())
+    suite = Suite(run, {}, cases, "", run / "dataset_snapshot.jsonl", run / "rubric_snapshot.md")
+    manifest["metrics"]["judge_calibration"] = _judge_calibration_summary(judgments, suite)
+    manifest["artifacts"]["judgments.jsonl"] = sha256_file(judgments_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _reseal_calibration_run(run)
+
+    output = tmp_path / "qualification.json"
+    with pytest.raises(ProtocolError, match="exact scheduled judge grid"):
+        qualify_judge_run(run, blueprint, corpus, output)
+
+    assert not output.exists()
+
+
+def test_judge_qualification_accepts_exact_judge_grid(tmp_path: Path) -> None:
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
+    run, corpus = _calibration_run(tmp_path / "run", blueprint, target_repetitions=2, judge_repetitions=2)
+    report = qualify_judge_run(run, blueprint, corpus, tmp_path / "qualification.json")
+
+    assert report["passed"] is True
+    assert {row["name"]: row["passed"] for row in report["judges"]["primary"]["checks"]}["judge_repetitions"] is True
+
+
+def test_judge_qualification_rejects_noncanonical_or_suite_mismatched_blueprint(tmp_path: Path) -> None:
+    weak = tmp_path / "weak.toml"
+    weak.write_text('version = "test"\ntarget_unique_responses = 2\n', encoding="utf-8")
+    run, corpus = _calibration_run(tmp_path / "weak-run", weak)
+    output = tmp_path / "weak.json"
+    with pytest.raises(ProtocolError, match="invalid judge qualification blueprint"):
+        qualify_judge_run(run, weak, corpus, output)
+    assert not output.exists()
+
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
+    run, corpus = _calibration_run(tmp_path / "changed-run", blueprint)
+    blueprint.write_text(QUALIFICATION_BLUEPRINT + "\n", encoding="utf-8")
+    output = tmp_path / "changed.json"
+    with pytest.raises(ProtocolError, match="corpus does not match the qualification blueprint"):
+        qualify_judge_run(run, blueprint, corpus, output)
+    assert not output.exists()
+
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
+    run, corpus = _calibration_run(tmp_path / "mismatched-run", blueprint)
+    suite_path = run / "suite_snapshot.toml"
+    suite_path.write_text(suite_path.read_text(encoding="utf-8").replace(sha256_file(blueprint), "0" * 64), encoding="utf-8")
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["suite"]["suite_config_sha256"] = sha256_file(suite_path)
+    manifest["artifacts"]["suite_snapshot.toml"] = sha256_file(suite_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    write_bundle(run)
+    output = tmp_path / "mismatched.json"
+    with pytest.raises(ProtocolError, match="immutable suite snapshot pin"):
+        qualify_judge_run(run, blueprint, corpus, output)
+    assert not output.exists()
+
+
+def test_judge_qualification_validates_the_pinned_blueprint_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cavada_eval.program as program_module
+
+    weak = QUALIFICATION_BLUEPRINT.replace("minimum_repeat_stability = 0.95", "minimum_repeat_stability = 0.0")
+    blueprint = tmp_path / "blueprint.toml"
+    blueprint.write_text(weak, encoding="utf-8")
+    run, corpus = _calibration_run(tmp_path / "run", blueprint)
+    validate = program_module.validate_judge_qualification_blueprint
+
+    def swap(path: Path, suite: Suite, *, raw: bytes | None = None) -> list[str]:
+        path.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
+        try:
+            return validate(path, suite, raw=raw)
+        finally:
+            path.write_text(weak, encoding="utf-8")
+
+    monkeypatch.setattr(program_module, "validate_judge_qualification_blueprint", swap)
+    output = tmp_path / "qualification.json"
+    with pytest.raises(ProtocolError, match="minimum_repeat_stability"):
+        qualify_judge_run(run, blueprint, corpus, output)
+    assert not output.exists()
+
+
 def test_judge_qualification_rejects_resealed_forged_aggregate(tmp_path: Path) -> None:
     blueprint = tmp_path / "blueprint.toml"
-    blueprint.write_text(
-        'minimum_judge_repetitions = 2\nmaximum_invalid_cases = 0\nminimum_repeat_stability = 0\n',
-        encoding="utf-8",
-    )
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
     run, corpus = _calibration_run(tmp_path / "run", blueprint)
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     manifest["metrics"]["judge_calibration"]["primary"]["accuracy"] = 0.0
@@ -354,10 +618,7 @@ def test_judge_qualification_rejects_resealed_forged_aggregate(tmp_path: Path) -
 
 def test_judge_qualification_reads_only_verified_run_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     blueprint = tmp_path / "blueprint.toml"
-    blueprint.write_text(
-        'minimum_judge_repetitions = 2\nmaximum_invalid_cases = 0\nminimum_repeat_stability = 0\n',
-        encoding="utf-8",
-    )
+    blueprint.write_text(QUALIFICATION_BLUEPRINT, encoding="utf-8")
     run, corpus = _calibration_run(tmp_path / "run", blueprint)
     expected_bundle = sha256_file(run / "bundle.json")
     expected_manifest = sha256_file(run / "manifest.json")

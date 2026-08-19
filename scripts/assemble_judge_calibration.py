@@ -8,7 +8,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from cavada_eval.protocol import ProtocolError, _read_jsonl, append_jsonl, atomic_json, atomic_text, load_suite, sha256_file
+from cavada_eval.program import validate_judge_qualification_blueprint
+from cavada_eval.protocol import ProtocolError, _read_jsonl, append_jsonl, atomic_json, atomic_text, load_suite, sha256_bytes, sha256_file
 
 REQUIRED = {
     "item_id",
@@ -131,11 +132,23 @@ def assemble(
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})", frozen_at):
         raise ProtocolError("frozen-at must be an ISO-8601 timestamp with timezone")
     source_suite = load_suite(source_suite_path)
+    if blueprint_path.is_symlink() or not blueprint_path.is_file():
+        raise ProtocolError("qualification blueprint must be a regular file")
     try:
-        with blueprint_path.open("rb") as handle:
-            blueprint = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        blueprint_raw = blueprint_path.read_bytes()
+        blueprint = tomllib.loads(blueprint_raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot load qualification blueprint: {exc}") from exc
+    blueprint_errors = validate_judge_qualification_blueprint(blueprint_path, source_suite, raw=blueprint_raw)
+    if blueprint_errors:
+        raise ProtocolError("invalid qualification blueprint:\n" + "\n".join(blueprint_errors))
+    blueprint_sha = sha256_bytes(blueprint_raw)
+    judge = source_suite.config.get("judge")
+    if (
+        not isinstance(judge, dict)
+        or judge.get("qualification_blueprint_sha256") != blueprint_sha
+    ):
+        raise ProtocolError("qualification blueprint does not match the source suite pin")
     items = _read_jsonl(items_path)
     _validate(items, blueprint)
 
@@ -184,6 +197,14 @@ def assemble(
     responses_sha = sha256_file(responses_path)
     rubric_sha = sha256_file(output / "rubric.md")
     quote = json.dumps
+    gates_toml = "\n".join(
+        f'''[[gates]]
+category = {quote(gate["category"])}
+metric = {quote(gate.get("metric", "pass_rate_ci.lower"))}
+min = {quote(gate["min"])}
+'''
+        for gate in source_suite.config.get("gates", [])
+    )
     suite_toml = f'''protocol_version = "1.0.0"
 name = "cavada-core-judge-qualification-v1"
 version = {quote(corpus_version)}
@@ -197,6 +218,11 @@ dataset_sha256 = {quote(dataset_sha)}
 rubric_sha256 = {quote(rubric_sha)}
 temperature = 0
 max_tokens = 1024
+
+{gates_toml}
+[judge]
+qualification_blueprint = "qualification-blueprint.toml"
+qualification_blueprint_sha256 = {quote(blueprint_sha)}
 
 [governance]
 owner = "CavadaLabs evaluation maintainers"
@@ -233,11 +259,12 @@ bootstrap_samples = 10000
 seed = 20260805
 '''
     atomic_text(output / "suite.toml", suite_toml)
+    atomic_text(output / "qualification-blueprint.toml", blueprint_raw.decode("utf-8"))
     manifest = {
         "corpus_version": corpus_version,
         "frozen_at": frozen_at,
         "blueprint_version": blueprint.get("version"),
-        "blueprint_sha256": sha256_file(blueprint_path),
+        "blueprint_sha256": blueprint_sha,
         "source_suite": f"{source_suite.name}@{source_suite.version}",
         "source_dataset_sha256": sha256_file(source_suite.dataset_path),
         "source_rubric_sha256": sha256_file(source_suite.rubric_path),

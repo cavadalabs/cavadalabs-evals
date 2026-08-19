@@ -336,11 +336,10 @@ def validate_reviewer_fixtures(path: Path, suite: Suite) -> list[str]:
     return errors
 
 
-def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str]:
+def validate_judge_qualification_blueprint(path: Path, suite: Suite, *, raw: bytes | None = None) -> list[str]:
     try:
-        with path.open("rb") as handle:
-            blueprint = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        blueprint = tomllib.loads((raw if raw is not None else path.read_bytes()).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         return [f"cannot load judge qualification blueprint: {exc}"]
     errors: list[str] = []
     target = blueprint.get("target_unique_responses")
@@ -355,6 +354,13 @@ def validate_judge_qualification_blueprint(path: Path, suite: Suite) -> list[str
         errors.append("target_unique_responses must be a positive integer")
     if not isinstance(blueprint.get("minimum_model_families"), int) or blueprint["minimum_model_families"] < 4:
         errors.append("minimum_model_families must be at least four")
+    if not _positive_int(blueprint.get("minimum_judge_repetitions")):
+        errors.append("minimum_judge_repetitions must be a positive integer")
+    maximum_invalid = blueprint.get("maximum_invalid_cases")
+    if not isinstance(maximum_invalid, int) or isinstance(maximum_invalid, bool) or maximum_invalid < 0:
+        errors.append("maximum_invalid_cases must be a non-negative integer")
+    if not _probability(blueprint.get("minimum_repeat_stability"), include_one=True):
+        errors.append("minimum_repeat_stability must be in (0, 1]")
     required_dimensions = {"language", "severity", "response_length", "response_style", "probe_type"}
     errors.extend(_allocation_errors(allocations, required_dimensions, target, "target_unique_responses"))
     probe_values = allocations.get("probe_type", []) if isinstance(allocations, dict) else []

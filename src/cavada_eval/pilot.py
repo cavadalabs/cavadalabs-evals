@@ -448,6 +448,7 @@ def audit_pilot_campaign(campaign_path: Path, output: Path) -> dict[str, Any]:
                 qualification_sha256=str(qualification_record.get("sha256", "")),
                 expected_judge=expected_judge_configuration,
                 rubric_sha256=str(suite["rubric_sha256"]),
+                expected_blueprint_sha256=None,
                 approval_root=campaign_root,
             )
         )

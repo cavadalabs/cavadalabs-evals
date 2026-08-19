@@ -4,7 +4,6 @@ import base64
 import json
 import shutil
 import threading
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -341,47 +340,63 @@ def test_semantic_contamination_secondary_evidence_is_hash_linked(tmp_path: Path
     assert "official semantic contamination evidence did not pass" in _semantic_integrity_errors(suite, integrity)
 
 
-def test_suite_calibration_and_independent_approval_are_hash_linked(tmp_path: Path) -> None:
-    suite = load_suite(make_suite(tmp_path, status="candidate"))
-    evidence_paths: dict[str, Path] = {}
-    for name in ("analysis-plan", "human-labels", "holdout", "pilot-audit", "statistical-review", "semantic-evidence", "approver-qualification"):
-        evidence_paths[name] = suite.root / f"{name}.json"
-        evidence_paths[name].write_text(json.dumps({"evidence": name}))
-    semantic_hash = sha256_file(evidence_paths["semantic-evidence"])
-    suite.config["dataset_integrity"] = {
-        "semantic_review_evidence": evidence_paths["semantic-evidence"].name,
-        "semantic_review_evidence_sha256": semantic_hash,
+CALIBRATION_UNAVAILABLE = "official suite calibration semantic reconstruction is unavailable"
+
+
+def _configured_calibration_suite(tmp_path: Path, support: dict[str, dict[str, object]]) -> tuple[Path, dict[str, object]]:
+    root = make_suite(tmp_path, status="approved")
+    evidence = {
+        "analysis-plan": {"evidence": "analysis-plan"},
+        "human-labels": support["human-labels"],
+        "holdout": {"evidence": "holdout"},
+        "pilot-audit": support["pilot-audit"],
+        "statistical-review": support["statistical-review"],
+        "semantic-evidence": {"evidence": "semantic-evidence"},
+        "approver-qualification": {"evidence": "approver-qualification"},
     }
+    paths = {name: root / f"{name}.json" for name in evidence}
+    for name, value in evidence.items():
+        paths[name].write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
     report = {
         "calibration_version": "2.0.0",
         "status": "passed",
         "protocol_version": "1.0.0",
         "suite": {
-            "name": suite.name,
-            "version": suite.version,
-            "dataset_sha256": sha256_file(suite.dataset_path),
-            "rubric_sha256": sha256_file(suite.rubric_path),
+            "name": "test",
+            "version": "1.0.0",
+            "dataset_sha256": sha256_file(root / "dataset.jsonl"),
+            "rubric_sha256": sha256_file(root / "rubric.md"),
         },
         "source_commit": "1" * 40,
-        "analysis_plan": evidence_paths["analysis-plan"].name,
-        "analysis_plan_sha256": sha256_file(evidence_paths["analysis-plan"]),
-        "human_label_evidence": evidence_paths["human-labels"].name,
-        "human_label_evidence_sha256": sha256_file(evidence_paths["human-labels"]),
-        "holdout_manifest": evidence_paths["holdout"].name,
-        "holdout_manifest_sha256": sha256_file(evidence_paths["holdout"]),
-        "pilot_audit": evidence_paths["pilot-audit"].name,
-        "pilot_audit_sha256": sha256_file(evidence_paths["pilot-audit"]),
-        "statistical_review": evidence_paths["statistical-review"].name,
-        "statistical_review_sha256": sha256_file(evidence_paths["statistical-review"]),
-        "semantic_contamination_evidence": evidence_paths["semantic-evidence"].name,
-        "semantic_contamination_evidence_sha256": semantic_hash,
+        **{
+            field: paths[name].name
+            for field, name in (
+                ("analysis_plan", "analysis-plan"),
+                ("human_label_evidence", "human-labels"),
+                ("holdout_manifest", "holdout"),
+                ("pilot_audit", "pilot-audit"),
+                ("statistical_review", "statistical-review"),
+                ("semantic_contamination_evidence", "semantic-evidence"),
+            )
+        },
+        **{
+            f"{field}_sha256": sha256_file(paths[name])
+            for field, name in (
+                ("analysis_plan", "analysis-plan"),
+                ("human_label_evidence", "human-labels"),
+                ("holdout_manifest", "holdout"),
+                ("pilot_audit", "pilot-audit"),
+                ("statistical_review", "statistical-review"),
+                ("semantic_contamination_evidence", "semantic-evidence"),
+            )
+        },
         "gates_passed": True,
         "results": {"all_preregistered_gates": "passed"},
         "completed_at": "2026-08-04T00:00:00Z",
-        "limitations": ["Valid only for the declared measurement target."],
+        "limitations": ["Test fixture only."],
     }
-    report_path = suite.root / "calibration.json"
-    report_path.write_text(json.dumps(report))
+    report_path = root / "calibration.json"
+    report_path.write_text(json.dumps(report, sort_keys=True), encoding="utf-8")
     approval = {
         "approval_version": "2.0.0",
         "approval_id": "approval-1",
@@ -390,16 +405,16 @@ def test_suite_calibration_and_independent_approval_are_hash_linked(tmp_path: Pa
         "independent": True,
         "calibration_sha256": sha256_file(report_path),
         "approver_id": "reviewer",
-        "approver_qualification_evidence": evidence_paths["approver-qualification"].name,
-        "approver_qualification_evidence_sha256": sha256_file(evidence_paths["approver-qualification"]),
+        "approver_qualification_evidence": paths["approver-qualification"].name,
+        "approver_qualification_evidence_sha256": sha256_file(paths["approver-qualification"]),
         "conflicts": "none declared",
-        "decision_rationale": "The calibration evidence supports the declared scope.",
+        "decision_rationale": "Fixture approval.",
         "approved_at": "2026-08-04T00:00:00Z",
-        "expires_at": "2027-08-04T00:00:00Z",
+        "expires_at": "2099-08-04T00:00:00Z",
     }
-    approval_path = suite.root / "calibration-approval.json"
-    approval_path.write_text(json.dumps(approval))
-    calibration = {
+    approval_path = root / "calibration-approval.json"
+    approval_path.write_text(json.dumps(approval, sort_keys=True), encoding="utf-8")
+    calibration: dict[str, object] = {
         "status": "passed",
         "evidence": report_path.name,
         "evidence_sha256": sha256_file(report_path),
@@ -407,18 +422,106 @@ def test_suite_calibration_and_independent_approval_are_hash_linked(tmp_path: Pa
         "independent_review_evidence": approval_path.name,
         "independent_review_evidence_sha256": sha256_file(approval_path),
     }
-    now = datetime(2026, 8, 5, tzinfo=timezone.utc)
-    assert not _calibration_evidence_errors(suite, calibration, now=now)
-    original_analysis_plan = evidence_paths["analysis-plan"].read_text()
-    evidence_paths["analysis-plan"].write_text('{"tampered":true}')
-    assert "official calibration analysis plan hash mismatch" in _calibration_evidence_errors(suite, calibration, now=now)
-    evidence_paths["analysis-plan"].write_text(original_analysis_plan)
-    approval["calibration_sha256"] = "0" * 64
-    approval_path.write_text(json.dumps(approval))
-    calibration["independent_review_evidence_sha256"] = sha256_file(approval_path)
-    assert "official calibration independent approval is incomplete, unlinked, or did not pass" in _calibration_evidence_errors(
-        suite, calibration, now=now
+    semantic_hash = sha256_file(paths["semantic-evidence"])
+    (root / "suite.toml").write_text(
+        (root / "suite.toml").read_text(encoding="utf-8")
+        + f'''\n[dataset_integrity]
+semantic_review_status = "passed"
+semantic_review_evidence = "{paths["semantic-evidence"].name}"
+semantic_review_evidence_sha256 = "{semantic_hash}"
+semantic_detector = "fixture-detector"
+semantic_detector_revision = "fixture-revision"
+cross_split_reviewed = true
+cross_suite_reviewed = true
+
+[calibration]
+status = "passed"
+evidence = "{report_path.name}"
+evidence_sha256 = "{calibration["evidence_sha256"]}"
+independent_review = "passed"
+independent_review_evidence = "{approval_path.name}"
+independent_review_evidence_sha256 = "{calibration["independent_review_evidence_sha256"]}"
+''',
+        encoding="utf-8",
     )
+    return root, report
+
+
+@pytest.mark.parametrize(
+    "support",
+    [
+        {
+            "human-labels": {"status": "failed", "agreement": 0},
+            "pilot-audit": {"pilot_audit_version": "1.0.0", "passed": True},
+            "statistical-review": {"status": "passed"},
+        },
+        {
+            "human-labels": {"status": "passed", "agreement": 1},
+            "pilot-audit": {"pilot_audit_version": "1.0.0", "passed": False},
+            "statistical-review": {"status": "passed"},
+        },
+        {
+            "human-labels": {"status": "passed", "agreement": 1},
+            "pilot-audit": {"pilot_audit_version": "1.0.0", "passed": True},
+            "statistical-review": {"status": "failed"},
+        },
+        {
+            "human-labels": {"unknown": "shape"},
+            "pilot-audit": {"unknown": "shape"},
+            "statistical-review": {"unknown": "shape"},
+        },
+    ],
+    ids=("human-labels-failed", "pilot-failed", "statistical-review-failed", "unknown-shape"),
+)
+def test_official_suite_calibration_fails_closed_without_reconstruction(
+    tmp_path: Path, support: dict[str, dict[str, object]]
+) -> None:
+    root, report = _configured_calibration_suite(tmp_path, support)
+    suite = load_suite(root)
+
+    assert report["status"] == "passed" and report["gates_passed"] is True
+    assert _calibration_evidence_errors(suite.config["calibration"]) == [CALIBRATION_UNAVAILABLE]
+    with pytest.raises(ProtocolError, match=CALIBRATION_UNAVAILABLE):
+        load_suite(root, official=True)
+
+
+def test_resealed_failed_calibration_support_remains_non_official(tmp_path: Path) -> None:
+    root, _ = _configured_calibration_suite(
+        tmp_path,
+        {
+            "human-labels": {"unknown": "shape"},
+            "pilot-audit": {"unknown": "shape"},
+            "statistical-review": {"unknown": "shape"},
+        },
+    )
+    report_path = root / "calibration.json"
+    approval_path = root / "calibration-approval.json"
+    old_report_hash = sha256_file(report_path)
+    old_approval_hash = sha256_file(approval_path)
+    (root / "human-labels.json").write_text(json.dumps({"status": "failed", "agreement": 0}), encoding="utf-8")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["human_label_evidence_sha256"] = sha256_file(root / "human-labels.json")
+    report_path.write_text(json.dumps(report, sort_keys=True), encoding="utf-8")
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["calibration_sha256"] = sha256_file(report_path)
+    approval_path.write_text(json.dumps(approval, sort_keys=True), encoding="utf-8")
+    config = root / "suite.toml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        .replace(old_report_hash, sha256_file(report_path))
+        .replace(old_approval_hash, sha256_file(approval_path)),
+        encoding="utf-8",
+    )
+
+    suite = load_suite(root)
+    assert _calibration_evidence_errors(suite.config["calibration"]) == [CALIBRATION_UNAVAILABLE]
+    with pytest.raises(ProtocolError, match=CALIBRATION_UNAVAILABLE):
+        load_suite(root, official=True)
+
+
+def test_missing_suite_calibration_keeps_its_specific_error() -> None:
+    assert _calibration_evidence_errors(None) == ["official suite calibration configuration is missing"]
+    assert _calibration_evidence_errors({}) == ["official suite calibration configuration is missing"]
 
 
 def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: Path) -> None:

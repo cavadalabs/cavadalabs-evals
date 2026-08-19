@@ -1521,6 +1521,9 @@ def run(
         raise ProtocolError("Official runs require target and judge revisions")
 
     judge_config = suite.config.get("judge") or {}
+    expected_judge_blueprint_sha256 = (
+        judge_config.get("qualification_blueprint_sha256") if isinstance(judge_config, dict) else None
+    )
     additional_judges = judge_config.get("additional_models", []) if isinstance(judge_config, dict) else []
     if not isinstance(additional_judges, list) or not all(isinstance(item, dict) for item in additional_judges):
         raise ProtocolError("judge.additional_models must be an array of tables")
@@ -1606,6 +1609,7 @@ def run(
             qualification_sha256=qualification_sha256,
             expected_judge=judge_manifest,
             rubric_sha256=sha256_file(suite.rubric_path),
+            expected_blueprint_sha256=expected_judge_blueprint_sha256,
             approval_root=Path(judge_approval).parent,
         )
         if evidence_errors:
@@ -1784,6 +1788,7 @@ def run(
                     qualification_sha256=str(qualification_sha256),
                     expected_judge=judge_manifest,
                     rubric_sha256=sha256_file(suite.rubric_path),
+                    expected_blueprint_sha256=expected_judge_blueprint_sha256,
                     approval_root=approval_path.parent,
                 )
             ):

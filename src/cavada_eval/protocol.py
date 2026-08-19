@@ -346,121 +346,10 @@ def _semantic_integrity_errors(
     return errors
 
 
-def _calibration_evidence_errors(
-    suite: Suite,
-    calibration: Any,
-    *,
-    require_approval: bool = True,
-    now: datetime | None = None,
-    dataset_sha256: str | None = None,
-    rubric_sha256: str | None = None,
-) -> list[str]:
-    if not isinstance(calibration, dict):
+def _calibration_evidence_errors(calibration: Any) -> list[str]:
+    if not isinstance(calibration, dict) or not calibration:
         return ["official suite calibration configuration is missing"]
-    required_paths = {"evidence": "calibration report"}
-    if require_approval:
-        required_paths["independent_review_evidence"] = "calibration independent approval"
-    loaded: dict[str, dict[str, Any]] = {}
-    for field, label in required_paths.items():
-        path, raw, path_error = _suite_evidence_file(suite, calibration.get(field), calibration.get(f"{field}_sha256"), label)
-        if path_error or path is None or raw is None:
-            return [path_error or f"official {label} is missing"]
-        try:
-            value = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return [f"official {label} must be valid JSON"]
-        if not isinstance(value, dict):
-            return [f"official {label} must be a JSON object"]
-        loaded[field] = value
-
-    errors: list[str] = []
-    report = loaded["evidence"]
-    report_evidence = (
-        ("analysis_plan", "calibration analysis plan"),
-        ("human_label_evidence", "calibration human-label evidence"),
-        ("holdout_manifest", "calibration holdout manifest"),
-        ("pilot_audit", "calibration pilot audit"),
-        ("statistical_review", "calibration statistical review"),
-        ("semantic_contamination_evidence", "calibration semantic-contamination evidence"),
-    )
-    report_suite = report.get("suite")
-    expected_suite = {
-        "name": suite.name,
-        "version": suite.version,
-        "dataset_sha256": dataset_sha256 or sha256_file(suite.dataset_path),
-        "rubric_sha256": rubric_sha256 or sha256_file(suite.rubric_path),
-    }
-    if (
-        report.get("calibration_version") != "2.0.0"
-        or report.get("status") != "passed"
-        or report.get("protocol_version") != PROTOCOL_VERSION
-        or report_suite != expected_suite
-        or report.get("gates_passed") is not True
-        or not isinstance(report.get("results"), dict)
-        or not report["results"]
-        or not isinstance(report.get("limitations"), list)
-        or not report["limitations"]
-        or not all(isinstance(value, str) and value.strip() for value in report["limitations"])
-        or not isinstance(report.get("source_commit"), str)
-        or not re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", report["source_commit"])
-    ):
-        errors.append("official calibration report is incomplete or did not pass")
-    for field, label in report_evidence:
-        _, _, error = _suite_evidence_file(suite, report.get(field), report.get(f"{field}_sha256"), label)
-        if error:
-            errors.append(error)
-    integrity = suite.config.get("dataset_integrity") or {}
-    if (
-        report.get("semantic_contamination_evidence") != integrity.get("semantic_review_evidence")
-        or report.get("semantic_contamination_evidence_sha256") != integrity.get("semantic_review_evidence_sha256")
-    ):
-        errors.append("official calibration report does not match semantic contamination evidence")
-    try:
-        completed_at = datetime.fromisoformat(str(report.get("completed_at", "")).replace("Z", "+00:00"))
-        if completed_at.tzinfo is None:
-            raise ValueError
-    except ValueError:
-        errors.append("official calibration completed_at must include a timezone")
-
-    if not require_approval:
-        return errors
-    approval = loaded["independent_review_evidence"]
-    approval_fields = (
-        "approval_id",
-        "approver_id",
-        "conflicts",
-        "decision_rationale",
-        "approved_at",
-        "expires_at",
-    )
-    if (
-        approval.get("approval_version") != "2.0.0"
-        or approval.get("scope") != "suite-calibration"
-        or approval.get("status") != "passed"
-        or approval.get("independent") is not True
-        or approval.get("calibration_sha256") != calibration.get("evidence_sha256")
-        or not all(isinstance(approval.get(field), str) and approval[field].strip() for field in approval_fields)
-    ):
-        errors.append("official calibration independent approval is incomplete, unlinked, or did not pass")
-        return errors
-    _, _, qualification_error = _suite_evidence_file(
-        suite,
-        approval.get("approver_qualification_evidence"),
-        approval.get("approver_qualification_evidence_sha256"),
-        "calibration approver qualification evidence",
-    )
-    if qualification_error:
-        errors.append(qualification_error)
-    try:
-        approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
-        expires_at = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
-    except ValueError:
-        errors.append("official calibration approval timestamps are invalid")
-        return errors
-    current = now or datetime.now(timezone.utc)
-    if approved_at.tzinfo is None or expires_at.tzinfo is None or approved_at > current or expires_at <= current or expires_at <= approved_at:
-        errors.append("official calibration independent approval is not currently effective")
-    return errors
+    return ["official suite calibration semantic reconstruction is unavailable"]
 
 
 def _case_input_modalities(case: dict[str, Any]) -> set[str]:
@@ -567,6 +456,43 @@ def validate_suite(
     for field in ("max_tokens", "official_min_repetitions", "official_min_judge_repetitions"):
         if field in config and (not isinstance(config[field], int) or isinstance(config[field], bool) or config[field] < 1):
             errors.append(f"suite.{field} must be a positive integer")
+    judge_config = config.get("judge")
+    blueprint_status: str | None = None
+    blueprint_configured = isinstance(judge_config, dict) and (
+        "qualification_blueprint" in judge_config or "qualification_blueprint_sha256" in judge_config
+    )
+    if judge_config is not None and not isinstance(judge_config, dict):
+        errors.append("suite.judge must be a table")
+    elif isinstance(judge_config, dict) and blueprint_configured:
+        relative = judge_config.get("qualification_blueprint")
+        digest = judge_config.get("qualification_blueprint_sha256")
+        if not isinstance(relative, str) or not relative or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            errors.append("judge qualification blueprint requires a suite-local path and SHA-256")
+        else:
+            try:
+                blueprint_path = _inside(suite.root, relative)
+            except ProtocolError as exc:
+                errors.append(str(exc))
+            else:
+                if blueprint_path.is_symlink() or not blueprint_path.is_file():
+                    errors.append("judge qualification blueprint must be a regular suite-local file")
+                else:
+                    try:
+                        blueprint_raw = blueprint_path.read_bytes()
+                        blueprint_status = tomllib.loads(blueprint_raw.decode("utf-8")).get("status")
+                    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+                        errors.append(f"cannot load judge qualification blueprint: {exc}")
+                    else:
+                        if sha256_bytes(blueprint_raw) != digest:
+                            errors.append("judge qualification blueprint hash mismatch")
+                        else:
+                            from .program import validate_judge_qualification_blueprint
+
+                            errors.extend(validate_judge_qualification_blueprint(blueprint_path, suite, raw=blueprint_raw))
+    if official and not blueprint_configured:
+        errors.append("official runs require a suite-pinned judge qualification blueprint")
+    elif official and blueprint_status == "preregistration-draft":
+        errors.append("official judge qualification blueprint remains preregistration-draft")
     statistics = config.get("statistics") or {}
     if not isinstance(statistics, dict):
         errors.append("suite.statistics must be a table")
@@ -895,12 +821,7 @@ def validate_suite(
         if calibration.get("independent_review") != "passed":
             errors.append("official runs require passed independent calibration review")
         errors.extend(
-            _calibration_evidence_errors(
-                suite,
-                calibration,
-                dataset_sha256=actual_dataset_sha256,
-                rubric_sha256=actual_rubric_sha256,
-            )
+            _calibration_evidence_errors(calibration)
         )
         allowed_hosts = (suite.config.get("network") or {}).get("allowed_hosts")
         try:
@@ -1158,13 +1079,7 @@ def promotion_readiness(
         if target_status == "approved" and calibration.get("independent_review") != "passed":
             errors.append("calibration.independent_review=passed is required")
         errors.extend(
-            _calibration_evidence_errors(
-                suite,
-                calibration,
-                require_approval=target_status == "approved",
-                dataset_sha256=dataset_sha256,
-                rubric_sha256=rubric_sha256,
-            )
+            _calibration_evidence_errors(calibration)
         )
     if target_status == "approved":
         calibration = suite.config.get("calibration") or {}

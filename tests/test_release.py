@@ -22,6 +22,7 @@ from cavada_eval.protocol import (
     sha256_bytes,
     sha256_file,
     summarize,
+    validate_suite,
     write_category_csv,
 )
 from cavada_eval.public_verify import verify_public_bundle
@@ -38,6 +39,34 @@ from cavada_eval.runner import _judge_system_prompt, build_judge_payload, build_
 NOW = datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
 TARGET_REVISION = "a" * 40
 JUDGE_REVISION = "b" * 40
+CALIBRATION_UNAVAILABLE = "official suite calibration semantic reconstruction is unavailable"
+BLUEPRINT_DRAFT_UNAVAILABLE = "official judge qualification blueprint remains preregistration-draft"
+
+
+@pytest.fixture
+def _assume_available_official_prerequisites(monkeypatch: pytest.MonkeyPatch) -> None:
+    unavailable = {CALIBRATION_UNAVAILABLE, BLUEPRINT_DRAFT_UNAVAILABLE}
+
+    def validate_with_test_evidence(
+        suite: Suite,
+        *,
+        official: bool = False,
+        dataset_sha256: str | None = None,
+        rubric_sha256: str | None = None,
+    ) -> list[str]:
+        return [
+            error
+            for error in validate_suite(
+                suite,
+                official=official,
+                dataset_sha256=dataset_sha256,
+                rubric_sha256=rubric_sha256,
+            )
+            if error not in unavailable
+        ]
+
+    monkeypatch.setattr("cavada_eval.protocol.validate_suite", validate_with_test_evidence)
+    monkeypatch.setattr("cavada_eval.release.validate_suite", validate_with_test_evidence)
 
 
 def _suite(root: Path) -> Suite:
@@ -59,6 +88,41 @@ def _suite(root: Path) -> Suite:
     }
     (root / "dataset.jsonl").write_text(json.dumps(case) + "\n", encoding="utf-8")
     (root / "rubric.md").write_text("Judge correctness.", encoding="utf-8")
+    blueprint_path = root / "qualification-blueprint.toml"
+    blueprint_path.write_text(
+        '''version = "0.1.0"
+status = "preregistration-draft"
+target_unique_responses = 200
+minimum_model_families = 4
+minimum_judge_repetitions = 1
+maximum_invalid_cases = 0
+minimum_repeat_stability = 0.95
+required_probe_types = ["standard"]
+
+[allocations]
+language = [{id = "en", target = 200}]
+severity = [{id = "low", target = 200}]
+response_length = [{id = "short", target = 200}]
+response_style = [{id = "direct", target = 200}]
+probe_type = [{id = "standard", target = 200}]
+
+[[modules]]
+id = "quality"
+target = 200
+pass_target = 100
+fail_target = 100
+failure_sensitivity_gate = 0.80
+pass_specificity_gate = 0.80
+design_rate = 0.90
+minimum_power = 0.80
+''',
+        encoding="utf-8",
+    )
+    support = {
+        "human-labels": {"status": "failed", "agreement": 0},
+        "pilot-audit": {"pilot_audit_version": "1.0.0", "passed": False},
+        "statistical-review": {"status": "failed"},
+    }
     for name in (
         "analysis-plan",
         "human-labels",
@@ -70,7 +134,7 @@ def _suite(root: Path) -> Suite:
         "semantic-reviewer",
         "calibration-approver",
     ):
-        (root / f"{name}.json").write_text(json.dumps({"evidence": name}), encoding="utf-8")
+        (root / f"{name}.json").write_text(json.dumps(support.get(name, {"evidence": name})), encoding="utf-8")
     dataset_hash = sha256_file(root / "dataset.jsonl")
     rubric_hash = sha256_file(root / "rubric.md")
     semantic = {
@@ -159,12 +223,17 @@ dataset_sha256 = "{dataset_hash}"
 rubric_sha256 = "{rubric_hash}"
 
 [[gates]]
+category = "quality"
 metric = "pass_rate_ci.lower"
 min = 0.2
 
 [target]
 kind = "json"
 capabilities = ["text"]
+
+[judge]
+qualification_blueprint = "{blueprint_path.name}"
+qualification_blueprint_sha256 = "{sha256_file(blueprint_path)}"
 
 [network]
 allowed_hosts = ["127.0.0.1"]
@@ -465,12 +534,15 @@ def _release_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object
     }
     judge_approver_evidence = b"Independent judge approver qualification fixture evidence.\n"
     judge_approver_hash = sha256_bytes(judge_approver_evidence)
+    blueprint_sha256 = sha256_file(suite.root / "qualification-blueprint.toml")
+    corpus_manifest_snapshot = json.dumps({"blueprint_sha256": blueprint_sha256}, sort_keys=True)
     qualification = {
         "qualification_version": "2.0.0",
         "passed": True,
         "run_manifest_sha256": sha256_bytes(b"qualified run manifest fixture"),
-        "corpus_manifest_sha256": sha256_bytes(b"qualification corpus manifest fixture"),
-        "blueprint_sha256": sha256_bytes(b"qualification blueprint fixture"),
+        "corpus_manifest_sha256": sha256_bytes(corpus_manifest_snapshot.encode()),
+        "corpus_manifest_snapshot": corpus_manifest_snapshot,
+        "blueprint_sha256": blueprint_sha256,
         "corpus_dataset_sha256": sha256_bytes(b"qualification corpus dataset fixture"),
         "bundle_verification": {"valid": True},
         "judge_configuration": judge_manifest,
@@ -746,7 +818,27 @@ def _nonpublic_external_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[
     return run, engagement, approval_path, approval
 
 
-def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_path: Path) -> None:
+def test_fully_sealed_failed_calibration_cannot_become_official(tmp_path: Path) -> None:
+    run, engagement, approval, _ = _release_fixture(tmp_path)
+    suite_root = tmp_path / "suite"
+
+    assert json.loads((suite_root / "human-labels.json").read_text(encoding="utf-8")) == {"status": "failed", "agreement": 0}
+    assert json.loads((suite_root / "pilot-audit.json").read_text(encoding="utf-8"))["passed"] is False
+    assert json.loads((suite_root / "statistical-review.json").read_text(encoding="utf-8"))["status"] == "failed"
+    report = json.loads((suite_root / "calibration.json").read_text(encoding="utf-8"))
+    assert report["status"] == "passed" and report["gates_passed"] is True
+    assert verify_bundle(run)["valid"] is True
+    assert load_suite(suite_root).status == "approved"
+
+    with pytest.raises(ProtocolError, match=CALIBRATION_UNAVAILABLE):
+        load_suite(suite_root, official=True)
+    with pytest.raises(ProtocolError, match=CALIBRATION_UNAVAILABLE):
+        verified_public_release(run, engagement, approval, now=NOW)
+
+
+def test_engagement_is_exact_and_public_release_is_post_run_and_independent(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval, _ = _release_fixture(tmp_path)
     released = verified_public_release(run, engagement, approval, now=NOW)
     assert released["release_id"] == "release-1"
@@ -788,6 +880,7 @@ def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_
 def test_public_release_binds_the_exact_governance_bytes_it_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    _assume_available_official_prerequisites: None,
     record_name: str,
     result_field: str,
 ) -> None:
@@ -813,7 +906,9 @@ def test_public_release_binds_the_exact_governance_bytes_it_validates(
 
 
 @pytest.mark.parametrize("record_name", ["engagement", "approval"])
-def test_public_release_rejects_symlinked_governance_records(tmp_path: Path, record_name: str) -> None:
+def test_public_release_rejects_symlinked_governance_records(
+    tmp_path: Path, _assume_available_official_prerequisites: None, record_name: str
+) -> None:
     run, engagement, approval, _ = _release_fixture(tmp_path)
     original = engagement if record_name == "engagement" else approval
     linked = tmp_path / f"linked-{original.name}"
@@ -828,7 +923,11 @@ def test_public_release_rejects_symlinked_governance_records(tmp_path: Path, rec
         )
 
 
-def test_public_export_rejects_source_drift_after_release_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_export_rejects_source_drift_after_release_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _assume_available_official_prerequisites: None,
+) -> None:
     run, engagement, approval, _ = _release_fixture(tmp_path)
     output = tmp_path / "must-not-exist.tar.gz"
     summary = run / "summary.json"
@@ -876,6 +975,7 @@ def test_restricted_export_archives_the_verified_snapshot(tmp_path: Path, monkey
 def test_public_export_snapshots_approved_metadata_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    _assume_available_official_prerequisites: None,
     name: str,
     message: str,
 ) -> None:
@@ -907,7 +1007,9 @@ def test_public_release_rejects_boolean_only_fabricated_bundle(tmp_path: Path) -
         verified_public_release(run, tmp_path / "missing-engagement.json", tmp_path / "missing-approval.json", now=NOW)
 
 
-def test_public_release_rejects_invalid_judgment_hidden_behind_pass_metrics(tmp_path: Path) -> None:
+def test_public_release_rejects_invalid_judgment_hidden_behind_pass_metrics(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     judgment = json.loads((run / "judgments.jsonl").read_text(encoding="utf-8"))
     judgment.update({"status": "invalid", "error": "malformed provider evidence"})
@@ -918,7 +1020,9 @@ def test_public_release_rejects_invalid_judgment_hidden_behind_pass_metrics(tmp_
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_requires_usage_for_priced_evidence(tmp_path: Path) -> None:
+def test_public_release_requires_usage_for_priced_evidence(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     pricing = {
         "currency": "USD",
@@ -945,7 +1049,9 @@ def test_public_release_requires_usage_for_priced_evidence(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("name", ["protocol_snapshot.md", "dataset_snapshot.jsonl", "rubric_snapshot.md"])
-def test_public_release_rejects_mutated_canonical_input_snapshot(tmp_path: Path, name: str) -> None:
+def test_public_release_rejects_mutated_canonical_input_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None, name: str
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     path = run / name
     path.write_bytes(path.read_bytes() + b"\n")
@@ -955,7 +1061,9 @@ def test_public_release_rejects_mutated_canonical_input_snapshot(tmp_path: Path,
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_rejects_self_consistent_noncanonical_protocol_snapshot(tmp_path: Path) -> None:
+def test_public_release_rejects_self_consistent_noncanonical_protocol_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     snapshot = run / "protocol_snapshot.md"
     snapshot.write_bytes(snapshot.read_bytes() + b"\nforged")
@@ -968,7 +1076,9 @@ def test_public_release_rejects_self_consistent_noncanonical_protocol_snapshot(t
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_revalidates_exact_judge_qualification_snapshots(tmp_path: Path) -> None:
+def test_public_release_revalidates_exact_judge_qualification_snapshots(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     qualification_path = run / "judge_qualification_snapshot.json"
     qualification = json.loads(qualification_path.read_text(encoding="utf-8"))
@@ -989,7 +1099,9 @@ def test_public_release_revalidates_exact_judge_qualification_snapshots(tmp_path
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_rejects_mutated_judge_supporting_evidence(tmp_path: Path) -> None:
+def test_public_release_rejects_mutated_judge_supporting_evidence(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     support = next((run / "judge_evidence").iterdir())
     support.write_bytes(support.read_bytes() + b"tampered")
@@ -999,7 +1111,9 @@ def test_public_release_rejects_mutated_judge_supporting_evidence(tmp_path: Path
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_rejects_judge_approval_by_engagement_owner(tmp_path: Path) -> None:
+def test_public_release_rejects_judge_approval_by_engagement_owner(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     judge_approval_path = run / "judge_approval_snapshot.json"
     judge_approval = json.loads(judge_approval_path.read_text(encoding="utf-8"))
@@ -1015,7 +1129,9 @@ def test_public_release_rejects_judge_approval_by_engagement_owner(tmp_path: Pat
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_rejects_approved_suite_without_snapshot_governance(tmp_path: Path) -> None:
+def test_public_release_rejects_approved_suite_without_snapshot_governance(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
     suite_snapshot = run / "suite_snapshot.toml"
     suite_snapshot.write_text(
@@ -1040,17 +1156,51 @@ def test_public_release_rejects_approved_suite_without_snapshot_governance(tmp_p
         verified_public_release(run, engagement_path, approval_path, now=NOW)
 
 
-def test_public_release_rejects_mutated_suite_governance_blob(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mutation", ["missing", "tampered"])
+def test_public_release_rejects_invalid_blueprint_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None, mutation: str
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
-    blob = next((run / "suite_evidence").iterdir())
-    blob.write_bytes(blob.read_bytes() + b"tampered")
+    evidence = json.loads((run / "suite_evidence_manifest.json").read_text(encoding="utf-8"))
+    blob = run / "suite_evidence" / evidence["qualification-blueprint.toml"]
+    if mutation == "missing":
+        blob.unlink()
+    else:
+        blob.write_bytes(blob.read_bytes() + b"tampered")
     _reseal_forged_run(run, approval_path, approval)
 
-    with pytest.raises(ProtocolError, match="suite governance evidence blob differs"):
+    with pytest.raises(ProtocolError, match="suite governance evidence blobs? (?:do not exactly match|differs)"):
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_reconstructs_target_payload_from_dataset_snapshot(tmp_path: Path) -> None:
+def test_public_release_rejects_resealed_suite_blueprint_pin(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
+    run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
+    snapshot = run / "suite_snapshot.toml"
+    current_pin = sha256_file(tmp_path / "suite" / "qualification-blueprint.toml")
+    snapshot.write_text(snapshot.read_text(encoding="utf-8").replace(current_pin, "0" * 64), encoding="utf-8")
+    snapshot_hash = sha256_file(snapshot)
+    engagement = json.loads(engagement_path.read_text(encoding="utf-8"))
+    engagement["suite"]["suite_config_sha256"] = snapshot_hash
+    engagement_path.write_text(json.dumps(engagement), encoding="utf-8")
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    manifest["suite"]["suite_config_sha256"] = snapshot_hash
+    manifest["engagement"]["sha256"] = sha256_file(engagement_path)
+    (run / "manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    summary = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    summary["suite"] = manifest["suite"]
+    (run / "summary.json").write_text(json.dumps(summary, sort_keys=True), encoding="utf-8")
+    approval["engagement_sha256"] = sha256_file(engagement_path)
+    _reseal_forged_run(run, approval_path, approval)
+
+    with pytest.raises(ProtocolError, match="blueprint hash mismatch|suite-pinned blueprint"):
+        verified_public_release(run, engagement_path, approval_path, now=NOW)
+
+
+def test_public_release_reconstructs_target_payload_from_dataset_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     requests = [json.loads(line) for line in (run / "requests.jsonl").read_text(encoding="utf-8").splitlines()]
     requests[0]["payload"]["message"] = "Mutated question"
@@ -1061,7 +1211,9 @@ def test_public_release_reconstructs_target_payload_from_dataset_snapshot(tmp_pa
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_reconstructs_judge_payload_from_rubric_snapshot(tmp_path: Path) -> None:
+def test_public_release_reconstructs_judge_payload_from_rubric_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
     snapshot = run / "rubric_snapshot.md"
     snapshot.write_text(snapshot.read_text(encoding="utf-8") + "\nAdditional criterion.", encoding="utf-8")
@@ -1086,7 +1238,9 @@ def test_public_release_reconstructs_judge_payload_from_rubric_snapshot(tmp_path
         verified_public_release(run, engagement_path, approval_path, now=NOW)
 
 
-def test_public_release_rejects_target_identity_in_judge_payload(tmp_path: Path) -> None:
+def test_public_release_rejects_target_identity_in_judge_payload(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     requests = [json.loads(line) for line in (run / "requests.jsonl").read_text(encoding="utf-8").splitlines()]
     requests[1]["payload"]["target_identity"] = "target-model"
@@ -1097,7 +1251,9 @@ def test_public_release_rejects_target_identity_in_judge_payload(tmp_path: Path)
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_rejects_target_label_in_judge_payload(tmp_path: Path) -> None:
+def test_public_release_rejects_target_label_in_judge_payload(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     target_label = "private-target-label"
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
@@ -1115,7 +1271,9 @@ def test_public_release_rejects_target_label_in_judge_payload(tmp_path: Path) ->
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_recomputes_hard_deterministic_checks(tmp_path: Path) -> None:
+def test_public_release_recomputes_hard_deterministic_checks(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
     cases = [json.loads(line) for line in (run / "dataset_snapshot.jsonl").read_text(encoding="utf-8").splitlines()]
     cases[0]["forbidden_terms"] = ["answer"]
@@ -1139,7 +1297,12 @@ def test_public_release_recomputes_hard_deterministic_checks(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(("field", "value"), [("category", "other"), ("severity", "critical")])
-def test_public_release_binds_case_projection_to_the_dataset(tmp_path: Path, field: str, value: str) -> None:
+def test_public_release_binds_case_projection_to_the_dataset(
+    tmp_path: Path,
+    _assume_available_official_prerequisites: None,
+    field: str,
+    value: str,
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     result = json.loads((run / "case_results.jsonl").read_text(encoding="utf-8"))
     result[field] = value
@@ -1161,6 +1324,7 @@ def test_public_release_binds_case_projection_to_the_dataset(tmp_path: Path, fie
 )
 def test_public_release_binds_derived_results_to_raw_evidence(
     tmp_path: Path,
+    _assume_available_official_prerequisites: None,
     field: str,
     value: float,
     message: str,
@@ -1175,7 +1339,9 @@ def test_public_release_binds_derived_results_to_raw_evidence(
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_derives_analysis_unit_from_the_dataset(tmp_path: Path) -> None:
+def test_public_release_derives_analysis_unit_from_the_dataset(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     result = json.loads((run / "case_results.jsonl").read_text(encoding="utf-8"))
     _write_jsonl(run / "scenario_results.jsonl", [{**result, "case_id": "invented", "scenario_id": "invented"}])
@@ -1197,7 +1363,9 @@ def test_public_release_derives_analysis_unit_from_the_dataset(tmp_path: Path) -
 
 
 @pytest.mark.parametrize("field", ["official_min_repetitions", "official_min_judge_repetitions"])
-def test_public_release_enforces_immutable_suite_repetition_minimums(tmp_path: Path, field: str) -> None:
+def test_public_release_enforces_immutable_suite_repetition_minimums(
+    tmp_path: Path, _assume_available_official_prerequisites: None, field: str
+) -> None:
     run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
     snapshot = run / "suite_snapshot.toml"
     snapshot.write_text(snapshot.read_text(encoding="utf-8").replace("\n[[gates]]", f"\n{field} = 2\n\n[[gates]]"), encoding="utf-8")
@@ -1219,7 +1387,9 @@ def test_public_release_enforces_immutable_suite_repetition_minimums(tmp_path: P
         verified_public_release(run, engagement_path, approval_path, now=NOW)
 
 
-def test_public_release_rejects_unconfigured_engine_evidence(tmp_path: Path) -> None:
+def test_public_release_rejects_unconfigured_engine_evidence(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     _write_jsonl(run / "engine_results.jsonl", [{"results": []}])
     _reseal_forged_run(run, approval_path, approval)
@@ -1229,7 +1399,9 @@ def test_public_release_rejects_unconfigured_engine_evidence(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("mutation", ["missing", "expired", "wrong-host"])
-def test_nonpublic_external_release_requires_exact_current_authorization(tmp_path: Path, mutation: str) -> None:
+def test_nonpublic_external_release_requires_exact_current_authorization(
+    tmp_path: Path, _assume_available_official_prerequisites: None, mutation: str
+) -> None:
     run, engagement, approval_path, approval = _nonpublic_external_fixture(tmp_path)
     assert verified_public_release(run, engagement, approval_path, now=NOW)["release_id"] == "release-1"
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
@@ -1250,7 +1422,9 @@ def test_nonpublic_external_release_requires_exact_current_authorization(tmp_pat
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_public_release_recomputes_gates_from_hashed_suite_snapshot(tmp_path: Path) -> None:
+def test_public_release_recomputes_gates_from_hashed_suite_snapshot(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement_path, approval_path, approval = _release_fixture(tmp_path)
     snapshot = run / "suite_snapshot.toml"
     snapshot.write_text(snapshot.read_text(encoding="utf-8").replace("min = 0.2", "min = 0.3"), encoding="utf-8")
@@ -1282,6 +1456,7 @@ def test_public_release_recomputes_gates_from_hashed_suite_snapshot(tmp_path: Pa
 )
 def test_public_release_rejects_forged_derived_metric_groups(
     tmp_path: Path,
+    _assume_available_official_prerequisites: None,
     path: tuple[str, ...],
     value: object,
     message: str,
@@ -1315,7 +1490,9 @@ def test_export_rejects_destination_inside_immutable_run_before_writing(tmp_path
     assert not output.exists()
 
 
-def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Path) -> None:
+def test_public_release_rejects_self_approval_and_expired_evidence(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     decisions = approval["decisions"]
     assert isinstance(decisions, dict)
@@ -1331,14 +1508,18 @@ def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Pat
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
-def test_release_rejects_tampered_reviewer_evidence(tmp_path: Path) -> None:
+def test_release_rejects_tampered_reviewer_evidence(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval, _ = _release_fixture(tmp_path)
     (tmp_path / "review-evidence.txt").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(ProtocolError, match="review evidence hash mismatch"):
         verified_public_release(run, engagement, approval, now=NOW)
 
 
-def test_public_export_rejects_endpoint_or_key_environment_leaks(tmp_path: Path) -> None:
+def test_public_export_rejects_endpoint_or_key_environment_leaks(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     (run / "report_public.html").write_text("<p>TARGET_API_KEY</p>", encoding="utf-8")
     _reseal_forged_run(run, approval_path, approval)
@@ -1350,7 +1531,9 @@ def test_public_export_rejects_endpoint_or_key_environment_leaks(tmp_path: Path)
     assert not output.exists()
 
 
-def test_public_release_rejects_forged_resealed_private_report(tmp_path: Path) -> None:
+def test_public_release_rejects_forged_resealed_private_report(
+    tmp_path: Path, _assume_available_official_prerequisites: None
+) -> None:
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     (run / "report.html").write_text("<p>forged private report</p>", encoding="utf-8")
     _reseal_forged_run(run, approval_path, approval)
