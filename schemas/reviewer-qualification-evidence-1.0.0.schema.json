@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/reviewer-qualification-evidence/1.0.0",
+  "title": "CavadaLabs Reviewer Qualification Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "qualification_version", "reviewer_id", "role", "decision", "assessor_id",
+    "assessor_independent", "conflict_of_interest_assessment", "conflicts_resolved",
+    "permitted_claim_scope", "supporting_evidence", "qualified_at", "expires_at",
+    "revoked_at", "revocation_reason"
+  ],
+  "properties": {
+    "qualification_version": {"const": "1.0.0"},
+    "reviewer_id": {"type": "string", "minLength": 1},
+    "role": {"enum": ["blueprint-approver", "judge-qualification-approver"]},
+    "decision": {"enum": ["qualified", "not-qualified", "withdrawn", "revoked"]},
+    "assessor_id": {"type": "string", "minLength": 1},
+    "assessor_independent": {"type": "boolean"},
+    "conflict_of_interest_assessment": {"type": "string", "minLength": 1},
+    "conflicts_resolved": {"type": "boolean"},
+    "permitted_claim_scope": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "supporting_evidence": {
+      "type": "array", "minItems": 1,
+      "items": {"$ref": "#/$defs/artifactReference"}
+    },
+    "qualified_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "revoked_at": {"type": ["string", "null"], "format": "date-time"},
+    "revocation_reason": {"type": "string"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "sha256", "artifact_type", "schema_version"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "artifact_type": {"type": "string", "minLength": 1},
+        "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      }
+    }
+  }
+}

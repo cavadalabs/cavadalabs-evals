@@ -7,9 +7,10 @@ import tomllib
 import unicodedata
 from collections import Counter
 from datetime import date, datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
+from .artifacts import _read_regular
 from .assets import content_text
 from .profiles import profile_summary
 from .protocol import (
@@ -18,6 +19,7 @@ from .protocol import (
     Suite,
     _strict_json_loads,
     load_suite,
+    sha256_bytes,
     sha256_file,
     validate_suite,
     wilson_gate_power,
@@ -44,6 +46,69 @@ STATUS_ASSURANCE = {
     "deprecated": set(ASSURANCE_LEVELS),
     "retired": set(ASSURANCE_LEVELS),
 }
+_REVIEWER_SUPPORT_FIELDS = {
+    "evidence_version",
+    "evidence_id",
+    "subject_id",
+    "issuer_id",
+    "evidence_type",
+    "issued_at",
+    "content",
+}
+_REVIEWER_SUPPORT_TYPES = {
+    "credential",
+    "experience-record",
+    "training-record",
+    "assessment-record",
+    "synthetic-test-fixture",
+}
+
+
+def reviewer_qualification_support_errors(
+    value: Any,
+    *,
+    now: datetime,
+    label: str,
+    expected_subject_id: str | None = None,
+    expected_issuer_id: str | None = None,
+    allow_synthetic_fixture: bool = False,
+    not_after: datetime | None = None,
+) -> list[str]:
+    """Validate the self-contained reviewer-support leaf used by every official path."""
+    if not isinstance(value, dict) or set(value) != _REVIEWER_SUPPORT_FIELDS:
+        return [f"{label} fields must be exactly {sorted(_REVIEWER_SUPPORT_FIELDS)}"]
+    errors: list[str] = []
+    if (
+        value.get("evidence_version") != "1.0.0"
+        or value.get("evidence_type") not in _REVIEWER_SUPPORT_TYPES
+        or any(
+            not isinstance(value.get(field), str) or not value[field].strip()
+            for field in ("evidence_id", "subject_id", "issuer_id", "content")
+        )
+        or value.get("subject_id") == value.get("issuer_id")
+        or expected_subject_id is not None
+        and value.get("subject_id") != expected_subject_id
+        or expected_issuer_id is not None
+        and value.get("issuer_id") != expected_issuer_id
+    ):
+        errors.append(f"{label} is incomplete or does not bind its subject and issuer")
+    content = value.get("content")
+    if value.get("evidence_type") == "synthetic-test-fixture" and not allow_synthetic_fixture:
+        errors.append(f"{label} cannot use synthetic evidence outside a conformance fixture")
+    if isinstance(content, str) and re.fullmatch(r"https?://\S+", content.strip(), flags=re.IGNORECASE):
+        errors.append(f"{label} cannot consist only of an external URL")
+    try:
+        issued_at = datetime.fromisoformat(str(value.get("issued_at", "")).replace("Z", "+00:00"))
+        if issued_at.tzinfo is None or now.tzinfo is None:
+            raise ValueError
+    except ValueError:
+        errors.append(f"{label}.issued_at is invalid")
+    else:
+        if issued_at > now:
+            errors.append(f"{label}.issued_at is in the future")
+        if not_after is not None and issued_at > not_after:
+            errors.append(f"{label}.issued_at postdates the reviewer qualification")
+    return errors
 
 
 def validate_cross_suite_duplicates(suites: list[Suite]) -> list[str]:
@@ -335,9 +400,9 @@ def validate_reviewer_fixtures(path: Path, suite: Suite) -> list[str]:
             continue
         prefix = f"fixture[{line_number}]"
         try:
-            fixture = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            errors.append(f"{prefix} is invalid JSON: {exc.msg}")
+            fixture = _strict_json_loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            errors.append(f"{prefix} is invalid strict JSON: {exc}")
             continue
         if not isinstance(fixture, dict) or set(fixture) != fields:
             errors.append(f"{prefix} fields must be exactly {sorted(fields)}")
@@ -512,6 +577,246 @@ def validate_judge_qualification_blueprint(
     return errors
 
 
+def _blueprint_approval_v2_errors(
+    approval: dict[str, Any],
+    suite: Suite,
+    blueprint_sha256: str,
+    *,
+    now: datetime | None,
+    require_effective: bool,
+) -> list[str]:
+    reference_fields = {"relative_path", "sha256", "artifact_type", "schema_version"}
+    approval_fields = {
+        "approval_version",
+        "approval_id",
+        "scope",
+        "protocol_version",
+        "subject",
+        "suite",
+        "decision",
+        "independent",
+        "approver_id",
+        "approver_qualification_evidence",
+        "conflict_of_interest_assessment",
+        "conflicts_resolved",
+        "decision_rationale",
+        "permitted_claim_scope",
+        "approved_at",
+        "expires_at",
+        "revoked_at",
+        "revocation_reason",
+    }
+    reviewer_fields = {
+        "qualification_version",
+        "reviewer_id",
+        "role",
+        "decision",
+        "assessor_id",
+        "assessor_independent",
+        "conflict_of_interest_assessment",
+        "conflicts_resolved",
+        "permitted_claim_scope",
+        "supporting_evidence",
+        "qualified_at",
+        "expires_at",
+        "revoked_at",
+        "revocation_reason",
+    }
+    errors: list[str] = []
+    if set(approval) != approval_fields:
+        errors.append(f"judge qualification blueprint approval fields must be exactly {sorted(approval_fields)}")
+
+    def reference_bytes(
+        value: Any,
+        *,
+        label: str,
+        artifact_type: str,
+        schema_version: str,
+        expected_path: str | None = None,
+        expected_sha256: str | None = None,
+    ) -> tuple[str, bytes] | None:
+        if not isinstance(value, dict) or set(value) != reference_fields:
+            errors.append(f"{label} must be an exact artifact reference")
+            return None
+        relative = value.get("relative_path")
+        digest = value.get("sha256")
+        candidate = Path(str(relative))
+        windows = PureWindowsPath(str(relative))
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or relative != unicodedata.normalize("NFC", relative)
+            or candidate.is_absolute()
+            or windows.drive
+            or ".." in candidate.parts
+            or ".." in windows.parts
+            or candidate.as_posix() != relative
+            or windows.as_posix() != relative
+        ):
+            errors.append(f"{label}.relative_path is unsafe")
+            return None
+        if (
+            value.get("artifact_type") != artifact_type
+            or value.get("schema_version") != schema_version
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[a-f0-9]{64}", digest) is None
+            or (expected_path is not None and relative != expected_path)
+            or (expected_sha256 is not None and digest != expected_sha256)
+        ):
+            errors.append(f"{label} does not bind the exact approved artifact")
+        try:
+            raw = _read_regular(suite.root, candidate)
+        except OSError as exc:
+            errors.append(f"{label} is not a unique regular suite-local file: {exc}")
+            return None
+        if sha256_bytes(raw) != digest:
+            errors.append(f"{label} hash mismatch")
+        return relative, raw
+
+    expected_suite = {
+        "name": suite.name,
+        "version": suite.version,
+        "dataset_sha256": sha256_file(suite.dataset_path),
+        "rubric_sha256": sha256_file(suite.rubric_path),
+    }
+    if (
+        approval.get("approval_version") != "2.0.0"
+        or approval.get("scope") != "judge-qualification-blueprint"
+        or approval.get("protocol_version") != PROTOCOL_VERSION
+        or approval.get("suite") != expected_suite
+        or approval.get("decision") != "approved"
+        or approval.get("independent") is not True
+        or approval.get("conflicts_resolved") is not True
+        or approval.get("permitted_claim_scope") != ["judge-qualification-blueprint"]
+        or not all(
+            isinstance(approval.get(field), str) and approval[field].strip()
+            for field in (
+                "approval_id",
+                "approver_id",
+                "conflict_of_interest_assessment",
+                "decision_rationale",
+            )
+        )
+    ):
+        errors.append("judge qualification blueprint approval is incomplete, conflicted, unlinked, or did not approve")
+    try:
+        blueprint_relative = Path(suite.config["judge"]["qualification_blueprint"]).as_posix()
+    except (KeyError, TypeError):
+        blueprint_relative = ""
+    reference_bytes(
+        approval.get("subject"),
+        label="judge qualification blueprint approval subject",
+        artifact_type="qualification-blueprint",
+        schema_version="1.0.0",
+        expected_path=blueprint_relative,
+        expected_sha256=blueprint_sha256,
+    )
+    reviewer_reference = approval.get("approver_qualification_evidence")
+    reviewer_loaded = reference_bytes(
+        reviewer_reference,
+        label="judge qualification blueprint approver evidence",
+        artifact_type="blueprint-approver-qualification",
+        schema_version="1.0.0",
+    )
+    reviewer: dict[str, Any] | None = None
+    if reviewer_loaded is not None:
+        try:
+            value = _strict_json_loads(reviewer_loaded[1])
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            errors.append(f"judge qualification blueprint approver evidence is not strict JSON: {exc}")
+        else:
+            if isinstance(value, dict):
+                reviewer = value
+            else:
+                errors.append("judge qualification blueprint approver evidence must be a JSON object")
+    if reviewer is not None:
+        reviewer_qualified_at: datetime | None
+        try:
+            reviewer_qualified_at = datetime.fromisoformat(
+                str(reviewer.get("qualified_at", "")).replace("Z", "+00:00")
+            )
+            if reviewer_qualified_at.tzinfo is None:
+                reviewer_qualified_at = None
+        except ValueError:
+            reviewer_qualified_at = None
+        if set(reviewer) != reviewer_fields:
+            errors.append(f"blueprint approver qualification evidence fields must be exactly {sorted(reviewer_fields)}")
+        if (
+            reviewer.get("qualification_version") != "1.0.0"
+            or reviewer.get("role") != "blueprint-approver"
+            or reviewer.get("decision") != "qualified"
+            or reviewer.get("assessor_independent") is not True
+            or reviewer.get("conflicts_resolved") is not True
+            or reviewer.get("permitted_claim_scope") != ["judge-qualification-blueprint"]
+            or approval.get("approver_id") != reviewer.get("reviewer_id")
+            or reviewer.get("reviewer_id") == reviewer.get("assessor_id")
+            or not all(
+                isinstance(reviewer.get(field), str) and reviewer[field].strip()
+                for field in ("reviewer_id", "assessor_id", "conflict_of_interest_assessment")
+            )
+        ):
+            errors.append("blueprint approver qualification evidence is incomplete, conflicted, or unlinked")
+        supports = reviewer.get("supporting_evidence")
+        if not isinstance(supports, list) or not supports:
+            errors.append("blueprint approver qualification evidence must contain supporting evidence")
+        else:
+            seen: set[str] = set()
+            for index, support in enumerate(supports):
+                loaded = reference_bytes(
+                    support,
+                    label=f"blueprint approver supporting evidence[{index}]",
+                    artifact_type="reviewer-qualification-support",
+                    schema_version="1.0.0",
+                )
+                if loaded is not None:
+                    if loaded[0] in seen:
+                        errors.append("blueprint approver supporting evidence contains duplicate paths")
+                    seen.add(loaded[0])
+                    try:
+                        support_value = _strict_json_loads(loaded[1])
+                    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                        errors.append(f"blueprint approver supporting evidence[{index}] is not strict JSON: {exc}")
+                    else:
+                        errors.extend(
+                            reviewer_qualification_support_errors(
+                                support_value,
+                                now=now or datetime.now(timezone.utc),
+                                label=f"blueprint approver supporting evidence[{index}]",
+                                expected_subject_id=str(reviewer.get("reviewer_id", "")),
+                                expected_issuer_id=str(reviewer.get("assessor_id", "")),
+                                allow_synthetic_fixture=isinstance(suite.config.get("report"), dict)
+                                and suite.config["report"].get("assurance") == "conformance-fixture"
+                                and suite.config["report"].get("model_claim_allowed") is False
+                                and suite.config["report"].get("benchmark_claim_allowed") is False,
+                                not_after=reviewer_qualified_at,
+                            )
+                        )
+
+    def period(record: dict[str, Any], start_field: str, label: str) -> tuple[datetime, datetime] | None:
+        try:
+            start = datetime.fromisoformat(str(record.get(start_field, "")).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(record.get("expires_at", "")).replace("Z", "+00:00"))
+            if start.tzinfo is None or end.tzinfo is None:
+                raise ValueError
+        except ValueError:
+            errors.append(f"{label} timestamps are invalid")
+            return None
+        current = now or datetime.now(timezone.utc)
+        if end <= start or (require_effective and (start > current or end <= current)):
+            errors.append(f"{label} is not currently effective")
+        if record.get("revoked_at") is not None or record.get("revocation_reason") != "":
+            errors.append(f"{label} has been revoked")
+        return start, end
+
+    approval_period = period(approval, "approved_at", "judge qualification blueprint approval")
+    reviewer_period = period(reviewer, "qualified_at", "blueprint approver qualification evidence") if reviewer else None
+    if approval_period is not None and reviewer_period is not None and (
+        approval_period[0] < reviewer_period[0] or approval_period[1] > reviewer_period[1]
+    ):
+        errors.append("judge qualification blueprint approval is outside the approver qualification validity period")
+    return errors
+
+
 def validate_judge_qualification_blueprint_approval(
     path: Path,
     suite: Suite,
@@ -524,10 +829,18 @@ def validate_judge_qualification_blueprint_approval(
     try:
         captured = path.read_bytes() if raw is None else raw
         approval = _strict_json_loads(captured)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return [f"cannot load judge qualification blueprint approval: {exc}"]
     if not isinstance(approval, dict):
         return ["judge qualification blueprint approval must be a JSON object"]
+    if approval.get("approval_version") == "2.0.0":
+        return _blueprint_approval_v2_errors(
+            approval,
+            suite,
+            blueprint_sha256,
+            now=now,
+            require_effective=require_effective,
+        )
 
     expected_fields = {
         "approval_version",
@@ -549,6 +862,8 @@ def validate_judge_qualification_blueprint_approval(
         "revocation_reason",
     }
     errors: list[str] = []
+    if require_effective:
+        errors.append("official judge qualification blueprint approval must use version 2.0.0")
     if set(approval) != expected_fields:
         errors.append(f"judge qualification blueprint approval fields must be exactly {sorted(expected_fields)}")
     expected_suite = {
@@ -632,6 +947,9 @@ def _official_suite_validation(
             failures.append({"suite_id": suite_id, "failures": [str(exc)]})
             continue
         suite_failures = validate_suite(suite, official=True, now=now)
+        report = suite.config.get("report") if isinstance(suite, Suite) else None
+        if isinstance(report, dict) and report.get("assurance") == "conformance-fixture":
+            suite_failures.append("conformance fixtures cannot establish official program readiness")
         if suite_failures:
             failures.append({"suite_id": suite_id, "failures": suite_failures})
     return {

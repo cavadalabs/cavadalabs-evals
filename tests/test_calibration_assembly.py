@@ -261,7 +261,10 @@ pass_specificity_gate = 0.8
         "metrics": {"judge_calibration": {"primary": measured}},
     }
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setattr("cavada_eval.calibration.verify_bundle", lambda _run: {"valid": True, "failures": []})
+    monkeypatch.setattr(
+        "cavada_eval.calibration.verify_bundle",
+        lambda _run, **_kwargs: {"valid": True, "failures": []},
+    )
     report = qualify_judge_run(run, blueprint, corpus, tmp_path / "passed.json")
     assert report["passed"] is True
     assert report["judges"]["primary"]["diagnostic_slices"]["probe_type"]["standard"]["cases"] == 2

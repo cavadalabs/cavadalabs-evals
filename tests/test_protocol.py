@@ -207,6 +207,8 @@ def test_doctor_fails_when_required_repository_resources_are_missing(tmp_path: P
     (tmp_path / "uv.lock").touch()
     result = _doctor(tmp_path)
     assert result["ready"] is result["structural_ready"] is False
+    assert result["official_engine_ready"] is False
+    assert result["verified_official_suite_count"] == 0
     assert result["official_ready"] is False
 
 
@@ -214,11 +216,34 @@ def test_doctor_distinguishes_structural_from_official_readiness(tmp_path: Path,
     (tmp_path / ".git").mkdir()
     (tmp_path / "schemas").mkdir()
     (tmp_path / "schemas" / "suite.json").write_text("{}")
+    official_schemas = {
+        "judge-approval-3.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-approval/3.0.0",
+        "judge-qualification-blueprint-approval-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint-approval/2.0.0",
+        "judge-qualification-evidence-package-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-qualification-evidence-package/1.0.0",
+        "manifest-2.1.0.schema.json": "https://schemas.cavadalabs.com/evals/manifest/2.1.0",
+        "release-approval-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/release-approval/2.0.0",
+        "results-registry-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/results-registry/2.0.0",
+        "reviewer-qualification-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/reviewer-qualification-evidence/1.0.0",
+        "reviewer-qualification-support-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/reviewer-qualification-support/1.0.0",
+        "corpus-source-run-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/corpus-source-run-evidence/1.0.0",
+        "corpus-gold-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/corpus-gold-evidence/1.0.0",
+    }
+    for name, identifier in official_schemas.items():
+        (tmp_path / "schemas" / name).write_text(
+            json.dumps({"$id": identifier, "type": "object", "additionalProperties": False})
+        )
     (tmp_path / "uv.lock").touch()
     (tmp_path / "PROTOCOL.md").touch()
     monkeypatch.setattr(
         "cavada_eval.cli.load_program_registry",
-        lambda *_args, **_kwargs: {"summary": {"official_capable": 0}},
+        lambda *_args, **_kwargs: {
+            "summary": {
+                "declared_official_capable": 999,
+                "official_capable": 999,
+                "verified_official_capable": 0,
+                "official_validation_failures": [],
+            }
+        },
     )
     for name in (
         "DEEPEVAL_TELEMETRY_OPT_OUT",
@@ -231,7 +256,15 @@ def test_doctor_distinguishes_structural_from_official_readiness(tmp_path: Path,
 
     result = _doctor(tmp_path)
     assert result["ready"] is result["structural_ready"] is True
+    assert result["official_engine_ready"] is True
+    assert result["verified_official_suite_count"] == 0
     assert result["official_ready"] is False
+    assert result["official_blockers"]
+
+    (tmp_path / "schemas" / "manifest-2.1.0.schema.json").write_text("{}")
+    malformed = _doctor(tmp_path)
+    assert malformed["official_engine_ready"] is False
+    assert {"invalid_official_schemas": ["manifest-2.1.0.schema.json"]} in malformed["official_blockers"]
 
 
 @pytest.mark.parametrize(("field", "message"), [("tags", "valid tags"), ("source", "source and review method")])
@@ -291,10 +324,14 @@ def test_secret_like_dataset_content_is_rejected(tmp_path: Path) -> None:
 
 
 def test_judge_output_must_be_strict() -> None:
-    parsed, _ = _judge_result({"choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"ok"}'}}]})
+    parsed, _ = _judge_result(
+        {"choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"ok","criteria":{}}'}}]}
+    )
     assert parsed["verdict"] == "pass"
     with pytest.raises(ProtocolError):
         _judge_result({"choices": [{"message": {"content": "PASS"}}]})
+    with pytest.raises(ProtocolError, match="fields must be exactly"):
+        _judge_result({"choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"ok"}'}}]})
 
 
 def test_deterministic_checks_cannot_be_overridden() -> None:
@@ -343,7 +380,9 @@ def test_end_to_end_run_writes_auditable_artifacts(tmp_path: Path) -> None:
             if self.path.endswith("/chat/completions"):
                 body = {
                     "model": "judge-real",
-                    "choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"supported"}'}}],
+                    "choices": [
+                        {"message": {"content": '{"verdict":"pass","score":5,"reason":"supported","criteria":{}}'}}
+                    ],
                 }
             else:
                 assert payload["message"] == "Question"

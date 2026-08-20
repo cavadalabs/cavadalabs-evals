@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/corpus-gold-evidence/1.0.0",
+  "title": "CavadaLabs Qualification Corpus Human-Gold Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_version",
+    "evidence_id",
+    "status",
+    "reviewers",
+    "adjudicator_id",
+    "adjudication_method",
+    "completed_at",
+    "record_count",
+    "gold_items_subject_sha256"
+  ],
+  "properties": {
+    "evidence_version": {"const": "1.0.0"},
+    "evidence_id": {"type": "string", "minLength": 1},
+    "status": {"const": "approved"},
+    "reviewers": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reviewer_id", "decision", "rationale", "reviewed_at"],
+        "properties": {
+          "reviewer_id": {"type": "string", "minLength": 1},
+          "decision": {"enum": ["approved", "rejected"]},
+          "rationale": {"type": "string", "minLength": 1},
+          "reviewed_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
+    "adjudicator_id": {"type": "string", "minLength": 1},
+    "adjudication_method": {"type": "string", "minLength": 1},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "record_count": {"type": "integer", "minimum": 1},
+    "gold_items_subject_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

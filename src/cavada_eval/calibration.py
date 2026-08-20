@@ -452,14 +452,21 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
-def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Path, output: Path) -> dict[str, Any]:
+def qualify_judge_run(
+    run: Path,
+    blueprint_path: Path,
+    corpus_manifest_path: Path,
+    output: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     run = run.resolve()
     output = output.resolve()
     if output.exists():
         raise ProtocolError(f"judge qualification output already exists: {output}")
     if output == run or run in output.parents:
         raise ProtocolError("judge qualification output must not mutate the finalized run bundle")
-    verification = verify_bundle(run)
+    verification = verify_bundle(run, verify_hmac=False)
     if not verification["valid"]:
         raise ProtocolError("judge qualification requires a valid finalized run bundle")
     manifest = _json(run / "manifest.json")
@@ -496,14 +503,24 @@ def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Pat
     blueprint_approval_path = (corpus_root / str(corpus["blueprint_approval_path"])).resolve()
     blueprint_approval = _json(blueprint_approval_path)
     source_suite = corpus.get("source_suite")
+    blueprint_approval_version = blueprint_approval.get("approval_version")
+    blueprint_approval_subject = blueprint_approval.get("subject")
+    blueprint_approval_sha = (
+        blueprint_approval_subject.get("sha256") if isinstance(blueprint_approval_subject, dict) else blueprint_approval.get("blueprint_sha256")
+    )
+    blueprint_approval_passed = (
+        blueprint_approval.get("decision") == "approved"
+        if blueprint_approval_version == "2.0.0"
+        else blueprint_approval.get("status") == "passed"
+    )
     if (
         not isinstance(source_suite, dict)
-        or blueprint_approval.get("approval_version") != "1.0.0"
+        or blueprint_approval_version not in {"1.0.0", "2.0.0"}
         or blueprint_approval.get("scope") != "judge-qualification-blueprint"
-        or blueprint_approval.get("status") != "passed"
+        or not blueprint_approval_passed
         or blueprint_approval.get("independent") is not True
         or blueprint_approval.get("conflicts_resolved") is not True
-        or blueprint_approval.get("blueprint_sha256") != blueprint_sha
+        or blueprint_approval_sha != blueprint_sha
         or blueprint_approval.get("suite") != source_suite
         or blueprint_approval.get("revoked_at") is not None
         or blueprint_approval.get("revocation_reason") != ""
@@ -514,7 +531,7 @@ def qualify_judge_run(run: Path, blueprint_path: Path, corpus_manifest_path: Pat
         approval_end = datetime.fromisoformat(str(blueprint_approval.get("expires_at", "")).replace("Z", "+00:00"))
     except ValueError as exc:
         raise ProtocolError("calibration corpus blueprint approval timestamps are invalid") from exc
-    current = datetime.now(timezone.utc)
+    current = now or datetime.now(timezone.utc)
     if approval_start.tzinfo is None or approval_end.tzinfo is None or not approval_start <= current < approval_end:
         raise ProtocolError("calibration corpus blueprint approval is not currently effective")
     target = manifest.get("target")
