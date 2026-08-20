@@ -15,6 +15,7 @@ from cavada_eval.demo import run_demo
 from cavada_eval.metrics import deterministic_evaluation
 from cavada_eval.protocol import ProtocolError, Suite, sha256_file
 from cavada_eval.release import verified_public_release
+from cavada_eval.runner import call_target
 
 
 def _bundle(root: Path, manifest: str | dict[str, object]) -> Path:
@@ -561,7 +562,7 @@ def test_suite_snapshot_allows_installed_package_hardlinks(tmp_path: Path) -> No
     rubric.write_text("rubric", encoding="utf-8")
     suite = Suite(
         root,
-        {"target": {"responses": responses.name, "responses_sha256": sha256_file(responses)}},
+        {"target": {"kind": "recorded", "responses": responses.name, "responses_sha256": sha256_file(responses)}},
         (),
         "rubric",
         dataset,
@@ -569,3 +570,5 @@ def test_suite_snapshot_allows_installed_package_hardlinks(tmp_path: Path) -> No
     )
 
     assert suite_snapshot_files(suite) == {"responses.jsonl": cached.read_bytes()}
+    answer, *_evidence = call_target(suite, "recorded-local", "", {"case_id": "case-1"}, None, 1)
+    assert answer == "ok"

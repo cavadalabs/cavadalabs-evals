@@ -232,10 +232,10 @@ def _get(value: Any, dotted: str) -> Any:
     return value
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl(path: Path, *, require_unique: bool = True) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     try:
-        lines = _read_regular(path.parent, Path(path.name)).decode("utf-8").splitlines()
+        lines = _read_regular(path.parent, Path(path.name), require_unique=require_unique).decode("utf-8").splitlines()
     except FileNotFoundError:
         return rows
     except (OSError, UnicodeDecodeError) as exc:
@@ -740,7 +740,7 @@ def call_target(
             recorded_responses_sha256=sha256_file(path),
         )
         request_id = uuid.uuid4().hex
-        for row in _read_jsonl(path):
+        for row in _read_jsonl(path, require_unique=False):
             if row.get("case_id") == prompt["case_id"]:
                 response = row.get("response")
                 recorded_raw = dict(response) if isinstance(response, dict) else row
