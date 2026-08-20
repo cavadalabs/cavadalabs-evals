@@ -20,6 +20,17 @@
       }
     },
     "suite": {"type": "object"},
-    "results": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["case_id", "status"],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["pass", "fail", "scored", "invalid", "error", "skipped"]}
+        }
+      }
+    }
   }
 }

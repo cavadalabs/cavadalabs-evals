@@ -1,6 +1,6 @@
-register_version = "1.1.0"
-reviewed_at = "2026-08-05"
-review_due = "2026-11-03"
+register_version = "1.2.0"
+reviewed_at = "2026-08-06"
+review_due = "2026-11-04"
 
 [[sources]]
 id = "nist-ai-rmf"
@@ -511,3 +511,20 @@ data_transfer = "third-party-service"
 approval = "service-authorization-required"
 official_use = "blocked"
 conditions = ["Never record or redistribute private official prompts", "Obtain service authorization, contract, privacy, transfer, and publication approval", "Keep MLCommons results separate from CavadaLabs official claims"]
+
+[[sources]]
+id = "ocrbench-v2"
+kind = "benchmark"
+name = "OCRBench v2"
+publisher = "MultimodalOCR contributors"
+version = "2"
+revision = "cbf4b64d2981dc5f9009df4bb7f5581f84381ad4"
+primary_url = "https://github.com/Yuliang-Liu/MultimodalOCR/tree/main/OCRBench_v2"
+license = "MIT repository code; benchmark dataset is research-only and non-commercial"
+license_url = "https://github.com/Yuliang-Liu/MultimodalOCR/tree/main/OCRBench_v2#copyright-statement"
+redistribution = "prohibited"
+commercial_use = "prohibited by the published dataset terms unless separately authorized by the rights holders"
+data_transfer = "review-required"
+approval = "legal-review-required"
+official_use = "discovery-only"
+conditions = ["Never bundle or redistribute the dataset", "Pin and hash dataset and evaluator artifacts", "Keep upstream scores separate from CavadaLabs official claims"]

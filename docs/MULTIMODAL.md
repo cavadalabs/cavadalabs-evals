@@ -18,3 +18,7 @@ requires an approved verifier and does not prove that content is truthful.
 Original assets and failure previews are restricted. Public reports may contain
 only separately sanitized derivatives. Rich media parsers and custom metrics
 must execute in a sandbox with CPU, memory, time, filesystem, and network limits.
+
+For real OCR evaluation, use the pinned, non-redistributing
+[OCRBench v2 external adapter](OCRBENCH_V2.md). Its research-only dataset is not
+included and its upstream scores remain separate from CavadaLabs official claims.

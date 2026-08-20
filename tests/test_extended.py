@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -271,7 +273,7 @@ def test_program_registry_is_valid_and_rejects_duplicate_identity(tmp_path: Path
     assert registry["summary"]["by_status"].get("draft", 0) == 0
     assert registry["summary"]["by_status"]["planned"] == 15
     assert registry["summary"]["official_capable"] == 0
-    assert registry["summary"]["sources"]["count"] == 30
+    assert registry["summary"]["sources"]["count"] == 31
     assert registry["summary"]["sources"]["by_official_use"]["blocked"] == 1
     assert registry["summary"]["crosswalk"]["count"] == 18
     assert registry["summary"]["crosswalk"]["by_status"]["implemented-partial"] == 5
@@ -468,6 +470,39 @@ def test_external_import_is_pinned_and_verifiable(tmp_path: Path) -> None:
     output = tmp_path / "import"
     assert import_external_results(source, output)["result_count"] == 1
     assert verify_bundle(output)["valid"] is True
+
+
+def test_ocrbench_v2_conversion_preserves_scores_without_inventing_passes(tmp_path: Path) -> None:
+    source = tmp_path / "ocrbench.json"
+    source.write_text(
+        json.dumps(
+            [
+                {"id": 1, "type": "full-page OCR en", "dataset_name": "fixture", "score": 0.75},
+                {"id": 2, "type": "table parsing cn", "dataset_name": "fixture", "score": 0, "ignore": "True"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    contract = tmp_path / "external.json"
+    subprocess.run(  # noqa: S603 - fixed local test script and interpreter
+        [
+            sys.executable,
+            str(Path(__file__).parents[1] / "scripts" / "convert_ocrbench_v2.py"),
+            str(source),
+            str(contract),
+            "--dataset-sha256",
+            "a" * 64,
+            "--evaluator-sha256",
+            "b" * 64,
+            "--invocation",
+            "python eval.py --input_path predictions.json --output_path results.json",
+        ],
+        check=True,
+    )
+    converted = json.loads(contract.read_text(encoding="utf-8"))
+    assert converted["source"]["commit"] == "cbf4b64d2981dc5f9009df4bb7f5581f84381ad4"
+    assert [(row["status"], row["score"]) for row in converted["results"]] == [("scored", 0.75), ("skipped", 0.0)]
+    assert import_external_results(contract, tmp_path / "import")["result_count"] == 2
 
 
 def test_recorded_target_adapter_is_offline_and_pinned(tmp_path: Path) -> None:
