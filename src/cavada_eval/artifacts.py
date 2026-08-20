@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import math
 import os
 import re
 import stat
@@ -12,38 +11,15 @@ from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
 from typing import Any, BinaryIO
 
-from .protocol import ProtocolError, atomic_json, atomic_text
+from .protocol import ProtocolError, _strict_json_loads, atomic_json, atomic_text
 
 BUNDLE_VERSION = "1.0.0"
 EXCLUDED_FROM_BUNDLE = {"bundle.json", "checksums.txt", "signature.json", "verification.json"}
 
 
-def _json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
-
-
-def _json_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON number: {value}")
-
-
-def _finite_json(value: Any) -> bool:
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, list):
-        return all(_finite_json(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _finite_json(item) for key, item in value.items())
-    return value is None or isinstance(value, (str, int, bool))
-
-
 def _json_object(raw: bytes) -> dict[str, Any]:
-    value = json.loads(raw.decode("utf-8"), object_pairs_hook=_json_pairs, parse_constant=_json_constant)
-    if not isinstance(value, dict) or not _finite_json(value):
+    value = _strict_json_loads(raw)
+    if not isinstance(value, dict):
         raise ValueError("expected a finite JSON object")
     return value
 
@@ -85,11 +61,15 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 parent = child
             name = relative.parts[-1]
             before_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISREG(before_file.st_mode):
-                raise OSError("bundle artifact is not a regular file")
+            if not stat.S_ISREG(before_file.st_mode) or before_file.st_nlink != 1:
+                raise OSError("bundle artifact is not a unique regular file")
             descriptor = os.open(name, file_flags, dir_fd=parent)
             opened_file = os.fstat(descriptor)
-            if not stat.S_ISREG(opened_file.st_mode) or _identity(opened_file) != _identity(before_file):
+            if (
+                not stat.S_ISREG(opened_file.st_mode)
+                or opened_file.st_nlink != 1
+                or _identity(opened_file) != _identity(before_file)
+            ):
                 raise OSError("bundle artifact changed before it was opened")
             handle = os.fdopen(descriptor, "rb", closefd=False)
             try:
@@ -97,7 +77,11 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 if _identity(os.fstat(descriptor)) != _identity(opened_file):
                     raise OSError("bundle artifact changed while it was read")
                 current_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                if not stat.S_ISREG(current_file.st_mode) or _identity(current_file) != _identity(opened_file):
+                if (
+                    not stat.S_ISREG(current_file.st_mode)
+                    or current_file.st_nlink != 1
+                    or _identity(current_file) != _identity(opened_file)
+                ):
                     raise OSError("bundle artifact path changed while it was read")
                 for entry_parent, entry_name, opened in reversed(entries):
                     current = os.stat(entry_name, dir_fd=entry_parent, follow_symlinks=False)
@@ -117,19 +101,23 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
     path = root / relative
     components = [root, *(root / Path(*relative.parts[:index]) for index in range(1, len(relative.parts) + 1))]
     before_components = [component.lstat() for component in components]
-    if any(not stat.S_ISDIR(value.st_mode) for value in before_components[:-1]) or not stat.S_ISREG(before_components[-1].st_mode):
+    if (
+        any(not stat.S_ISDIR(value.st_mode) for value in before_components[:-1])
+        or not stat.S_ISREG(before_components[-1].st_mode)
+        or before_components[-1].st_nlink != 1
+    ):
         raise OSError("bundle path is not regular")
     descriptor = os.open(path, file_flags)
     try:
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or _identity(opened) != _identity(before_components[-1]):
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or _identity(opened) != _identity(before_components[-1]):
             raise OSError("file changed before it was opened")
         handle = os.fdopen(descriptor, "rb", closefd=False)
         try:
             yield handle
             after = os.fstat(descriptor)
             current_components = [component.lstat() for component in components]
-            if _identity(after) != _identity(opened) or any(
+            if after.st_nlink != 1 or _identity(after) != _identity(opened) or any(
                 _identity(current) != _identity(before) for current, before in zip(current_components, before_components, strict=True)
             ):
                 raise OSError("file changed while it was read")
@@ -207,6 +195,7 @@ def verify_bundle(
     if bundle_raw != canonical_bundle:
         failures.append("bundle.json is not in canonical byte form")
     root = run_dir.resolve()
+    folded_paths: dict[str, str] = {}
     for relative, expected in bundle["files"].items():
         if not isinstance(relative, str) or not relative or not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None:
             failures.append(f"malformed artifact entry: {relative}")
@@ -216,6 +205,11 @@ def verify_bundle(
         if candidate.is_absolute() or windows_candidate.drive or ".." in candidate.parts or ".." in windows_candidate.parts or candidate.as_posix() != relative:
             failures.append(f"unsafe artifact path: {relative}")
             continue
+        folded = relative.casefold()
+        if folded in folded_paths and folded_paths[folded] != relative:
+            failures.append(f"case-colliding artifact paths: {folded_paths[folded]}, {relative}")
+            continue
+        folded_paths[folded] = relative
         path = run_dir / candidate
         try:
             current = run_dir
@@ -237,8 +231,13 @@ def verify_bundle(
             except OSError:
                 failures.append(f"unreadable artifact: {relative}")
     for path in sorted(run_dir.rglob("*")):
-        if path.is_symlink():
+        file_stat = path.lstat()
+        if stat.S_ISLNK(file_stat.st_mode):
             failures.append(f"unsafe symlink artifact: {path.relative_to(run_dir).as_posix()}")
+        elif not stat.S_ISDIR(file_stat.st_mode) and not stat.S_ISREG(file_stat.st_mode):
+            failures.append(f"unsafe non-regular artifact: {path.relative_to(run_dir).as_posix()}")
+        elif stat.S_ISREG(file_stat.st_mode) and file_stat.st_nlink != 1:
+            failures.append(f"unsafe hardlinked artifact: {path.relative_to(run_dir).as_posix()}")
     actual_files = {path.relative_to(run_dir).as_posix() for path in _files(run_dir)}
     declared_files = set(map(str, bundle["files"]))
     for relative in sorted(actual_files - declared_files):
