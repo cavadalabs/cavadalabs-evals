@@ -49,7 +49,10 @@ def validate(root: Path, *, release: bool = False, tag: str = "") -> list[str]:
             errors.append("project version must be X.Y.Z or X.Y.Z.devN")
         errors.extend(f"version mismatch: {path}={value!r}, expected {version!r}" for path, value in observed.items() if value != version)
         changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-        if f"## Unreleased ({version})" not in changelog:
+        if release:
+            if re.search(rf"^## {re.escape(version)} - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.MULTILINE) is None:
+                errors.append(f"CHANGELOG.md must contain a dated {version} release heading")
+        elif f"## Unreleased ({version})" not in changelog:
             errors.append(f"CHANGELOG.md must identify the current development version {version}")
         required = (
             "README.md",

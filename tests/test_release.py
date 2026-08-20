@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from cavada_eval import release as release_module
 from cavada_eval.artifacts import write_bundle
 from cavada_eval.cli import _export
 from cavada_eval.protocol import PROTOCOL_VERSION, ProtocolError, Suite, load_suite, sha256_file
@@ -153,7 +154,8 @@ def _release_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object
         "rationale": "The bounded evidence passed the preregistered review criteria.",
     }
     approval: dict[str, object] = {
-        "release_version": "1.0.0",
+        "release_version": "2.0.0",
+        "protocol_version": PROTOCOL_VERSION,
         "release_id": "release-1",
         "status": "approved",
         "run_id": "run-1",
@@ -173,14 +175,20 @@ def _release_fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object
         },
         "approved_at": "2026-08-05T11:30:00Z",
         "expires_at": "2026-08-31T00:00:00Z",
+        "revoked_at": None,
+        "revocation_reason": "",
     }
     approval_path = tmp_path / "approval.json"
     approval_path.write_text(json.dumps(approval), encoding="utf-8")
     return run, engagement_path, approval_path, approval
 
 
+def _verification_stub(run: Path, **_kwargs: object) -> dict[str, object]:
+    return {"valid": True, "failures": [], "bundle_sha256": sha256_file(run / "bundle.json")}
+
+
 def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
     run, engagement, approval, _ = _release_fixture(tmp_path)
     released = verified_public_release(run, engagement, approval, now=NOW)
     assert released["release_id"] == "release-1"
@@ -193,7 +201,7 @@ def test_engagement_is_exact_and_public_release_is_post_run_and_independent(tmp_
 
 
 def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
     run, engagement, approval_path, approval = _release_fixture(tmp_path)
     decisions = approval["decisions"]
     assert isinstance(decisions, dict)
@@ -209,10 +217,49 @@ def test_public_release_rejects_self_approval_and_expired_evidence(tmp_path: Pat
         verified_public_release(run, engagement, approval_path, now=NOW)
 
 
+def test_public_release_rejects_revoked_approval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
+    run, engagement, approval_path, approval = _release_fixture(tmp_path)
+    approval["status"] = "revoked"
+    approval["revoked_at"] = "2026-08-05T11:45:00Z"
+    approval["revocation_reason"] = "Synthetic revocation test."
+    approval_path.write_text(json.dumps(approval), encoding="utf-8")
+    with pytest.raises(ProtocolError, match="status does not match|revoked"):
+        verified_public_release(run, engagement, approval_path, now=NOW)
+
+
+def test_public_release_rejects_bundle_changed_after_semantic_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, engagement, approval, _ = _release_fixture(tmp_path)
+    monkeypatch.setattr(
+        "cavada_eval.release.verify_behavior_run",
+        lambda *_args, **_kwargs: {"valid": True, "failures": [], "bundle_sha256": "0" * 64},
+    )
+    with pytest.raises(ProtocolError, match="bundle changed after semantic verification"):
+        verified_public_release(run, engagement, approval, now=NOW)
+
+
+def test_public_release_rejects_manifest_not_bound_by_verified_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, engagement, approval, _ = _release_fixture(tmp_path)
+    original = release_module._read_object
+
+    def inconsistent_manifest(path: Path, label: str) -> tuple[dict[str, object], str]:
+        value, digest = original(path, label)
+        return (value, "0" * 64) if label == "run manifest" else (value, digest)
+
+    monkeypatch.setattr(release_module, "verify_behavior_run", _verification_stub)
+    monkeypatch.setattr(release_module, "_read_object", inconsistent_manifest)
+    with pytest.raises(ProtocolError, match="bundle changed after semantic verification"):
+        verified_public_release(run, engagement, approval, now=NOW)
+
+
 def test_public_export_rejects_report_replaced_after_release_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
     run, engagement, approval, _ = _release_fixture(tmp_path)
     release = verified_public_release(run, engagement, approval, now=NOW)
 
@@ -226,7 +273,7 @@ def test_public_export_rejects_report_replaced_after_release_verification(
 
 
 def test_release_rejects_tampered_reviewer_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
     run, engagement, approval, _ = _release_fixture(tmp_path)
     (tmp_path / "review-evidence.txt").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(ProtocolError, match="review evidence hash mismatch"):
@@ -248,7 +295,7 @@ def test_governance_records_reject_duplicate_and_unknown_nested_fields(tmp_path:
     with pytest.raises(ProtocolError, match="engagement suite fields are not exact"):
         verified_engagement(engagement_path, suite, expected_model="target-model", model_revision="target-revision", now=NOW)
 
-    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", lambda *_args, **_kwargs: {"valid": True, "failures": []})
+    monkeypatch.setattr("cavada_eval.release.verify_behavior_run", _verification_stub)
     release_root = tmp_path / "release"
     release_root.mkdir()
     run, engagement_path, approval_path, approval = _release_fixture(release_root)

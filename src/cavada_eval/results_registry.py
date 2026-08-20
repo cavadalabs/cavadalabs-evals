@@ -27,6 +27,12 @@ MAX_ARCHIVE_FILES = 100_000
 _SHA256 = re.compile(r"[a-f0-9]{64}")
 _COMMIT = re.compile(r"[a-f0-9]{40}")
 _REQUIRED_REFERENCES = {"run_bundle", "engagement", "release_approval", "verification_result"}
+_REFERENCE_METADATA = {
+    "run_bundle": ("behavior-run-bundle", "1.0.0", "bundle.json"),
+    "engagement": ("engagement-governance", "1.1.0", "engagement.json"),
+    "release_approval": ("public-release-approval", "2.0.0", "release-approval.json"),
+    "verification_result": ("behavior-verification-result", "2.0.0", "verification.json"),
+}
 _REFERENCE_FIELDS = {"relative_path", "sha256", "media_type", "artifact_type", "schema_version"}
 _ARCHIVE_FIELDS = {"archive_version", "artifact_type", "files", *_REQUIRED_REFERENCES}
 _REGISTRY_FIELDS = {"registry_version", "records", "events"}
@@ -72,6 +78,18 @@ _TERMINAL_EVENTS = {"withdrawn", "corrected", "superseded", "expired"}
 BehaviorVerifier = Callable[..., dict[str, Any]]
 ReleaseVerifier = Callable[..., dict[str, Any]]
 AttestationVerifier = Callable[[Path, dict[str, Any]], list[str]]
+
+
+def _stable_stat(value: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -198,7 +216,7 @@ def _source_files(root: Path) -> dict[str, bytes]:
         if len(files) >= MAX_ARCHIVE_FILES or total > MAX_ARCHIVE_BYTES:
             raise ProtocolError("public evidence source exceeds the bounded archive limits")
         files[relative] = raw
-    if root.lstat() != before:
+    if _stable_stat(root.lstat()) != _stable_stat(before):
         raise ProtocolError("public evidence source changed while it was read")
     return files
 
@@ -207,18 +225,15 @@ def build_public_evidence_archive(source_root: Path, archive_directory: Path, *,
     """Build a byte-deterministic public evidence tar from an already prepared closed directory."""
     if set(references) != _REQUIRED_REFERENCES:
         raise ProtocolError(f"archive references must be exactly {sorted(_REQUIRED_REFERENCES)}")
+    for name, relative in references.items():
+        if PurePosixPath(relative).name != _REFERENCE_METADATA[name][2]:
+            raise ProtocolError(f"archive {name} must reference canonical {_REFERENCE_METADATA[name][2]}")
     files = _source_files(source_root)
-    reference_meta = {
-        "run_bundle": ("behavior-run-bundle", "1.0.0"),
-        "engagement": ("engagement-governance", "1.1.0"),
-        "release_approval": ("public-release-approval", "1.0.0"),
-        "verification_result": ("behavior-verification-result", "2.0.0"),
-    }
     by_path = {path: name for name, path in references.items()}
     declared: list[dict[str, Any]] = []
     for path, raw in sorted(files.items()):
-        name = by_path.get(path)
-        artifact_type, schema_version = reference_meta[name] if name is not None else ("supporting-evidence", None)
+        reference_name = by_path.get(path)
+        artifact_type, schema_version = _REFERENCE_METADATA[reference_name][:2] if reference_name is not None else ("supporting-evidence", None)
         declared.append(
             {
                 "relative_path": path,
@@ -264,7 +279,12 @@ def build_public_evidence_archive(source_root: Path, archive_directory: Path, *,
         current_directory = archive_directory.lstat()
         if (current_directory.st_dev, current_directory.st_ino) != (directory_state.st_dev, directory_state.st_ino):
             raise ProtocolError("public evidence archive destination changed while it was written")
-        os.replace(temporary, output)
+        try:
+            os.link(temporary, output, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise ProtocolError("public evidence archives are immutable and cannot be overwritten") from exc
+        except OSError as exc:
+            raise ProtocolError("public evidence archive could not be published atomically") from exc
     finally:
         temporary.unlink(missing_ok=True)
     return output
@@ -281,7 +301,7 @@ def _read_archive(path: Path) -> tuple[str, dict[str, Any], dict[str, bytes]]:
         raw = _read_regular(path.parent, Path(path.name))
     except OSError as exc:
         raise ProtocolError("public evidence archive changed while it was read") from exc
-    if path.lstat() != before:
+    if _stable_stat(path.lstat()) != _stable_stat(before):
         raise ProtocolError("public evidence archive changed while it was read")
     digest = hashlib.sha256(raw).hexdigest()
     files: dict[str, bytes] = {}
@@ -296,6 +316,10 @@ def _read_archive(path: Path) -> tuple[str, dict[str, Any], dict[str, bytes]]:
                 if errors or name is None:
                     raise ProtocolError(errors[0])
                 collision = unicodedata.normalize("NFC", name).casefold()
+                parts = PurePosixPath(collision).parts
+                ancestors = {"/".join(parts[:index]) for index in range(1, len(parts))}
+                if ancestors & folded or any(existing.startswith(f"{collision}/") for existing in folded):
+                    raise ProtocolError(f"public evidence archive has a file/descendant path collision: {name}")
                 if name in files or collision in folded:
                     raise ProtocolError(f"public evidence archive has a duplicate or case-colliding path: {name}")
                 folded.add(collision)
@@ -377,6 +401,14 @@ def _archive_manifest_errors(manifest: dict[str, Any], files: Mapping[str, bytes
         relative = str(reference["relative_path"])
         if declared.get(relative) != reference:
             errors.append(f"archive {name} is not exactly one of the declared files")
+        expected_type, expected_schema, expected_basename = _REFERENCE_METADATA[name]
+        if (
+            reference.get("artifact_type") != expected_type
+            or reference.get("schema_version") != expected_schema
+            or reference.get("media_type") != _media_type(relative)
+            or PurePosixPath(relative).name != expected_basename
+        ):
+            errors.append(f"archive {name} metadata or canonical basename is invalid")
         digest = str(reference.get("sha256"))
         if relative in semantic_paths or digest in semantic_digests:
             errors.append("archive semantic references must have distinct paths and digests")
@@ -433,7 +465,12 @@ def verify_public_evidence_archive(
         release_verifier = verified_public_release
     with tempfile.TemporaryDirectory(prefix="cavada-public-evidence-") as temporary:
         root = Path(temporary)
-        _materialize(files, root)
+        try:
+            _materialize(files, root)
+        except OSError as exc:
+            failures.append(f"public evidence archive cannot be materialized safely: {exc}")
+            result["failures"] = failures
+            return result
         run_bundle = Path(str(manifest["run_bundle"]["relative_path"]))
         run_dir = root / run_bundle.parent
         engagement = root / str(manifest["engagement"]["relative_path"])
@@ -475,6 +512,46 @@ def verify_public_evidence_archive(
             }
         )
     return result
+
+
+def attestable_archive_sha256(
+    archive_path: Path,
+    *,
+    now: datetime | None = None,
+    behavior_verifier: BehaviorVerifier | None = None,
+    release_verifier: ReleaseVerifier | None = None,
+) -> str | None:
+    """Return an official archive digest; valid conformance fixtures are deliberately skipped."""
+    reconstructed = verify_public_evidence_archive(
+        archive_path,
+        now=now,
+        behavior_verifier=behavior_verifier,
+        release_verifier=release_verifier,
+    )
+    if reconstructed.get("valid") is not True:
+        raise ProtocolError("public evidence archive is not attestable:\n" + "\n".join(reconstructed["failures"]))
+    digest = reconstructed.get("archive_sha256")
+    if (
+        not isinstance(digest, str)
+        or _SHA256.fullmatch(digest) is None
+        or archive_path.name != f"{digest}.tar"
+    ):
+        raise ProtocolError("public evidence archive is not stored under its content-addressed filename")
+    manifest = reconstructed.get("behavior_manifest")
+    release = reconstructed.get("release_verification")
+    if isinstance(manifest, dict) and manifest.get("assurance") == "conformance-fixture":
+        return None
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("assurance") != "official"
+        or not isinstance(release, dict)
+        or release.get("assurance_level") != "approved"
+        or release.get("model_claim_allowed") is not True
+        or release.get("benchmark_claim_allowed") is not True
+        or not release.get("permitted_claims")
+    ):
+        raise ProtocolError("public evidence archive is neither an official approved result nor a conformance fixture")
+    return digest
 
 
 def _attestation_binding_errors(attestation: Any, record: dict[str, Any], archive_path: Path) -> list[str]:
@@ -548,7 +625,7 @@ def verify_github_attestation(archive_path: Path, attestation: dict[str, Any]) -
     return ["verified GitHub attestation does not contain the exact expected subject name and digest"]
 
 
-def _record_shape_errors(record: Any, index: int) -> list[str]:
+def _record_shape_errors(record: Any, index: int, now: datetime) -> list[str]:
     label = f"registry records[{index}]"
     errors = _exact(record, _RECORD_FIELDS, label)
     if errors or not isinstance(record, dict):
@@ -589,6 +666,8 @@ def _record_shape_errors(record: Any, index: int) -> list[str]:
     errors.extend(time_errors)
     if published is not None and expires is not None and published >= expires:
         errors.append(f"{label} publication must precede expiry")
+    if published is not None and published > now:
+        errors.append(f"{label}.published_at is in the future")
     claims = record.get("claim_scope")
     if not isinstance(claims, list) or any(not isinstance(item, str) or not item.strip() for item in claims) or len(claims) != len(set(claims)):
         errors.append(f"{label}.claim_scope must contain unique non-empty strings")
@@ -639,8 +718,10 @@ def _event_errors(events: Any, records: list[dict[str, Any]], now: datetime) -> 
             continue
         if event.get("event_type") not in {"published", *_TERMINAL_EVENTS}:
             errors.append(f"{label}.event_type is invalid")
-        _, time_errors = _timestamp(event.get("occurred_at"), f"{label}.occurred_at")
+        occurred, time_errors = _timestamp(event.get("occurred_at"), f"{label}.occurred_at")
         errors.extend(time_errors)
+        if occurred is not None and occurred > now:
+            errors.append(f"{label}.occurred_at is in the future")
         if not isinstance(event.get("reason"), str) or not event["reason"].strip():
             errors.append(f"{label}.reason must be non-empty")
         chains[str(record_id)].append(event)
@@ -721,10 +802,23 @@ def validate_registry_v2(
             if not isinstance(previous_events, list) or events[: len(previous_events)] != previous_events:
                 errors.append("registry lifecycle events are not append-only")
     record_ids: set[str] = set()
+    archive_digests: set[str] = set()
+    release_approval_digests: set[str] = set()
     typed_records: list[dict[str, Any]] = []
     now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        errors.append("registry verification now must include a timezone")
+        now = now.replace(tzinfo=timezone.utc)
+    terminal_record_ids = {
+        str(event.get("record_id"))
+        for event in events
+        if isinstance(event, dict)
+        and event.get("event_type") in _TERMINAL_EVENTS
+        and (occurred := _timestamp(event.get("occurred_at"), "terminal event occurred_at")[0]) is not None
+        and occurred <= now
+    }
     for index, value in enumerate(records):
-        errors.extend(_record_shape_errors(value, index))
+        errors.extend(_record_shape_errors(value, index, now))
         if not isinstance(value, dict):
             continue
         typed_records.append(value)
@@ -736,6 +830,15 @@ def validate_registry_v2(
         archive = value.get("archive")
         if not isinstance(archive, dict) or not isinstance(archive.get("relative_path"), str) or not isinstance(archive.get("sha256"), str):
             continue
+        archive_digest = archive["sha256"]
+        if archive_digest in archive_digests:
+            errors.append(f"duplicate registry archive digest: {archive_digest}")
+        archive_digests.add(archive_digest)
+        approval_digest = value.get("release_approval_sha256")
+        if isinstance(approval_digest, str):
+            if approval_digest in release_approval_digests:
+                errors.append(f"duplicate registry release approval digest: {approval_digest}")
+            release_approval_digests.add(approval_digest)
         if root is None:
             errors.append(f"registry record {record_id} cannot be verified without the registry root")
             continue
@@ -744,16 +847,29 @@ def validate_registry_v2(
         if relative is None:
             continue
         archive_path = root / relative
+        publication_time, _ = _timestamp(value.get("published_at"), f"registry record {record_id} published_at")
         reconstructed = verify_public_evidence_archive(
             archive_path,
             expected_digest=archive["sha256"],
-            now=now,
+            now=publication_time or now,
             behavior_verifier=behavior_verifier,
             release_verifier=release_verifier,
         )
         errors.extend(f"registry record {record_id}: {failure}" for failure in reconstructed["failures"])
+        if str(record_id) not in terminal_record_ids and publication_time is not None and publication_time != now:
+            current = verify_public_evidence_archive(
+                archive_path,
+                expected_digest=archive["sha256"],
+                now=now,
+                behavior_verifier=behavior_verifier,
+                release_verifier=release_verifier,
+            )
+            errors.extend(
+                f"registry record {record_id} current assurance: {failure}" for failure in current["failures"]
+            )
         manifest = reconstructed.get("manifest")
         behavior_manifest = reconstructed.get("behavior_manifest")
+        behavior_verification = reconstructed.get("behavior_verification")
         release = reconstructed.get("release_verification")
         if isinstance(manifest, dict):
             if value.get("verification_result_sha256") != manifest.get("verification_result", {}).get("sha256"):
@@ -775,14 +891,25 @@ def validate_registry_v2(
                 errors.append(f"registry record {record_id} protocol_version does not match the behavior manifest")
             if value.get("assurance_level") != behavior_manifest.get("assurance"):
                 errors.append(f"registry record {record_id} assurance_level does not match the behavior manifest")
+        if isinstance(behavior_verification, dict) and value.get("rankable") != behavior_verification.get("rankable"):
+            errors.append(f"registry record {record_id} rankable does not match canonical behavior verification")
         if isinstance(release, dict):
-            if value.get("claim_scope") != release.get("permitted_claims"):
+            release_claim_scope = [] if value.get("record_type") == "conformance" else release.get("permitted_claims")
+            if value.get("claim_scope") != release_claim_scope:
                 errors.append(f"registry record {record_id} claim_scope does not match the release approval")
             for field in ("model_claim_allowed", "benchmark_claim_allowed"):
                 if value.get(field) != release.get(field):
                     errors.append(f"registry record {record_id} {field} does not match the release verification")
             if value.get("expires_at") != release.get("expires_at"):
                 errors.append(f"registry record {record_id} expires_at does not match the release approval")
+            release_approved, release_time_errors = _timestamp(
+                release.get("approved_at"),
+                f"registry record {record_id} release approved_at",
+            )
+            errors.extend(release_time_errors)
+            published, _ = _timestamp(value.get("published_at"), f"registry record {record_id} published_at")
+            if release_approved is not None and published is not None and release_approved > published:
+                errors.append(f"registry record {record_id} was published before its release approval")
         if value.get("record_type") == "official":
             attestation = value.get("attestation")
             binding_errors = _attestation_binding_errors(attestation, value, archive_path)
