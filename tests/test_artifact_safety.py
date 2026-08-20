@@ -9,6 +9,7 @@ import pytest
 
 from cavada_eval.artifacts import snapshot_bundle_files, verify_bundle, write_bundle
 from cavada_eval.protocol import ProtocolError, _strict_json_loads
+from cavada_eval.runner import _python_source_files
 
 
 def test_bundle_rejects_hardlinks_and_case_collisions(tmp_path: Path) -> None:
@@ -41,6 +42,16 @@ def test_bundle_rejects_hardlinks_and_case_collisions(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert any("case-colliding artifact paths" in failure for failure in verify_bundle(colliding)["failures"])
+
+
+def test_installed_python_source_allows_package_cache_hardlinks(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    cached = tmp_path / "cached.py"
+    cached.write_text("VALUE = 1\n", encoding="utf-8")
+    os.link(cached, source / "module.py")
+
+    assert _python_source_files(source) == {"module.py": b"VALUE = 1\n"}
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO creation is not available")

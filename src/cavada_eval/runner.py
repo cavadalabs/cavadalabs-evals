@@ -116,7 +116,9 @@ def _python_source_files(root: Path) -> dict[str, bytes]:
     files = sorted(path.relative_to(root) for path in root.rglob("*.py") if path.is_file())
     if not files:
         raise ProtocolError(f"Python implementation source is missing: {root}")
-    return {path.as_posix(): _read_regular(root, path) for path in files}
+    # Installed wheels may be hard-linked from a package-manager cache. Identity
+    # and no-symlink checks still apply; uniqueness is an artifact-only rule.
+    return {path.as_posix(): _read_regular(root, path, require_unique=False) for path in files}
 
 
 def _python_source_digest(root: Path) -> str:

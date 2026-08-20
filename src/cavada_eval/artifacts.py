@@ -30,7 +30,7 @@ def _identity(value: os.stat_result) -> tuple[int, int, int, int]:
 
 
 @contextmanager
-def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
+def _regular_file(root: Path, relative: Path, *, require_unique: bool = True) -> Iterator[BinaryIO]:
     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
         raise OSError("unsafe relative file path")
     file_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -62,13 +62,13 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 parent = child
             name = relative.parts[-1]
             before_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISREG(before_file.st_mode) or before_file.st_nlink != 1:
+            if not stat.S_ISREG(before_file.st_mode) or (require_unique and before_file.st_nlink != 1):
                 raise OSError("bundle artifact is not a unique regular file")
             descriptor = os.open(name, file_flags, dir_fd=parent)
             opened_file = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(opened_file.st_mode)
-                or opened_file.st_nlink != 1
+                or (require_unique and opened_file.st_nlink != 1)
                 or _identity(opened_file) != _identity(before_file)
             ):
                 raise OSError("bundle artifact changed before it was opened")
@@ -80,7 +80,7 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 current_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
                 if (
                     not stat.S_ISREG(current_file.st_mode)
-                    or current_file.st_nlink != 1
+                    or (require_unique and current_file.st_nlink != 1)
                     or _identity(current_file) != _identity(opened_file)
                 ):
                     raise OSError("bundle artifact path changed while it was read")
@@ -105,20 +105,24 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
     if (
         any(not stat.S_ISDIR(value.st_mode) for value in before_components[:-1])
         or not stat.S_ISREG(before_components[-1].st_mode)
-        or before_components[-1].st_nlink != 1
+        or (require_unique and before_components[-1].st_nlink != 1)
     ):
         raise OSError("bundle path is not regular")
     descriptor = os.open(path, file_flags)
     try:
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or _identity(opened) != _identity(before_components[-1]):
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (require_unique and opened.st_nlink != 1)
+            or _identity(opened) != _identity(before_components[-1])
+        ):
             raise OSError("file changed before it was opened")
         handle = os.fdopen(descriptor, "rb", closefd=False)
         try:
             yield handle
             after = os.fstat(descriptor)
             current_components = [component.lstat() for component in components]
-            if after.st_nlink != 1 or _identity(after) != _identity(opened) or any(
+            if (require_unique and after.st_nlink != 1) or _identity(after) != _identity(opened) or any(
                 _identity(current) != _identity(before) for current, before in zip(current_components, before_components, strict=True)
             ):
                 raise OSError("file changed while it was read")
@@ -128,8 +132,8 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
         os.close(descriptor)
 
 
-def _read_regular(root: Path, relative: Path) -> bytes:
-    with _regular_file(root, relative) as handle:
+def _read_regular(root: Path, relative: Path, *, require_unique: bool = True) -> bytes:
+    with _regular_file(root, relative, require_unique=require_unique) as handle:
         return handle.read()
 
 
