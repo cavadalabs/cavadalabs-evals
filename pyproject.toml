@@ -33,7 +33,7 @@ Issues = "https://github.com/cavadalabs/cavadalabs-evals/issues"
 cavada-eval = "cavada_eval.cli:main"
 
 [dependency-groups]
-dev = ["pypdf>=6,<7", "pytest>=8.3", "reportlab>=4.4,<5", "ruff>=0.12,<1", "mypy>=1.15,<2"]
+dev = ["pypdf>=6,<7", "pytest>=8.3", "reportlab>=4.4,<5", "ruff>=0.12,<1", "mypy>=1.15,<3"]
 deepeval = ["deepeval>=3,<4"]
 
 [build-system]
