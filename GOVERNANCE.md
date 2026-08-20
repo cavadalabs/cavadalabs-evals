@@ -27,6 +27,12 @@ benchmark review. Calibration, legal, statistical, security, release, and appeal
 roles remain subject to `program/POLICY.md` and may require people independent of
 CavadaLabs or the evaluated system.
 
+The repository currently names one maintainer and has no second qualified,
+independent reviewer formally designated for governance decisions. Passing CI
+or a synthetic fixture cannot fill that role. Until such a reviewer is named
+and the relevant approval is recorded, the repository has no real approved
+suite, official result, public-release approval, or independent reproduction.
+
 ## Releases
 
 Maintainers release semantic versions from protected, reviewed commits. A release
@@ -34,3 +40,14 @@ tag must match the package version, pass CI, produce an SBOM and provenance, and
 remain immutable. Security corrections receive a new release; published tags and
 artifacts are never silently replaced.
 
+The software readiness sequence is distinct from evidence governance:
+
+1. software conformance-ready;
+2. suite approved;
+3. run official;
+4. public release approved;
+5. independently reproduced;
+6. verified registry record.
+
+No earlier state implies a later one. Registry lifecycle changes are append-only
+and preserve withdrawn, corrected, superseded, and expired evidence.

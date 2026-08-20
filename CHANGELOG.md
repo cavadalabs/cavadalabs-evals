@@ -4,16 +4,44 @@
 
 - Started the canonical `next/0.4` line from the public `main` history for the
   official-conformance milestone.
-- Added one fail-closed semantic verifier shared by verify and release, plus a
-  fully offline non-claiming official conformance fixture. The public results
-  registry remains schema-enforced empty until sanitized evidence, approval,
-  expiry, and revocation can all be independently verified.
-- Kept real behavior assurance fail-closed until judge-qualification run and
-  corpus support hashes are backed by a byte-reconstructible closure.
+- Added one fail-closed behavior verifier shared by CLI verification, runner
+  finalization, release, and registry paths. Verification result v2 separates
+  integrity, reconstructed semantics, and requested assurance for every known
+  behavior bundle; unknown artifacts are unsupported rather than vacuously
+  semantic-valid.
+- Added a strict, closed judge-qualification evidence package that preserves
+  the qualification run, corpus and support bytes, blueprint, approvals,
+  recorded judge evidence, and approver qualifications. Qualification metrics
+  and gates are reconstructed from bytes without trusting `passed=true`, and
+  base semantic verification avoids recursive qualification.
+- Added the empty, strict results registry v2 with deterministic
+  content-addressed public evidence tar archives, append-only records and
+  lifecycle events, canonical behavior/release verification, and fail-closed
+  non-rankable conformance records. Historical empty registry v1 remains
+  readable.
+- Added exact official public-archive attestation in the release workflow using
+  the already pinned GitHub Artifact Attestations action. Each newly added
+  archive is reconstructed and content-addressed first; synthetic conformance
+  archives are excluded. Offline validation checks the expected subject
+  binding; real public records require separate online GitHub/Sigstore
+  verification. HMAC remains an internal integrity control.
+- Added public release approval v2 with exact protocol binding, explicit
+  revocation state, and claim-free conformance-fixture approval.
+- Added a fully offline, synthetic, non-claiming official-path conformance fixture.
+  It tests the software path but is not an approved suite, official result,
+  public release, independent reproduction, or registry record.
 - Added immutable preregistration approvals, reconstructible calibration,
   versioned strict official schemas, and released-asset byte checks.
+- `doctor` now distinguishes structural readiness, official-engine readiness,
+  verified official suites, and overall official readiness. Current state is
+  engine-ready with zero verified official suites and `official_ready=false`.
 - Withdrew the public pairwise-judging command until its A/B and B/A runtime is
   qualified; paired statistical comparison of completed runs remains supported.
+- Private AI remains outside the canonical line. Performance official assurance
+  is outside this behavior milestone.
+- Non-empty DeepEval metric-engine behavior runs now fail before network access
+  until their engine evidence has canonical semantic reconstruction. Progress
+  events remain integrity-checked diagnostic evidence and never drive claims.
 
 - Distinguish configured server context capacity, prompt target, actual provider
   input, requested output, and actual output in cross-context performance

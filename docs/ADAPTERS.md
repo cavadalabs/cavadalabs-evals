@@ -18,6 +18,6 @@ include lm-evaluation-harness, garak, CyberSecEval, AgentDojo, PrivacyLens,
 Presidio, and licensed MLCommons practice/official workflows.
 
 DeepEval 3.x is optional. CavadaLabs sets all documented local privacy controls
-before import and does not log in or synchronize. Built-in deterministic
-DeepEval metrics are supported; LLM-based DeepEval metrics remain development-
-only until they use an identity-verifying CavadaLabs judge adapter.
+before import and does not log in or synchronize. Non-empty DeepEval
+metric-engine behavior runs are unsupported in M1 and fail before network
+access until their engine evidence has canonical semantic reconstruction.

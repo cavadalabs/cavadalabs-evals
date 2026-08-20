@@ -1,5 +1,10 @@
 # Repository readiness audit
 
+> Historical 0.3.1 audit from 2026-08-06. It is superseded by the canonical
+> 0.4 development line and must not be used as the current readiness verdict.
+> Current status is reported by `cavada-eval doctor`, `README.md`, and
+> `RESULTS_POLICY.md`.
+
 - Audit date: 2026-08-06
 - Release candidate: 0.3.1
 - Scope: repository-implementable CavadaLabs Evaluation Protocol controls

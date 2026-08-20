@@ -120,7 +120,7 @@ they never imply endorsement, accreditation, certification, or legal compliance
 without the corresponding authority.
 
 Public export is a post-run decision, not a pre-approval of unknown results. A
-release record conforming to `schemas/release-approval.schema.json` links the
+release record conforming to `schemas/release-approval-2.0.0.schema.json` links the
 verified bundle, manifest, and engagement and records independent statistical,
 security, privacy/legal, disclosure, and release decisions. The release
 decision maker is distinct from the technical reviewers and from execution and

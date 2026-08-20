@@ -320,7 +320,8 @@ never means universal correctness, universal safety, or legal certification.
 ## 21. Verification and official release gate
 
 - [x] Exercise validate, run, bundle, semantic verify, release, and export with an offline non-claiming conformance fixture.
-- [!] Include judge-qualification run and corpus support bytes in a reconstructible closure before enabling real behavior results as official.
+- [x] Include judge-qualification run, corpus, approvals, reviewer evidence, and transitive support bytes in a strict reconstructible package.
+- [!] Supply real independently approved qualification evidence before any real behavior result can be official.
 - [x] Existing unit and mock end-to-end tests pass.
 - [x] Source distribution and wheel build successfully.
 - [x] All repository-implementable checklist items are checked and tested.
