@@ -65,6 +65,17 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           sbom-path: dist/sbom.cdx.json
+      - name: Pin exact public evidence archive subjects
+        if: ${{ hashFiles('results/archive/sha256/*.tar') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd results/archive/sha256 && sha256sum -- *.tar) > "$RUNNER_TEMP/public-evidence.sha256"
+      - name: Attest exact public evidence archives
+        if: ${{ hashFiles('results/archive/sha256/*.tar') != '' }}
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-checksums: ${{ runner.temp }}/public-evidence.sha256
       - name: Create immutable release candidate
         env:
           GH_TOKEN: ${{ github.token }}
