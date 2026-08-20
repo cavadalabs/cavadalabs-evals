@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import runpy
 import shutil
 import subprocess
 import tarfile
@@ -16,9 +17,12 @@ from cavada_eval.artifacts import write_bundle
 from cavada_eval.behavior_verify import verify_behavior_run
 from cavada_eval.calibration import judge_evidence_errors
 from cavada_eval.cli import _doctor, _export
+from cavada_eval.cli import main as cli_main
 from cavada_eval.pilot import audit_pilot_campaign
 from cavada_eval.protocol import PROTOCOL_VERSION, ProtocolError, atomic_json, load_suite, sha256_bytes, sha256_file, summarize
+from cavada_eval.qualification_evidence import reconstruct_judge_qualification
 from cavada_eval.release import verified_public_release
+from cavada_eval.results_registry import build_public_evidence_archive, validate_registry_v2
 from cavada_eval.runner import _judge_system_prompt, run
 
 
@@ -142,28 +146,74 @@ minimum_power = 0.80
 ''',
         encoding="utf-8",
     )
+    reviewer_support = evidence / "blueprint-reviewer-support.json"
+    reviewer_support_sha = _write(
+        reviewer_support,
+        {
+            "evidence_version": "1.0.0",
+            "evidence_id": "synthetic-blueprint-reviewer-support",
+            "subject_id": "blueprint-reviewer",
+            "issuer_id": "blueprint-governance-assessor",
+            "evidence_type": "synthetic-test-fixture",
+            "issued_at": "2026-07-01T00:00:00Z",
+            "content": "Synthetic test-only reviewer qualification support.",
+        },
+    )
     reviewer_qualification = evidence / "blueprint-reviewer.json"
     reviewer_qualification_sha = _write(
         reviewer_qualification,
-        {"qualification_version": "1.0.0", "reviewer_id": "blueprint-reviewer", "status": "qualified"},
+        {
+            "qualification_version": "1.0.0",
+            "reviewer_id": "blueprint-reviewer",
+            "role": "blueprint-approver",
+            "decision": "qualified",
+            "assessor_id": "blueprint-governance-assessor",
+            "assessor_independent": True,
+            "conflict_of_interest_assessment": "No conflict in this synthetic test-only fixture.",
+            "conflicts_resolved": True,
+            "permitted_claim_scope": ["judge-qualification-blueprint"],
+            "supporting_evidence": [
+                {
+                    "relative_path": "evidence/blueprint-reviewer-support.json",
+                    "sha256": reviewer_support_sha,
+                    "artifact_type": "reviewer-qualification-support",
+                    "schema_version": "1.0.0",
+                }
+            ],
+            "qualified_at": "2026-07-01T00:00:00Z",
+            "expires_at": "2100-01-01T00:00:00Z",
+            "revoked_at": None,
+            "revocation_reason": "",
+        },
     )
     blueprint_approval = evidence / "qualification-blueprint-approval.json"
     blueprint_approval_sha = _write(
         blueprint_approval,
         {
-            "approval_version": "1.0.0",
+            "approval_version": "2.0.0",
             "approval_id": "blueprint-approval-1",
             "scope": "judge-qualification-blueprint",
-            "status": "passed",
-            "independent": True,
-            "blueprint_sha256": sha256_file(blueprint),
+            "protocol_version": PROTOCOL_VERSION,
+            "subject": {
+                "relative_path": "evidence/qualification-blueprint.toml",
+                "sha256": sha256_file(blueprint),
+                "artifact_type": "qualification-blueprint",
+                "schema_version": "1.0.0",
+            },
             "suite": identity,
+            "decision": "approved",
+            "independent": True,
             "approver_id": "blueprint-reviewer",
-            "approver_qualification_evidence": "evidence/blueprint-reviewer.json",
-            "approver_qualification_evidence_sha256": reviewer_qualification_sha,
-            "conflicts": "none declared",
+            "approver_qualification_evidence": {
+                "relative_path": "evidence/blueprint-reviewer.json",
+                "sha256": reviewer_qualification_sha,
+                "artifact_type": "blueprint-approver-qualification",
+                "schema_version": "1.0.0",
+            },
+            "conflict_of_interest_assessment": "No conflict in this synthetic test-only fixture.",
             "conflicts_resolved": True,
             "decision_rationale": "The preregistered design and fixed gates are adequate.",
+            "permitted_claim_scope": ["judge-qualification-blueprint"],
             "approved_at": "2026-08-01T00:00:00Z",
             "expires_at": "2099-08-01T00:00:00Z",
             "revoked_at": None,
@@ -638,6 +688,11 @@ def _source_repository(root: Path) -> Path:
     source.mkdir()
     repository = Path(__file__).parents[1]
     (source / "PROTOCOL.md").write_bytes((repository / "PROTOCOL.md").read_bytes())
+    (source / "pyproject.toml").write_text(
+        '[project]\nname = "synthetic-conformance-source"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    (source / "uv.lock").write_text("version = 1\nrevision = 1\n", encoding="utf-8")
     shutil.copytree(
         repository / "src" / "cavada_eval",
         source / "src" / "cavada_eval",
@@ -649,7 +704,7 @@ def _source_repository(root: Path) -> Path:
         ("init", "-q"),
         ("config", "user.email", "conformance@example.invalid"),
         ("config", "user.name", "Conformance Fixture"),
-        ("add", "PROTOCOL.md", "src/cavada_eval"),
+        ("add", "PROTOCOL.md", "pyproject.toml", "uv.lock", "src/cavada_eval"),
         ("commit", "-q", "-m", "conformance fixture source"),
     ):
         subprocess.run([git, "-C", str(source), *arguments], check=True, capture_output=True)  # noqa: S603
@@ -791,7 +846,8 @@ def _release_approval(root: Path, run_dir: Path, engagement: Path, engagement_re
         "rationale": "The bounded conformance evidence passed its fixed review checks.",
     }
     approval = {
-        "release_version": "1.0.0",
+        "release_version": "2.0.0",
+        "protocol_version": PROTOCOL_VERSION,
         "release_id": "m0-conformance-release",
         "status": "approved",
         "run_id": manifest["run_id"],
@@ -799,8 +855,8 @@ def _release_approval(root: Path, run_dir: Path, engagement: Path, engagement_re
         "manifest_sha256": sha256_file(run_dir / "manifest.json"),
         "engagement_id": engagement_record["engagement_id"],
         "engagement_sha256": sha256_file(engagement),
-        "assurance_level": "approved",
-        "permitted_claims": engagement_record["permitted_claims"],
+        "assurance_level": "conformance-fixture",
+        "permitted_claims": [],
         "limitations_acknowledged": True,
         "decisions": {
             "statistical": dict(decision),
@@ -811,6 +867,8 @@ def _release_approval(root: Path, run_dir: Path, engagement: Path, engagement_re
         },
         "approved_at": manifest["finished_at"],
         "expires_at": "2099-12-31T00:00:00Z",
+        "revoked_at": None,
+        "revocation_reason": "",
     }
     path = root / "release-approval.json"
     _write(path, approval)
@@ -888,11 +946,20 @@ def test_official_behavior_requires_the_reference_preset(tmp_path: Path) -> None
         )
 
 
-def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_path: Path) -> None:
+def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class JudgeHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler API.
-            self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            judgment = {"verdict": "pass", "score": 5, "reason": "deterministic fixture pass", "criteria": {}}
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            verdict = "fail" if "NOT BLUE" in body.decode("utf-8") else "pass"
+            judgment = {
+                "verdict": verdict,
+                "score": 1 if verdict == "fail" else 5,
+                "reason": "deterministic fixture judgment",
+                "criteria": {},
+            }
             payload = {
                 "model": "judge",
                 "choices": [{"message": {"content": json.dumps(judgment)}}],
@@ -910,14 +977,52 @@ def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_p
 
     suite_root = _official_suite(tmp_path)
     suite = load_suite(suite_root, official=True)
-    source = _source_repository(tmp_path)
+    source_suite_config_sha = sha256_file(suite_root / "suite.toml")
+    source_approval_path = suite_root / str(
+        (suite.config.get("judge") or {})["qualification_blueprint_approval"]
+    )
+    source_approval_sha = sha256_file(source_approval_path)
     engagement, engagement_record = _engagement(tmp_path, suite_root)
     server = ThreadingHTTPServer(("127.0.0.1", 0), JudgeHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}/v1"
-        qualification, judge_approval = _judge_evidence(tmp_path, suite_root, endpoint)
+        judge_configuration = {
+            "requested_model": "judge",
+            "expected_reported_model": "judge",
+            "revision": "judge-revision-1",
+            "endpoint": endpoint,
+            "prompt_sha256": sha256_bytes(_judge_system_prompt(suite).encode("utf-8")),
+            "response_schema": "judgment.schema.json@1.0.0",
+            "temperature": 0,
+            "models": [
+                {
+                    "id": "primary",
+                    "model": "judge",
+                    "expected_model": "judge",
+                    "revision": "judge-revision-1",
+                }
+            ],
+            "consensus": "unanimous",
+        }
+        build_qualification_package = runpy.run_path(
+            str(Path(__file__).with_name("test_qualification_evidence.py"))
+        )["build_synthetic_qualification_package"]
+        qualification_package, _, base_qualification_verifier = build_qualification_package(
+            tmp_path / "official-qualification",
+            source_suite=suite_root,
+            judge_configuration=judge_configuration,
+        )
+        assert sha256_file(suite_root / "suite.toml") == source_suite_config_sha
+        assert sha256_file(source_approval_path) == source_approval_sha
+        qualification_verification = reconstruct_judge_qualification(
+            qualification_package,
+            now=datetime.now(timezone.utc),
+            base_behavior_verifier=base_qualification_verifier,
+        )
+        assert qualification_verification.valid, qualification_verification.failures
+        source = _source_repository(tmp_path)
         run_dir = run(
             suite,
             repo_root=source,
@@ -940,8 +1045,7 @@ def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_p
             allow_external_judge=False,
             mode="offline",
             concurrency=16,
-            judge_qualification=str(qualification),
-            judge_approval=str(judge_approval),
+            judge_qualification_package=str(qualification_package),
             engagement=str(engagement),
             preset="reference",
         )
@@ -957,12 +1061,17 @@ def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_p
     assert manifest["model_claim_allowed"] is False
     assert manifest["benchmark_claim_allowed"] is False
 
-    verification = verify_behavior_run(run_dir)
+    verification = verify_behavior_run(run_dir, write_result=True)
     assert verification["valid"] is True
     assert verification["semantic"]["required"] is True
     assert verification["assurance"] == "conformance-fixture"
     assert verification["model_claim_allowed"] is False
     assert verification["benchmark_claim_allowed"] is False
+    assert json.loads((run_dir / "verification.json").read_text(encoding="utf-8")) == verification
+    assert cli_main(["verify", str(run_dir)]) == 0
+    assert json.loads(capsys.readouterr().out) == verification
+    assert cli_main(["report", str(run_dir)]) == 0
+    assert json.loads(capsys.readouterr().out)["verification"] == verification
 
     release_approval = _release_approval(tmp_path, run_dir, engagement, engagement_record)
     release = verified_public_release(
@@ -974,6 +1083,82 @@ def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_p
     assert release["assurance_level"] == "conformance-fixture"
     assert release["model_claim_allowed"] is False
     assert release["benchmark_claim_allowed"] is False
+
+    registry_root = tmp_path / "registry-results"
+    evidence_source = tmp_path / "public-evidence-source"
+    shutil.copytree(run_dir, evidence_source / "run")
+    governance = evidence_source / "governance"
+    governance.mkdir()
+    for source_path in (
+        engagement,
+        release_approval,
+        tmp_path / "governance-evidence.txt",
+        tmp_path / "release-review-evidence.txt",
+    ):
+        shutil.copy2(source_path, governance / source_path.name)
+    archive = build_public_evidence_archive(
+        evidence_source,
+        registry_root / "archive" / "sha256",
+        references={
+            "run_bundle": "run/bundle.json",
+            "engagement": f"governance/{engagement.name}",
+            "release_approval": f"governance/{release_approval.name}",
+            "verification_result": "run/verification.json",
+        },
+    )
+    digest = archive.stem
+    published_at = datetime.fromisoformat(str(release["approved_at"]).replace("Z", "+00:00")).isoformat().replace(
+        "+00:00", "Z"
+    )
+    expires_at = datetime.fromisoformat(str(release["expires_at"]).replace("Z", "+00:00")).isoformat().replace(
+        "+00:00", "Z"
+    )
+    record = {
+        "record_version": "2.0.0",
+        "record_id": "synthetic-m0-conformance",
+        "record_type": "conformance",
+        "archive": {
+            "relative_path": f"archive/sha256/{archive.name}",
+            "sha256": digest,
+            "format": "cavada-public-evidence-tar",
+            "format_version": "1.0.0",
+        },
+        "artifact_type": "behavior-run",
+        "suite": {"name": manifest["suite"]["name"], "version": manifest["suite"]["version"]},
+        "system": {
+            "identity": manifest["target"]["expected_reported_model"],
+            "revision": manifest["target"]["revision"],
+        },
+        "protocol_version": manifest["protocol_version"],
+        "assurance_level": "conformance-fixture",
+        "verification_result_sha256": sha256_file(run_dir / "verification.json"),
+        "release_approval_sha256": sha256_file(release_approval),
+        "published_at": published_at,
+        "expires_at": expires_at,
+        "claim_scope": [],
+        "rankable": False,
+        "model_claim_allowed": False,
+        "benchmark_claim_allowed": False,
+        "reproduction_status": "not-reproduced",
+        "attestation": None,
+    }
+    registry = {
+        "registry_version": "2.0.0",
+        "records": [record],
+        "events": [
+            {
+                "event_version": "2.0.0",
+                "event_id": "published-synthetic-m0-conformance",
+                "record_id": record["record_id"],
+                "event_type": "published",
+                "occurred_at": published_at,
+                "previous_event_id": None,
+                "related_record_id": None,
+                "reason": "Synthetic test-only M0 conformance evidence.",
+            }
+        ],
+    }
+    assert validate_registry_v2(registry, root=registry_root, now=datetime.now(timezone.utc)) == []
 
     archive_path = tmp_path / "m0-public.tar.gz"
     _export(run_dir, archive_path, True, engagement=str(engagement), release_approval=str(release_approval))
@@ -1127,3 +1312,135 @@ def test_m0_offline_conformance_fixture_runs_verifies_releases_and_exports(tmp_p
     assert result["integrity_valid"] is True
     assert result["valid"] is False
     assert "blob set must contain only direct regular files" in "\n".join(result["failures"])
+
+    tampered = tmp_path / "tampered-run-source-proof-pack"
+    shutil.copytree(run_dir, tampered)
+    proof_path = tampered / "source_commit_proof.pack"
+    proof = bytearray(proof_path.read_bytes())
+    proof[-1] ^= 1
+    proof_path.write_bytes(proof)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["artifacts"]["source_commit_proof.pack"] = sha256_file(proof_path)
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    assert result["valid"] is False
+    assert "source proof pack failed Git integrity" in "\n".join(result["assurance_failures"])
+
+    tampered = tmp_path / "tampered-run-source-proof-commit"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["source"]["commit"] = "0" * 40
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    assert result["valid"] is False
+    assert "source proof does not contain the declared commit" in "\n".join(result["assurance_failures"])
+
+    tampered = tmp_path / "tampered-run-expired-external-authorization"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["external_authorization"] = {
+        "authorization_id": "expired-test-authorization",
+        "approver": "synthetic-test-approver",
+        "purpose": "Mutation test only",
+        "destinations": [{"host": "example.invalid", "region": "test", "purpose": "mutation"}],
+        "effective_at": "2020-01-01T00:00:00Z",
+        "expires_at": "2021-01-01T00:00:00Z",
+    }
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    assert "external authorization is not effective" in "\n".join(result["assurance_failures"])
+
+    tampered = tmp_path / "tampered-run-expired-storage-attestation"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["artifact_security"]["storage_attestation"] = {
+        "attestation_id": "expired-test-storage",
+        "approver": "synthetic-test-approver",
+        "encryption_at_rest": True,
+        "immutability": True,
+        "access_policy_reference": "test-only",
+        "audit_log_reference": "test-only",
+        "retention_policy_reference": "test-only",
+        "backup_restore_reference": "test-only",
+        "effective_at": "2020-01-01T00:00:00Z",
+        "expires_at": "2021-01-01T00:00:00Z",
+    }
+    tampered_manifest["artifact_security"]["encryption_state"] = "attested"
+    tampered_manifest["artifact_security"]["immutability_state"] = "attested"
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    assert "storage attestation is not effective" in "\n".join(result["assurance_failures"])
+
+    tampered = tmp_path / "tampered-run-false-storage-state"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["artifact_security"]["encryption_state"] = "attested"
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["semantic_valid"] is False
+    assert "security states do not reconstruct" in "\n".join(result["semantic_failures"])
+
+    tampered = tmp_path / "tampered-run-target-contract"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["target"]["capabilities"] = ["text", "unapproved-capability"]
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["semantic_valid"] is False
+    assert "target adapter contract differs" in "\n".join(result["semantic_failures"])
+
+    tampered = tmp_path / "tampered-run-network-policy"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["judge"]["endpoint"] = "http://judge.example.invalid/v1"
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    network_failures = "\n".join(result["assurance_failures"])
+    assert "HTTPS or loopback" in network_failures
+    assert "outside suite.network.allowed_hosts" in network_failures
+
+    tampered = tmp_path / "tampered-run-false-local-network"
+    shutil.copytree(run_dir, tampered)
+    tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+    tampered_manifest["judge"]["endpoint"] = "http://local/v1"
+    _write(tampered / "manifest.json", tampered_manifest)
+    write_bundle(tampered)
+    result = verify_behavior_run(tampered)
+    assert result["integrity_valid"] is True
+    assert result["assurance_valid"] is False
+    assert "HTTPS or loopback" in "\n".join(result["assurance_failures"])
+
+    for field, value, expected in (
+        ("max_cases", 1, "complete suite without max_cases"),
+        ("repetitions", 1, "repetitions is below the suite minimum"),
+        ("judge_repetitions", 1, "judge_repetitions is below the suite minimum"),
+    ):
+        tampered = tmp_path / f"tampered-run-official-{field}"
+        shutil.copytree(run_dir, tampered)
+        tampered_manifest = json.loads((tampered / "manifest.json").read_text(encoding="utf-8"))
+        tampered_manifest["parameters"][field] = value
+        _write(tampered / "manifest.json", tampered_manifest)
+        write_bundle(tampered)
+        result = verify_behavior_run(tampered)
+        assert result["integrity_valid"] is True
+        assert result["assurance_valid"] is False
+        assert expected in "\n".join(result["assurance_failures"])

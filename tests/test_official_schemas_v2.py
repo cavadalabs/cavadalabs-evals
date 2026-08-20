@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cavada_eval.metrics import _json_schema_errors
 
 ROOT = Path(__file__).parents[1]
@@ -15,6 +17,7 @@ NEW_IDS = {
     "https://schemas.cavadalabs.com/evals/case/2.0.0",
     "https://schemas.cavadalabs.com/evals/suite/2.0.0",
     "https://schemas.cavadalabs.com/evals/manifest/2.0.0",
+    "https://schemas.cavadalabs.com/evals/manifest/2.1.0",
     "https://schemas.cavadalabs.com/evals/metrics/2.0.0",
     "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint/1.0.0",
     "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint-approval/1.0.0",
@@ -23,7 +26,16 @@ NEW_IDS = {
     "https://schemas.cavadalabs.com/evals/semantic-contamination/2.0.0",
     "https://schemas.cavadalabs.com/evals/judge-qualification/2.0.0",
     "https://schemas.cavadalabs.com/evals/judge-approval/2.0.0",
+    "https://schemas.cavadalabs.com/evals/judge-approval/3.0.0",
+    "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint-approval/2.0.0",
+    "https://schemas.cavadalabs.com/evals/judge-qualification-evidence-package/1.0.0",
+    "https://schemas.cavadalabs.com/evals/reviewer-qualification-evidence/1.0.0",
+    "https://schemas.cavadalabs.com/evals/reviewer-qualification-support/1.0.0",
+    "https://schemas.cavadalabs.com/evals/corpus-source-run-evidence/1.0.0",
+    "https://schemas.cavadalabs.com/evals/corpus-gold-evidence/1.0.0",
     "https://schemas.cavadalabs.com/evals/results-registry/1.0.0",
+    "https://schemas.cavadalabs.com/evals/results-registry/2.0.0",
+    "https://schemas.cavadalabs.com/evals/release-approval/2.0.0",
 }
 
 
@@ -94,7 +106,7 @@ def test_released_assets_remain_byte_frozen() -> None:
 def test_conformance_schema_requires_recorded_target_and_non_claiming_manifest() -> None:
     schemas = _schemas()
     suite = schemas["https://schemas.cavadalabs.com/evals/suite/2.0.0"][1]
-    manifest = schemas["https://schemas.cavadalabs.com/evals/manifest/2.0.0"][1]
+    manifest = schemas["https://schemas.cavadalabs.com/evals/manifest/2.1.0"][1]
     registry = schemas["https://schemas.cavadalabs.com/evals/results-registry/1.0.0"][1]
     condition = suite["allOf"][0]
     assert condition["then"]["required"] == ["target"]
@@ -107,6 +119,15 @@ def test_conformance_schema_requires_recorded_target_and_non_claiming_manifest()
     assert manifest["$defs"]["target"]["properties"]["request_model"] == {"$ref": "#/$defs/nullableNonEmpty"}
     assert "official" in manifest["$defs"]["parameters"]["properties"]["mode"]["enum"]
     assert registry["properties"]["results"]["maxItems"] == 0
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("official", "finished_at", "abort_reason", "protocol_sha256", "metrics", "artifacts"),
+)
+def test_manifest_v21_rejects_missing_runtime_evidence_fields(field: str) -> None:
+    manifest = _schemas()["https://schemas.cavadalabs.com/evals/manifest/2.1.0"][1]
+    assert f"$.{field} is required" in _json_schema_errors({}, manifest, "$")
 
 
 def test_qualification_schema_declares_the_runtime_minimum_evidence() -> None:
