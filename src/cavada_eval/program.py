@@ -19,6 +19,7 @@ from .protocol import (
     _strict_json_loads,
     load_suite,
     sha256_file,
+    validate_suite,
     wilson_gate_power,
 )
 
@@ -611,16 +612,51 @@ def validate_judge_qualification_blueprint_approval(
     return errors
 
 
-def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
+def _official_suite_validation(
+    registry: dict[str, Any],
+    *,
+    repo_root: Path,
+    now: datetime | None,
+) -> dict[str, Any]:
+    declared = [item for item in registry.get("suites", []) if item.get("official_capable") is True]
+    failures: list[dict[str, Any]] = []
+    for item in declared:
+        suite_id = str(item.get("id", ""))
+        suite_path = item.get("path")
+        if not isinstance(suite_path, str):
+            failures.append({"suite_id": suite_id, "failures": ["official-capable suite path is missing"]})
+            continue
+        try:
+            suite = load_suite(repo_root / suite_path)
+        except ProtocolError as exc:
+            failures.append({"suite_id": suite_id, "failures": [str(exc)]})
+            continue
+        suite_failures = validate_suite(suite, official=True, now=now)
+        if suite_failures:
+            failures.append({"suite_id": suite_id, "failures": suite_failures})
+    return {
+        "declared_official_capable": len(declared),
+        "verified_official_capable": len(declared) - len(failures),
+        "official_validation_failures": failures,
+    }
+
+
+def load_program_registry(
+    path: Path,
+    *,
+    repo_root: Path,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     try:
         with path.open("rb") as handle:
             registry = tomllib.load(handle)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot load program registry: {exc}") from exc
-    errors = validate_program_registry(registry, repo_root=repo_root)
+    errors = validate_program_registry(registry, repo_root=repo_root, now=now, check_official=False)
     if errors:
         raise ProtocolError("invalid program registry:\n" + "\n".join(errors))
     suites = registry["suites"]
+    official = _official_suite_validation(registry, repo_root=repo_root, now=now)
     source_register = load_source_register(repo_root / registry["source_register"])
     crosswalk = load_evidence_crosswalk(
         repo_root / registry["evidence_crosswalk"],
@@ -634,7 +670,8 @@ def load_program_registry(path: Path, *, repo_root: Path) -> dict[str, Any]:
             "by_assurance": {level: sum(item["assurance"] == level for item in suites) for level in ASSURANCE_LEVELS},
             "built_in": sum(item["execution_support"] == "built-in" for item in suites),
             "adapter_required": sum(item["execution_support"] == "adapter-required" for item in suites),
-            "official_capable": sum(bool(item["official_capable"]) for item in suites),
+            "official_capable": official["verified_official_capable"],
+            **official,
             "sources": source_register["summary"],
             "crosswalk": crosswalk["summary"],
         },
@@ -789,7 +826,13 @@ def load_evidence_crosswalk(path: Path, source_ids: set[str]) -> dict[str, Any]:
     }
 
 
-def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> list[str]:
+def validate_program_registry(
+    registry: dict[str, Any],
+    *,
+    repo_root: Path,
+    now: datetime | None = None,
+    check_official: bool = True,
+) -> list[str]:
     errors: list[str] = []
     required = {
         "program_version",
@@ -942,4 +985,11 @@ def validate_program_registry(registry: dict[str, Any], *, repo_root: Path) -> l
                 for error in validate_judge_qualification_blueprint(judge_blueprint_path, suite)
             )
     errors.extend(validate_cross_suite_duplicates(loaded_suites))
+    if check_official and not errors:
+        official = _official_suite_validation(registry, repo_root=repo_root, now=now)
+        for failure in official["official_validation_failures"]:
+            errors.extend(
+                f"suite[{failure['suite_id']}].official_validation: {message}"
+                for message in failure["failures"]
+            )
     return errors
