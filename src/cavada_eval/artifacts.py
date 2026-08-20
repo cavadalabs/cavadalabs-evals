@@ -150,7 +150,7 @@ def write_bundle(run_dir: Path, *, signing_key_env: str = "CAVADA_EVAL_SIGNING_K
     files = {path.relative_to(run_dir).as_posix(): _hash_regular(run_dir, path.relative_to(run_dir)) for path in _files(run_dir)}
     bundle = {"bundle_version": BUNDLE_VERSION, "algorithm": "sha256", "files": files}
     atomic_json(run_dir / "bundle.json", bundle)
-    atomic_text(run_dir / "checksums.txt", "".join(f"{digest}  {name}\n" for name, digest in files.items()))
+    atomic_text(run_dir / "checksums.txt", "".join(f"{digest}  {name}\n" for name, digest in sorted(files.items())))
     key = os.getenv(signing_key_env, "")
     if key:
         canonical = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
@@ -242,7 +242,7 @@ def verify_bundle(
     declared_files = set(map(str, bundle["files"]))
     for relative in sorted(actual_files - declared_files):
         failures.append(f"unlisted artifact: {relative}")
-    expected_checksums = "".join(f"{digest}  {name}\n" for name, digest in bundle["files"].items())
+    expected_checksums = "".join(f"{digest}  {name}\n" for name, digest in sorted(bundle["files"].items()))
     try:
         checksums_valid = _read_regular(run_dir, Path("checksums.txt")).decode("utf-8") == expected_checksums
     except (OSError, UnicodeDecodeError):

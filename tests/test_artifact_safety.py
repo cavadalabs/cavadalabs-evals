@@ -56,3 +56,14 @@ def test_bundle_rejects_unlisted_non_regular_files(tmp_path: Path) -> None:
 def test_strict_json_normalizes_excessive_nesting_to_a_validation_error() -> None:
     with pytest.raises(ValueError, match="nesting is too deep"):
         _strict_json_loads("[" * 1_000 + "0" + "]" * 1_000)
+
+
+def test_bundle_checksums_use_canonical_path_order(tmp_path: Path) -> None:
+    (tmp_path / "qualification").mkdir()
+    (tmp_path / "qualification-run").mkdir()
+    (tmp_path / "qualification" / "report.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "qualification-run" / "manifest.json").write_text("{}\n", encoding="utf-8")
+
+    write_bundle(tmp_path)
+
+    assert verify_bundle(tmp_path)["valid"] is True
