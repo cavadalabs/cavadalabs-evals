@@ -1,0 +1,367 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/manifest/2.1.0",
+  "title": "CavadaLabs Behavior Run Manifest v2.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version", "schema_version", "report_version", "metric_version",
+    "adapter_contract_version", "run_id", "status", "official_requested", "official", "assurance",
+    "model_claim_allowed", "benchmark_claim_allowed", "started_at", "finished_at", "abort_reason",
+    "reproduction_command", "protocol_sha256", "suite", "target", "judge", "judge_qualification", "engagement",
+    "external_judge_authorized", "external_authorization", "artifact_security", "parameters",
+    "pricing", "source", "environment", "metrics", "artifacts"
+  ],
+  "properties": {
+    "protocol_version": {"const": "1.0.0"},
+    "schema_version": {"const": "2.1.0"},
+    "report_version": {"const": "1.1.0"},
+    "metric_version": {"const": "2.0.0"},
+    "adapter_contract_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["running", "passed", "failed", "invalid", "cancelled"]},
+    "official_requested": {"type": "boolean"},
+    "official": {"type": "boolean"},
+    "assurance": {"enum": ["conformance-fixture", "development", "candidate", "official"]},
+    "model_claim_allowed": {"type": "boolean"},
+    "benchmark_claim_allowed": {"type": "boolean"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "resumed_at": {"type": "array", "items": {"type": "string", "format": "date-time"}},
+    "reproduction_command": {"type": "string", "minLength": 1},
+    "abort_reason": {"type": "string"},
+    "suite": {"$ref": "#/$defs/suiteIdentity"},
+    "target": {"$ref": "#/$defs/target"},
+    "judge": {"$ref": "#/$defs/judge"},
+    "judge_qualification": {
+      "oneOf": [
+        {"$ref": "#/$defs/judgeQualification"},
+        {"type": "null"}
+      ]
+    },
+    "engagement": {
+      "oneOf": [
+        {"$ref": "#/$defs/engagement"},
+        {"type": "null"}
+      ]
+    },
+    "external_judge_authorized": {"type": "boolean"},
+    "external_authorization": {
+      "oneOf": [
+        {"$ref": "#/$defs/externalAuthorization"},
+        {"type": "null"}
+      ]
+    },
+    "artifact_security": {"$ref": "#/$defs/artifactSecurity"},
+    "parameters": {"$ref": "#/$defs/parameters"},
+    "pricing": {
+      "oneOf": [
+        {"$ref": "#/$defs/pricing"},
+        {"type": "null"}
+      ]
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "protocol_sha256": {"$ref": "#/$defs/hash"},
+    "metrics": {"$ref": "https://schemas.cavadalabs.com/evals/metrics/2.0.0"},
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/hash"}
+    }
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "nullableNonEmpty": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonEmpty"},
+        {"type": "null"}
+      ]
+    },
+    "suiteIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "version", "status", "dataset_sha256", "rubric_sha256",
+        "suite_config_sha256", "data_classification", "profile"
+      ],
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmpty"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "status": {"enum": ["draft", "candidate", "calibrated", "approved", "deprecated", "retired"]},
+        "dataset_sha256": {"$ref": "#/$defs/hash"},
+        "rubric_sha256": {"$ref": "#/$defs/hash"},
+        "suite_config_sha256": {"$ref": "#/$defs/hash"},
+        "data_classification": {"enum": ["public", "synthetic", "internal", "confidential", "restricted"]},
+        "profile": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label", "expected_reported_model", "revision", "endpoint", "request_model",
+        "kind", "capabilities", "recorded_responses_sha256"
+      ],
+      "properties": {
+        "label": {"$ref": "#/$defs/nonEmpty"},
+        "expected_reported_model": {"$ref": "#/$defs/nonEmpty"},
+        "revision": {"$ref": "#/$defs/nonEmpty"},
+        "endpoint": {"$ref": "#/$defs/nonEmpty"},
+        "request_model": {"$ref": "#/$defs/nullableNonEmpty"},
+        "kind": {"enum": ["json", "openai", "recorded"]},
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmpty"}
+        },
+        "recorded_responses_sha256": {
+          "oneOf": [
+            {"$ref": "#/$defs/hash"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_model", "expected_reported_model", "revision", "endpoint", "prompt_sha256",
+        "response_schema", "temperature", "models", "consensus"
+      ],
+      "properties": {
+        "requested_model": {"$ref": "#/$defs/nonEmpty"},
+        "expected_reported_model": {"$ref": "#/$defs/nonEmpty"},
+        "revision": {"$ref": "#/$defs/nonEmpty"},
+        "endpoint": {"$ref": "#/$defs/nonEmpty"},
+        "prompt_sha256": {"$ref": "#/$defs/hash"},
+        "response_schema": {"$ref": "#/$defs/nonEmpty"},
+        "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/judgeModel"}
+        },
+        "consensus": {"enum": ["majority", "unanimous"]}
+      }
+    },
+    "judgeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "model", "expected_model", "revision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmpty"},
+        "model": {"$ref": "#/$defs/nonEmpty"},
+        "expected_model": {"$ref": "#/$defs/nonEmpty"},
+        "revision": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "judgeQualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_type", "package_version", "package_path", "package_sha256"],
+      "properties": {
+        "artifact_type": {"const": "judge-qualification-evidence-package"},
+        "package_version": {"const": "1.0.0"},
+        "package_path": {"const": "judge_qualification_evidence"},
+        "package_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "engagement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engagement_id", "sha256", "status", "cavadalabs_roles", "jurisdictions", "permitted_claims",
+        "prohibited_claims", "execution_owner_id", "commercial_owner_id", "approved_at", "expires_at",
+        "authorization_evidence_sha256", "conflict_assessment_evidence_sha256",
+        "legal_applicability_evidence_sha256", "approver_qualification_evidence_sha256"
+      ],
+      "properties": {
+        "engagement_id": {"$ref": "#/$defs/nonEmpty"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "status": {"const": "approved"},
+        "cavadalabs_roles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmpty"}},
+        "jurisdictions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmpty"}},
+        "permitted_claims": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmpty"}},
+        "prohibited_claims": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/nonEmpty"}},
+        "execution_owner_id": {"$ref": "#/$defs/nonEmpty"},
+        "commercial_owner_id": {"$ref": "#/$defs/nonEmpty"},
+        "approved_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "authorization_evidence_sha256": {"$ref": "#/$defs/hash"},
+        "conflict_assessment_evidence_sha256": {"$ref": "#/$defs/hash"},
+        "legal_applicability_evidence_sha256": {"$ref": "#/$defs/hash"},
+        "approver_qualification_evidence_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "externalAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorization_id", "approver", "purpose", "destinations", "effective_at", "expires_at"],
+      "properties": {
+        "authorization_id": {"$ref": "#/$defs/nonEmpty"},
+        "approver": {"$ref": "#/$defs/nonEmpty"},
+        "purpose": {"$ref": "#/$defs/nonEmpty"},
+        "destinations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/destination"}
+        },
+        "effective_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "region", "purpose"],
+      "properties": {
+        "host": {"$ref": "#/$defs/nonEmpty"},
+        "region": {"$ref": "#/$defs/nonEmpty"},
+        "purpose": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "artifactSecurity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "retention", "storage_attestation", "encryption_state", "immutability_state"],
+      "properties": {
+        "classification": {"enum": ["public", "synthetic", "internal", "confidential", "restricted"]},
+        "retention": {"$ref": "#/$defs/nullableNonEmpty"},
+        "storage_attestation": {
+          "oneOf": [
+            {"$ref": "#/$defs/storageAttestation"},
+            {"type": "null"}
+          ]
+        },
+        "encryption_state": {"enum": ["attested", "not-attested"]},
+        "immutability_state": {"enum": ["attested", "not-attested"]}
+      }
+    },
+    "storageAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_id", "approver", "encryption_at_rest", "immutability", "access_policy_reference",
+        "audit_log_reference", "retention_policy_reference", "backup_restore_reference", "effective_at", "expires_at"
+      ],
+      "properties": {
+        "attestation_id": {"$ref": "#/$defs/nonEmpty"},
+        "approver": {"$ref": "#/$defs/nonEmpty"},
+        "encryption_at_rest": {"type": "boolean"},
+        "immutability": {"type": "boolean"},
+        "access_policy_reference": {"$ref": "#/$defs/nonEmpty"},
+        "audit_log_reference": {"$ref": "#/$defs/nonEmpty"},
+        "retention_policy_reference": {"$ref": "#/$defs/nonEmpty"},
+        "backup_restore_reference": {"$ref": "#/$defs/nonEmpty"},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "preset", "preset_version", "repetitions", "judge_repetitions", "max_cases", "selected_cases",
+        "timeout_seconds", "max_target_calls", "max_judge_calls", "max_total_tokens", "max_elapsed_seconds",
+        "max_estimated_cost", "concurrency", "requests_per_second", "progress_events", "case_order_policy",
+        "case_order_sha256", "cache"
+      ],
+      "properties": {
+        "mode": {"enum": ["smoke", "regression", "candidate", "official", "redteam", "performance", "load", "soak", "offline", "monitoring"]},
+        "preset": {
+          "oneOf": [
+            {"enum": ["smoke", "quick", "standard", "reference"]},
+            {"type": "null"}
+          ]
+        },
+        "preset_version": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+            {"type": "null"}
+          ]
+        },
+        "repetitions": {"type": "integer", "minimum": 1},
+        "judge_repetitions": {"type": "integer", "minimum": 1},
+        "max_cases": {"type": "integer", "minimum": 0},
+        "selected_cases": {"type": "integer", "minimum": 0},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "max_target_calls": {"type": "integer", "minimum": 0},
+        "max_judge_calls": {"type": "integer", "minimum": 0},
+        "max_total_tokens": {"type": "integer", "minimum": 0},
+        "max_elapsed_seconds": {"type": "number", "minimum": 0},
+        "max_estimated_cost": {"type": "number", "minimum": 0},
+        "concurrency": {"type": "integer", "minimum": 1, "maximum": 64},
+        "requests_per_second": {"type": "number", "minimum": 0},
+        "progress_events": {"type": "boolean"},
+        "case_order_policy": {"$ref": "#/$defs/nonEmpty"},
+        "case_order_sha256": {"$ref": "#/$defs/hash"},
+        "cache": {"$ref": "#/$defs/cache"}
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "judge"],
+      "properties": {
+        "target": {"const": "disabled"},
+        "judge": {"const": "disabled"}
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "source", "effective_at", "input_per_million", "output_per_million"],
+      "properties": {
+        "currency": {"$ref": "#/$defs/nonEmpty"},
+        "source": {"$ref": "#/$defs/nonEmpty"},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "input_per_million": {"type": "number", "minimum": 0},
+        "output_per_million": {"type": "number", "minimum": 0},
+        "judge_input_per_million": {"type": "number", "minimum": 0},
+        "judge_output_per_million": {"type": "number", "minimum": 0}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "dirty", "status_sha256", "implementation_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^$|^[a-f0-9]{40}$|^[a-f0-9]{64}$"},
+        "dirty": {"type": "boolean"},
+        "status_sha256": {"$ref": "#/$defs/hash"},
+        "implementation_sha256": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["python", "platform", "hardware", "uv_lock_sha256"],
+      "properties": {
+        "python": {"$ref": "#/$defs/nonEmpty"},
+        "platform": {"$ref": "#/$defs/nonEmpty"},
+        "hardware": {"$ref": "#/$defs/hardware"},
+        "uv_lock_sha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"}
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["machine", "cpu_count"],
+      "properties": {
+        "machine": {"type": "string"},
+        "processor": {"type": "string"},
+        "cpu_count": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "null"}
+          ]
+        },
+        "memory_bytes": {"type": "integer", "minimum": 0},
+        "gpus": {"type": "array", "items": {"$ref": "#/$defs/nonEmpty"}},
+        "gpu_inventory_source": {"$ref": "#/$defs/nonEmpty"}
+      }
+    }
+  }
+}

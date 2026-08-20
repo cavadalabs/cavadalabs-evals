@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from pathlib import Path
 
 import pytest
 
-from cavada_eval.artifacts import verify_bundle, write_bundle
-from cavada_eval.protocol import _strict_json_loads
+from cavada_eval.artifacts import snapshot_bundle_files, verify_bundle, write_bundle
+from cavada_eval.protocol import ProtocolError, _strict_json_loads
 
 
 def test_bundle_rejects_hardlinks_and_case_collisions(tmp_path: Path) -> None:
@@ -67,3 +68,60 @@ def test_bundle_checksums_use_canonical_path_order(tmp_path: Path) -> None:
     write_bundle(tmp_path)
 
     assert verify_bundle(tmp_path)["valid"] is True
+
+
+def test_bundle_snapshot_hash_binds_each_read_byte(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    artifact = tmp_path / "result.json"
+    artifact.write_text("{}\n", encoding="utf-8")
+    write_bundle(tmp_path)
+    from cavada_eval import artifacts
+
+    original = artifacts._read_regular
+
+    def raced(root: Path, relative: Path) -> bytes:
+        return b'{"swapped":true}\n' if relative.as_posix() == "result.json" else original(root, relative)
+
+    monkeypatch.setattr(artifacts, "_read_regular", raced)
+    with pytest.raises(ProtocolError, match="changed while it was snapshotted"):
+        snapshot_bundle_files(tmp_path)
+
+
+def test_bundle_rejects_noncanonical_unicode_paths(tmp_path: Path) -> None:
+    decomposed = unicodedata.normalize("NFD", "évidence.json")
+    assert decomposed != unicodedata.normalize("NFC", decomposed)
+    (tmp_path / decomposed).write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ProtocolError, match="Unicode NFC"):
+        write_bundle(tmp_path)
+
+
+def test_bundle_rejects_ambiguous_windows_separator(tmp_path: Path) -> None:
+    (tmp_path / "a\\b").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ProtocolError, match="unambiguous"):
+        write_bundle(tmp_path)
+
+
+def test_bundle_tree_race_is_a_validation_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "result.json").write_text("{}\n", encoding="utf-8")
+    write_bundle(tmp_path)
+    late = tmp_path / "late.tmp"
+    late.write_text("race\n", encoding="utf-8")
+    original = Path.lstat
+
+    def raced(path: Path) -> os.stat_result:
+        if path == late:
+            raise FileNotFoundError(path)
+        return original(path)
+
+    monkeypatch.setattr(Path, "lstat", raced)
+    assert "bundle tree changed during verification" in verify_bundle(tmp_path)["failures"]
+
+
+def test_public_snapshot_does_not_depend_on_hmac_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "result.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("TEST_BUNDLE_KEY", "correct")
+    write_bundle(tmp_path, signing_key_env="TEST_BUNDLE_KEY")
+    assert verify_bundle(tmp_path, signing_key_env="TEST_BUNDLE_KEY")["signature"] == "valid"
+    monkeypatch.setenv("TEST_BUNDLE_KEY", "wrong")
+    public = verify_bundle(tmp_path, signing_key_env="TEST_BUNDLE_KEY", verify_hmac=False)
+    assert public["valid"] is True
+    assert public["signature"] == "unverified"

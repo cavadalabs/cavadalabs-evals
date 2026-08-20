@@ -252,6 +252,7 @@ def render_pdf(
             author="CavadaLabs",
             subject=scope,
             pageCompression=1,
+            invariant=1,
         )
         document.build(story, onFirstPage=page, onLaterPages=page, canvasmaker=partial(pdfcanvas.Canvas, invariant=1))
         os.replace(temporary_name, path)

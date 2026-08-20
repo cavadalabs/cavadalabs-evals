@@ -13,7 +13,18 @@ def test_offline_demo_produces_verified_reports(tmp_path: Path) -> None:
     result = run_demo(repo, artifact_root=tmp_path)
 
     assert set(result) == {"status", "official", "external_network_used", "run", "report", "metrics", "failures", "verification"}
-    assert set(result["verification"]) == {"valid", "failures", "signature", "files"}
+    assert {
+        "valid",
+        "integrity_valid",
+        "semantic_valid",
+        "assurance_valid",
+        "integrity_failures",
+        "semantic_failures",
+        "assurance_failures",
+    } <= set(result["verification"])
+    assert result["verification"]["integrity_valid"] is True
+    assert result["verification"]["semantic_valid"] is True
+    assert result["verification"]["assurance_valid"] is True
     assert result["status"] == "passed" and result["external_network_used"] is False
     assert result["official"] is False
     assert Path(result["report"]).is_file() and result["verification"]["valid"] is True

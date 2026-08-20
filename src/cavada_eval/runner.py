@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shlex
@@ -18,16 +19,23 @@ from typing import Any
 
 from .artifacts import _read_regular, write_bundle
 from .assets import asset_inventory, content_text, encoded_content, encoded_messages, openai_content
-from .behavior_verify import engagement_snapshot_files, suite_snapshot_files, verify_behavior_run
+from .behavior_verify import (
+    JUDGE_QUALIFICATION_SNAPSHOT,
+    engagement_snapshot_files,
+    qualification_package_snapshot_files,
+    suite_snapshot_files,
+    verify_behavior_run,
+    verify_judge_qualification_for_run,
+)
 from .calibration import judge_evidence_errors
 from .deepeval_adapter import evaluate_metrics as evaluate_deepeval_metrics
 from .metrics import METRIC_VERSION, deterministic_evaluation
 from .pdf_report import require_pdf_support
 from .profiles import ADAPTER_CONTRACT_VERSION, BENCHMARK_PRESET_VERSION, canonical_preset, stratified_cases
 from .protocol import (
+    MANIFEST_SCHEMA_VERSION,
     PROTOCOL_VERSION,
     REPORT_VERSION,
-    SCHEMA_VERSION,
     ProtocolError,
     Suite,
     _strict_json_loads,
@@ -48,9 +56,58 @@ from .protocol import (
 )
 from .release import verified_engagement
 from .reporting import generate_reports
+from .source_proof import build_source_commit_proof
 from .statistics import bootstrap_mean_interval, distribution, paired_binary_comparison, stratified_bootstrap_mean_interval
 
 JUDGE_MAX_TOKENS = 600
+
+
+class CallEvidenceError(ProtocolError):
+    """Adapter failure carrying the request and any response bytes already observed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        payload: dict[str, Any],
+        raw_body: bytes | None,
+        parsed: Any,
+        transport: dict[str, Any],
+        stage: str,
+        raw_body_truncated: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.payload = payload
+        self.raw_body = raw_body
+        self.parsed = parsed
+        self.transport = transport
+        self.stage = stage
+        self.raw_body_truncated = raw_body_truncated
+
+
+class _WireJSON(dict[str, Any]):
+    """Parsed JSON with the bounded source bytes retained for error evidence."""
+
+    def __init__(self, value: dict[str, Any], raw_body: bytes) -> None:
+        super().__init__(value)
+        self.raw_body = raw_body
+
+
+def _wire_body_fields(raw_body: bytes | None, *, truncated: bool = False) -> dict[str, Any]:
+    if raw_body is None:
+        return {}
+    return {
+        "wire_body_base64": base64.b64encode(raw_body).decode("ascii"),
+        "wire_body_sha256": sha256_bytes(raw_body),
+        "wire_body_bytes": len(raw_body),
+        "wire_body_truncated": truncated,
+    }
+
+
+def _call_error_fields(error: CallEvidenceError) -> dict[str, Any]:
+    fields: dict[str, Any] = {"status": "error", "error": str(error), "error_stage": error.stage}
+    fields.update(_wire_body_fields(error.raw_body, truncated=error.raw_body_truncated))
+    return fields
 
 
 def _python_source_files(root: Path) -> dict[str, bytes]:
@@ -240,7 +297,7 @@ def _post_json(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     encoded_payload = json.dumps(payload, ensure_ascii=False).encode()
-    last_error: Exception | None = None
+    last_error: CallEvidenceError | None = None
     for attempt in range(retries + 1):
         request = urllib.request.Request(url, data=encoded_payload, headers=headers, method="POST")  # noqa: S310 -- scheme is validated above.
         started = time.perf_counter()
@@ -248,41 +305,125 @@ def _post_json(
             with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:  # noqa: S310 -- scheme is validated above.
                 headers_ms = (time.perf_counter() - started) * 1000
                 content_type = response.headers.get_content_type()
-                if content_type != "application/json" and not content_type.endswith("+json"):
-                    raise ProtocolError(f"Unexpected response content type from {url}: {content_type}")
                 body_bytes = response.read(max_body_bytes + 1)
                 if len(body_bytes) > max_body_bytes:
-                    raise ProtocolError(f"Response from {url} exceeds {max_body_bytes} bytes")
-                body = body_bytes.decode("utf-8", errors="replace")
+                    transport = {
+                        "request_id": request_id,
+                        "attempts": attempt + 1,
+                        "request_bytes": len(encoded_payload),
+                        "response_bytes": len(body_bytes),
+                        "headers_ms": round(headers_ms, 3),
+                        "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                        "http_status": response.status,
+                    }
+                    raise CallEvidenceError(
+                        f"Response from {url} exceeds {max_body_bytes} bytes",
+                        payload=payload,
+                        raw_body=body_bytes[:max_body_bytes],
+                        parsed=None,
+                        transport=transport,
+                        stage="transport",
+                        raw_body_truncated=True,
+                    )
                 total_ms = (time.perf_counter() - started) * 1000
+            transport = {
+                "request_id": request_id,
+                "attempts": attempt + 1,
+                "request_bytes": len(encoded_payload),
+                "response_bytes": len(body_bytes),
+                "headers_ms": round(headers_ms, 3),
+                "total_ms": round(total_ms, 3),
+                "http_status": response.status,
+            }
+            if content_type != "application/json" and not content_type.endswith("+json"):
+                raise CallEvidenceError(
+                    f"Unexpected response content type from {url}: {content_type}",
+                    payload=payload,
+                    raw_body=body_bytes,
+                    parsed=None,
+                    transport=transport,
+                    stage="decode",
+                )
+            try:
+                body = body_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise CallEvidenceError(
+                    f"Non-UTF-8 response from {url}",
+                    payload=payload,
+                    raw_body=body_bytes,
+                    parsed=None,
+                    transport=transport,
+                    stage="decode",
+                ) from exc
             break
         except urllib.error.HTTPError as exc:
-            error_body = exc.read(1024 * 1024)
-            last_error = ProtocolError(f"HTTP {exc.code} from {url}; body_sha256={sha256_bytes(error_body)}")
+            error_limit = 1024 * 1024
+            error_body = exc.read(error_limit + 1)
+            error_response_bytes = len(error_body)
+            error_truncated = len(error_body) > error_limit
+            error_body = error_body[:error_limit]
+            last_error = CallEvidenceError(
+                f"HTTP {exc.code} from {url}; body_sha256={sha256_bytes(error_body)}",
+                payload=payload,
+                raw_body=error_body,
+                parsed=None,
+                transport={
+                    "request_id": request_id,
+                    "attempts": attempt + 1,
+                    "request_bytes": len(encoded_payload),
+                    "response_bytes": error_response_bytes,
+                    "headers_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "http_status": exc.code,
+                },
+                stage="transport",
+                raw_body_truncated=error_truncated,
+            )
             if exc.code not in {408, 425, 429, 500, 502, 503, 504} or attempt == retries:
                 raise last_error from exc
         except urllib.error.URLError as exc:
-            last_error = ProtocolError(f"Cannot reach {url}: {exc.reason}")
+            last_error = CallEvidenceError(
+                f"Cannot reach {url}: {exc.reason}",
+                payload=payload,
+                raw_body=None,
+                parsed=None,
+                transport={
+                    "request_id": request_id,
+                    "attempts": attempt + 1,
+                    "request_bytes": len(encoded_payload),
+                    "response_bytes": 0,
+                    "headers_ms": 0.0,
+                    "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
+                stage="transport",
+            )
             if attempt == retries:
                 raise last_error from exc
         if attempt < retries:
             time.sleep(min(2.0, 0.25 * (2**attempt)))
     else:  # pragma: no cover - loop always breaks or raises
-        raise ProtocolError(str(last_error or "request failed"))
+        raise last_error or ProtocolError("request failed")
     try:
         parsed = _strict_json_loads(body)
     except ValueError as exc:
-        raise ProtocolError(f"Non-JSON response from {url}") from exc
+        raise CallEvidenceError(
+            f"Non-JSON response from {url}",
+            payload=payload,
+            raw_body=body_bytes,
+            parsed=None,
+            transport=transport,
+            stage="decode",
+        ) from exc
     if not isinstance(parsed, dict):
-        raise ProtocolError(f"Expected JSON object from {url}")
-    return parsed, {
-        "request_id": request_id,
-        "attempts": attempt + 1,
-        "request_bytes": len(encoded_payload),
-        "response_bytes": len(body_bytes),
-        "headers_ms": round(headers_ms, 3),
-        "total_ms": round(total_ms, 3),
-    }
+        raise CallEvidenceError(
+            f"Expected JSON object from {url}",
+            payload=payload,
+            raw_body=body_bytes,
+            parsed=parsed,
+            transport=transport,
+            stage="schema",
+        )
+    return _WireJSON(parsed, body_bytes), transport
 
 
 def _post_openai_stream(
@@ -307,58 +448,186 @@ def _post_openai_stream(
     encoded_payload = json.dumps(payload, ensure_ascii=False).encode()
     request = urllib.request.Request(url, data=encoded_payload, headers=headers, method="POST")  # noqa: S310 -- scheme is validated above.
     started = time.perf_counter()
+
+    def transport(
+        *, response_bytes: int, headers_ms: float = 0.0, http_status: int | None = None
+    ) -> dict[str, Any]:
+        value = {
+            "request_id": request_id,
+            "attempts": 1,
+            "request_bytes": len(encoded_payload),
+            "response_bytes": response_bytes,
+            "headers_ms": round(headers_ms, 3),
+            "total_ms": round((time.perf_counter() - started) * 1000, 3),
+            "streaming": True,
+        }
+        if http_status is not None:
+            value["http_status"] = http_status
+        return value
+
     try:
         response = urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context())  # noqa: S310 -- scheme is validated above.
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        raise ProtocolError(f"Cannot start stream from {url}: {exc}") from exc
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read(max_body_bytes + 1)
+        error_response_bytes = len(error_body)
+        truncated = len(error_body) > max_body_bytes
+        error_body = error_body[:max_body_bytes]
+        raise CallEvidenceError(
+            f"HTTP {exc.code} while starting stream from {url}; body_sha256={sha256_bytes(error_body)}",
+            payload=payload,
+            raw_body=error_body,
+            parsed=None,
+            transport=transport(response_bytes=error_response_bytes, http_status=exc.code),
+            stage="transport",
+            raw_body_truncated=truncated,
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise CallEvidenceError(
+            f"Cannot start stream from {url}: {exc}",
+            payload=payload,
+            raw_body=None,
+            parsed=None,
+            transport=transport(response_bytes=0),
+            stage="transport",
+        ) from exc
     chunks: list[dict[str, Any]] = []
     content: list[str] = []
     event_times: list[float] = []
     usage: dict[str, Any] = {}
     reported_model = ""
     total_bytes = 0
-    with response:
-        content_type = response.headers.get_content_type()
-        if content_type != "text/event-stream":
-            raise ProtocolError(f"Unexpected streaming content type from {url}: {content_type}")
-        headers_ms = (time.perf_counter() - started) * 1000
-        for raw_line in response:
-            total_bytes += len(raw_line)
-            if total_bytes > max_body_bytes:
-                raise ProtocolError(f"Streaming response from {url} exceeds {max_body_bytes} bytes")
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                event = _strict_json_loads(data)
-            except ValueError as exc:
-                raise ProtocolError("OpenAI stream contains invalid JSON") from exc
-            if not isinstance(event, dict):
-                raise ProtocolError("OpenAI stream event must be an object")
-            chunks.append(event)
-            reported_model = str(event.get("model") or reported_model)
-            if isinstance(event.get("usage"), dict):
-                usage = event["usage"]
-            try:
-                delta = event["choices"][0]["delta"].get("content")
-            except (KeyError, IndexError, TypeError, AttributeError):
-                delta = None
-            if isinstance(delta, str) and delta:
-                content.append(delta)
-                event_times.append(time.perf_counter())
+    wire_body = bytearray()
+    headers_ms = 0.0
+    deferred_error: tuple[str, str, Any] | None = None
+    stream_done = False
+    response_status = int(response.status)
+    try:
+        with response:
+            content_type = response.headers.get_content_type()
+            headers_ms = (time.perf_counter() - started) * 1000
+            if content_type != "text/event-stream":
+                body = response.read(max_body_bytes + 1)
+                response_bytes = len(body)
+                truncated = len(body) > max_body_bytes
+                body = body[:max_body_bytes]
+                raise CallEvidenceError(
+                    f"Unexpected streaming content type from {url}: {content_type}",
+                    payload=payload,
+                    raw_body=body,
+                    parsed=None,
+                    transport=transport(
+                        response_bytes=response_bytes,
+                        headers_ms=headers_ms,
+                        http_status=response_status,
+                    ),
+                    stage="decode",
+                    raw_body_truncated=truncated,
+                )
+            for raw_line in response:
+                total_bytes += len(raw_line)
+                remaining = max(0, max_body_bytes - len(wire_body))
+                wire_body.extend(raw_line[:remaining])
+                if total_bytes > max_body_bytes:
+                    raise CallEvidenceError(
+                        f"Streaming response from {url} exceeds {max_body_bytes} bytes",
+                        payload=payload,
+                        raw_body=bytes(wire_body),
+                        parsed={"model": reported_model, "partial_content": "".join(content), "stream_events": chunks},
+                        transport=transport(
+                            response_bytes=total_bytes,
+                            headers_ms=headers_ms,
+                            http_status=response_status,
+                        ),
+                        stage="transport",
+                        raw_body_truncated=True,
+                    )
+                if deferred_error is not None or stream_done:
+                    continue
+                try:
+                    line = raw_line.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    deferred_error = (
+                        "OpenAI stream is not UTF-8",
+                        "decode",
+                        {"model": reported_model, "partial_content": "".join(content), "stream_events": chunks},
+                    )
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    stream_done = True
+                    continue
+                try:
+                    event = _strict_json_loads(data)
+                except ValueError:
+                    deferred_error = (
+                        "OpenAI stream contains invalid JSON",
+                        "decode",
+                        {"model": reported_model, "partial_content": "".join(content), "stream_events": chunks},
+                    )
+                    continue
+                if not isinstance(event, dict):
+                    deferred_error = ("OpenAI stream event must be an object", "schema", event)
+                    continue
+                chunks.append(event)
+                reported_model = str(event.get("model") or reported_model)
+                if isinstance(event.get("usage"), dict):
+                    usage = event["usage"]
+                try:
+                    delta = event["choices"][0]["delta"].get("content")
+                except (KeyError, IndexError, TypeError, AttributeError):
+                    delta = None
+                if isinstance(delta, str) and delta:
+                    content.append(delta)
+                    event_times.append(time.perf_counter())
+    except CallEvidenceError:
+        raise
+    except (OSError, TimeoutError) as exc:
+        raise CallEvidenceError(
+            f"Cannot finish stream from {url}: {exc}",
+            payload=payload,
+            raw_body=bytes(wire_body),
+            parsed={"model": reported_model, "partial_content": "".join(content), "stream_events": chunks},
+            transport=transport(
+                response_bytes=total_bytes,
+                headers_ms=headers_ms,
+                http_status=response_status,
+            ),
+            stage="transport",
+            raw_body_truncated=True,
+        ) from exc
+    if deferred_error is not None:
+        message, stage, parsed = deferred_error
+        raise CallEvidenceError(
+            message,
+            payload=payload,
+            raw_body=bytes(wire_body),
+            parsed=parsed,
+            transport=transport(
+                response_bytes=total_bytes,
+                headers_ms=headers_ms,
+                http_status=response_status,
+            ),
+            stage=stage,
+        )
     total_ms = (time.perf_counter() - started) * 1000
     if not content:
-        raise ProtocolError("OpenAI stream returned no text content")
+        raise CallEvidenceError(
+            "OpenAI stream returned no text content",
+            payload=payload,
+            raw_body=bytes(wire_body),
+            parsed={"model": reported_model, "partial_content": "", "stream_events": chunks},
+            transport=transport(response_bytes=total_bytes, headers_ms=headers_ms),
+            stage="projection",
+        )
     intervals = [(right - left) * 1000 for left, right in zip(event_times, event_times[1:], strict=False)]
-    raw = {
+    raw = _WireJSON({
         "model": reported_model,
         "choices": [{"message": {"content": "".join(content)}}],
         "usage": usage,
         "stream_events": chunks,
-    }
+    }, bytes(wire_body))
     return raw, {
         "request_id": request_id,
         "attempts": 1,
@@ -369,6 +638,7 @@ def _post_openai_stream(
         "inter_chunk_ms": distribution(intervals),
         "total_ms": round(total_ms, 3),
         "streaming": True,
+        "http_status": response_status,
     }
 
 
@@ -461,17 +731,17 @@ def call_target(
             path.relative_to(suite.root.resolve())
         except ValueError as exc:
             raise ProtocolError("recorded responses path escapes the suite") from exc
+        recorded_payload = build_target_payload(
+            suite,
+            prompt,
+            request_model,
+            recorded_responses_sha256=sha256_file(path),
+        )
+        request_id = uuid.uuid4().hex
         for row in _read_jsonl(path):
             if row.get("case_id") == prompt["case_id"]:
                 response = row.get("response")
                 recorded_raw = dict(response) if isinstance(response, dict) else row
-                recorded_payload = build_target_payload(
-                    suite,
-                    prompt,
-                    request_model,
-                    recorded_responses_sha256=sha256_file(path),
-                )
-                request_id = uuid.uuid4().hex
                 transport = {
                     "request_id": request_id,
                     "attempts": 0,
@@ -481,9 +751,34 @@ def call_target(
                     "total_ms": 0.0,
                     "recorded": True,
                 }
-                answer, reported_model = _target_answer(suite, recorded_raw)
+                try:
+                    answer, reported_model = _target_answer(suite, recorded_raw)
+                except ProtocolError as exc:
+                    raise CallEvidenceError(
+                        str(exc),
+                        payload=recorded_payload,
+                        raw_body=None,
+                        parsed=recorded_raw,
+                        transport=transport,
+                        stage="projection",
+                    ) from exc
                 return answer, recorded_raw, reported_model, recorded_payload, transport
-        raise ProtocolError(f"recorded target has no response for case {prompt['case_id']}")
+        raise CallEvidenceError(
+            f"recorded target has no response for case {prompt['case_id']}",
+            payload=recorded_payload,
+            raw_body=None,
+            parsed=None,
+            transport={
+                "request_id": request_id,
+                "attempts": 0,
+                "request_bytes": 0,
+                "response_bytes": 0,
+                "headers_ms": 0.0,
+                "total_ms": 0.0,
+                "recorded": True,
+            },
+            stage="projection",
+        )
     payload = build_target_payload(suite, prompt, request_model)
     if kind == "openai":
         if target.get("stream"):
@@ -494,7 +789,17 @@ def call_target(
         raw, transport = _post_json(endpoint, payload, api_key, timeout, request_id=uuid.uuid4().hex)
     else:
         raise ProtocolError(f"Unsupported target kind: {kind}")
-    answer, reported_model = _target_answer(suite, raw)
+    try:
+        answer, reported_model = _target_answer(suite, raw)
+    except ProtocolError as exc:
+        raise CallEvidenceError(
+            str(exc),
+            payload=payload,
+            raw_body=getattr(raw, "raw_body", None),
+            parsed=dict(raw),
+            transport=transport,
+            stage="projection",
+        ) from exc
     return answer, raw, reported_model, payload, transport
 
 
@@ -528,13 +833,17 @@ def _judge_result(raw: dict[str, Any]) -> tuple[dict[str, Any], str]:
         parsed = _strict_json_loads(text)
     except ValueError as exc:
         raise ProtocolError("Judge output is not valid JSON") from exc
-    if not isinstance(parsed, dict) or parsed.get("verdict") not in {"pass", "fail"}:
+    if not isinstance(parsed, dict) or set(parsed) != {"verdict", "score", "reason", "criteria"}:
+        raise ProtocolError("Judge result fields must be exactly verdict, score, reason, and criteria")
+    if parsed.get("verdict") not in {"pass", "fail"}:
         raise ProtocolError("Judge verdict must be pass or fail")
     score = parsed.get("score")
-    if not isinstance(score, int) or not 0 <= score <= 5:
+    if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 5:
         raise ProtocolError("Judge score must be an integer from 0 to 5")
     if not isinstance(parsed.get("reason"), str) or not parsed["reason"].strip():
         raise ProtocolError("Judge reason is required")
+    if not isinstance(parsed.get("criteria"), dict):
+        raise ProtocolError("Judge criteria must be an object")
     return parsed, content
 
 
@@ -704,7 +1013,17 @@ def call_judge(
         timeout,
         request_id=uuid.uuid4().hex,
     )
-    parsed, content = _judge_result(raw)
+    try:
+        parsed, content = _judge_result(raw)
+    except ProtocolError as exc:
+        raise CallEvidenceError(
+            str(exc),
+            payload=request_payload,
+            raw_body=getattr(raw, "raw_body", None),
+            parsed=dict(raw),
+            transport=transport,
+            stage="projection",
+        ) from exc
     return parsed, raw, content, request_payload, transport
 
 
@@ -743,6 +1062,7 @@ def run(
     concurrency: int = 1,
     requests_per_second: float = 0,
     progress: bool = False,
+    judge_qualification_package: str = "",
     judge_qualification: str = "",
     judge_approval: str = "",
     engagement: str = "",
@@ -765,6 +1085,11 @@ def run(
     if not 1 <= concurrency <= 64 or requests_per_second < 0 or max_total_tokens < 0 or max_cases < 0:
         raise ProtocolError("concurrency must be 1..64; rate, token, and case budgets cannot be negative")
     target_kind = (suite.config.get("target") or {}).get("kind", "json")
+    deep_metrics = (suite.config.get("metrics") or {}).get("deepeval", [])
+    if deep_metrics:
+        raise ProtocolError(
+            "DeepEval metric-engine behavior runs are not supported by canonical semantic verification"
+        )
     report_config = suite.config.get("report") or {}
     conformance_fixture = report_config.get("assurance") == "conformance-fixture"
     if conformance_fixture and (not official or target_kind != "recorded"):
@@ -798,7 +1123,7 @@ def run(
         authorization_record, _ = _read_json_object(
             Path(external_authorization), "external authorization must be a readable JSON object"
         )
-        required = {"authorization_id", "approver", "purpose", "expires_at"}
+        required = {"authorization_id", "approver", "purpose", "effective_at", "expires_at"}
         if not isinstance(authorization_record, dict) or not required <= set(authorization_record):
             raise ProtocolError(f"external authorization is missing fields: {sorted(required - set(authorization_record or {}))}")
         destinations = authorization_record.get("destinations")
@@ -812,15 +1137,21 @@ def run(
         ):
             raise ProtocolError("external authorization requires destinations with host, region, and purpose")
         try:
+            effective = datetime.fromisoformat(str(authorization_record["effective_at"]).replace("Z", "+00:00"))
             expires = datetime.fromisoformat(str(authorization_record["expires_at"]).replace("Z", "+00:00"))
         except ValueError as exc:
-            raise ProtocolError("external authorization expires_at is invalid") from exc
-        if expires.tzinfo is None or expires <= datetime.now(timezone.utc):
-            raise ProtocolError("external authorization is expired or lacks a timezone")
+            raise ProtocolError("external authorization timestamps are invalid") from exc
+        now = datetime.now(timezone.utc)
+        if effective.tzinfo is None or expires.tzinfo is None or not effective <= now < expires:
+            raise ProtocolError("external authorization is not currently effective")
     external_hosts = {str(host) for host in (target_host, judge_host) if host not in {"127.0.0.1", "localhost", "::1", "recorded-local"}}
     authorized_hosts = {str(item["host"]) for item in (authorization_record or {}).get("destinations", [])}
     if external_judge and not allow_external_judge and authorization_record is None:
         raise ProtocolError("external judge requires --allow-external-judge or an authorization record")
+    if authorization_record is not None and not external_hosts <= authorized_hosts:
+        raise ProtocolError(f"external authorization omits hosts: {sorted(external_hosts - authorized_hosts)}")
+    if official and external_hosts and authorization_record is None:
+        raise ProtocolError(f"official external destinations require an authorization record: {sorted(external_hosts)}")
     if suite.config["data_classification"] not in {"public", "synthetic"} and not external_hosts <= authorized_hosts:
         raise ProtocolError(f"non-public suite lacks external authorization for hosts: {sorted(external_hosts - authorized_hosts)}")
 
@@ -862,10 +1193,13 @@ def run(
     implementation_manifest = {path: sha256_bytes(raw) for path, raw in implementation_files.items()}
     implementation_sha256 = sha256_bytes(json.dumps(implementation_manifest, sort_keys=True, separators=(",", ":")).encode())
     evidence["implementation_sha256"] = implementation_sha256
+    source_commit_proof: bytes | None = None
     if official and (not evidence["commit"] or evidence["dirty"]):
         raise ProtocolError("Official runs require a committed, clean source tree")
     if official and _python_source_digest(repo_root / "src" / "cavada_eval") != implementation_sha256:
         raise ProtocolError("Official runs require the executed Python implementation to match the recorded source commit")
+    if official:
+        source_commit_proof = build_source_commit_proof(repo_root, str(evidence["commit"]))
     if official and (not expected_model or not (expected_judge_model or judge_model)):
         raise ProtocolError("Official runs require expected target and judge identities")
     if official and (not model_revision or not judge_revision):
@@ -921,11 +1255,35 @@ def run(
         "consensus": consensus,
     }
     judge_evidence: dict[str, Any] | None = None
+    qualification_package_files: dict[str, bytes] | None = None
     qualification_record: dict[str, Any] | None = None
     approval_record: dict[str, Any] | None = None
-    if official and (not judge_qualification or not judge_approval):
-        raise ProtocolError("official runs require judge qualification and independent approval evidence")
+    if judge_qualification_package and (judge_qualification or judge_approval):
+        raise ProtocolError("judge qualification package cannot be combined with legacy report and approval arguments")
+    package_source: Path | None = Path(judge_qualification_package) if judge_qualification_package else None
+    if package_source is None and resume_dir is not None and (resume_dir / JUDGE_QUALIFICATION_SNAPSHOT).is_dir():
+        package_source = resume_dir / JUDGE_QUALIFICATION_SNAPSHOT
+    if official and package_source is None:
+        raise ProtocolError("official runs require a closed judge qualification evidence package")
+    if package_source is not None:
+        qualification_result, evidence_errors = verify_judge_qualification_for_run(
+            package_source,
+            suite=suite,
+            judge_configuration=judge_manifest,
+            now=datetime.now(timezone.utc),
+        )
+        if evidence_errors:
+            raise ProtocolError("invalid judge qualification evidence package:\n" + "\n".join(evidence_errors))
+        qualification_package_files = qualification_package_snapshot_files(package_source)
+        judge_evidence = {
+            "artifact_type": "judge-qualification-evidence-package",
+            "package_version": qualification_result.package_version,
+            "package_path": JUDGE_QUALIFICATION_SNAPSHOT,
+            "package_sha256": qualification_result.package_sha256,
+        }
     if judge_qualification or judge_approval:
+        if official:
+            raise ProtocolError("legacy judge qualification report and approval cannot satisfy official assurance")
         if not judge_qualification or not judge_approval:
             raise ProtocolError("judge qualification and independent approval must be supplied together")
         qualification_record, qualification_sha256 = _read_json_object(
@@ -946,19 +1304,6 @@ def run(
         )
         if evidence_errors:
             raise ProtocolError("invalid judge qualification evidence:\n" + "\n".join(evidence_errors))
-        judge_evidence = {
-            "qualification_sha256": qualification_sha256,
-            "approval_sha256": approval_sha256,
-            "approval_id": approval_record["approval_id"],
-            "approver_id": approval_record["approver_id"],
-            "approved_at": approval_record["approved_at"],
-            "expires_at": approval_record["expires_at"],
-        }
-    if official and not conformance_fixture:
-        raise ProtocolError(
-            "official behavior runs remain fail-closed until judge qualification run and corpus support bytes are reconstructible"
-        )
-
     target_key = os.getenv(target_key_env, "")
     judge_key = os.getenv(judge_key_env, "")
     previous_rows: list[dict[str, Any]] = []
@@ -968,6 +1313,10 @@ def run(
         if (run_dir / "bundle.json").exists():
             raise ProtocolError("a finalized run bundle cannot be resumed")
         manifest, _ = _read_json_object(run_dir / "manifest.json", "resume directory requires a valid manifest.json")
+        if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+            raise ProtocolError(
+                f"resume requires behavior manifest schema {MANIFEST_SCHEMA_VERSION}; legacy partial runs remain immutable"
+            )
         expected_resume = {
             "protocol_version": PROTOCOL_VERSION,
             "suite.name": suite.name,
@@ -984,7 +1333,7 @@ def run(
         }
         recorded_parameters = manifest.get("parameters") or {}
         if preset or "preset" in recorded_parameters:
-            expected_resume["parameters.preset"] = preset
+            expected_resume["parameters.preset"] = preset or None
         if preset or "case_order_sha256" in recorded_parameters:
             expected_resume["parameters.case_order_sha256"] = case_order_sha256
         for dotted, expected_value in expected_resume.items():
@@ -1000,6 +1349,13 @@ def run(
             raise ProtocolError("resume mismatch for engagement governance evidence")
         if official and manifest.get("source", {}).get("commit") != evidence.get("commit"):
             raise ProtocolError("official resume requires the original source commit")
+        if official:
+            try:
+                recorded_source_proof = _read_regular(run_dir, Path("source_commit_proof.pack"))
+            except OSError as exc:
+                raise ProtocolError("official resume requires the original source commit proof") from exc
+            if recorded_source_proof != source_commit_proof:
+                raise ProtocolError("official resume source commit proof differs from the current source commit")
         run_id = str(manifest["run_id"])
         manifest.setdefault("resumed_at", []).append(datetime.now(timezone.utc).isoformat())
         manifest["status"] = "running"
@@ -1063,6 +1419,11 @@ def run(
         for option, value, safe_reference in (
             ("--external-authorization", external_authorization, "PATH_TO_EXTERNAL_AUTHORIZATION_JSON"),
             ("--storage-attestation", storage_attestation, "PATH_TO_STORAGE_ATTESTATION_JSON"),
+            (
+                "--judge-qualification-package",
+                judge_qualification_package,
+                "PATH_TO_JUDGE_QUALIFICATION_PACKAGE",
+            ),
             ("--judge-qualification", judge_qualification, "PATH_TO_JUDGE_QUALIFICATION_JSON"),
             ("--judge-approval", judge_approval, "PATH_TO_JUDGE_APPROVAL_JSON"),
             ("--engagement", engagement, "PATH_TO_ENGAGEMENT_JSON"),
@@ -1080,7 +1441,7 @@ def run(
             reproduction.extend(["--preset", preset])
         manifest = {
             "protocol_version": PROTOCOL_VERSION,
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": MANIFEST_SCHEMA_VERSION,
             "report_version": REPORT_VERSION,
             "metric_version": METRIC_VERSION,
             "adapter_contract_version": ADAPTER_CONTRACT_VERSION,
@@ -1117,9 +1478,12 @@ def run(
             "judge": judge_manifest,
             "judge_qualification": judge_evidence,
             "engagement": engagement_evidence,
-            "external_judge_authorized": bool(authorization_record) or bool(allow_external_judge and not official),
+            "external_judge_authorized": bool(external_judge and authorization_record),
             "external_authorization": (
-                {key: authorization_record[key] for key in ("authorization_id", "approver", "purpose", "destinations", "expires_at")}
+                {
+                    key: authorization_record[key]
+                    for key in ("authorization_id", "approver", "purpose", "destinations", "effective_at", "expires_at")
+                }
                 if authorization_record
                 else None
             ),
@@ -1132,7 +1496,7 @@ def run(
             },
             "parameters": {
                 "mode": mode,
-                "preset": preset,
+                "preset": preset or None,
                 "preset_version": BENCHMARK_PRESET_VERSION if preset else None,
                 "repetitions": repetitions,
                 "judge_repetitions": judge_repetitions,
@@ -1170,28 +1534,52 @@ def run(
         manifest["protocol_sha256"] = sha256_file(run_dir / "protocol_snapshot.md")
         (run_dir / "suite_snapshot.toml").write_text((suite.root / "suite.toml").read_text(encoding="utf-8"), encoding="utf-8")
         os.chmod(run_dir / "suite_snapshot.toml", 0o600)
+        (run_dir / "dataset_snapshot.jsonl").write_bytes(suite.dataset_path.read_bytes())
+        (run_dir / "rubric_snapshot.md").write_bytes(suite.rubric_path.read_bytes())
+        atomic_json(run_dir / "implementation_evidence_manifest.json", implementation_manifest)
+        for snapshot_raw in implementation_files.values():
+            digest = sha256_bytes(snapshot_raw)
+            destination = run_dir / "implementation_evidence" / digest
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists():
+                destination.write_bytes(snapshot_raw)
         if official:
-            (run_dir / "dataset_snapshot.jsonl").write_bytes(suite.dataset_path.read_bytes())
-            (run_dir / "rubric_snapshot.md").write_bytes(suite.rubric_path.read_bytes())
-            atomic_json(run_dir / "implementation_evidence_manifest.json", implementation_manifest)
-            for snapshot_raw in implementation_files.values():
-                digest = sha256_bytes(snapshot_raw)
-                destination = run_dir / "implementation_evidence" / digest
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if not destination.exists():
-                    destination.write_bytes(snapshot_raw)
-            suite_evidence = suite_snapshot_files(suite)
-            atomic_json(run_dir / "suite_evidence_manifest.json", {name: sha256_bytes(snapshot_raw) for name, snapshot_raw in suite_evidence.items()})
-            for snapshot_raw in suite_evidence.values():
-                digest = sha256_bytes(snapshot_raw)
-                destination = run_dir / "suite_evidence" / digest
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if not destination.exists():
-                    destination.write_bytes(snapshot_raw)
-            if qualification_record is None or approval_record is None or not engagement:
-                raise ProtocolError("official evidence snapshots are incomplete")
+            if source_commit_proof is None:
+                raise ProtocolError("official source commit proof was not built during preflight")
+            (run_dir / "source_commit_proof.pack").write_bytes(source_commit_proof)
+        suite_evidence = suite_snapshot_files(suite, require_pins=official)
+        atomic_json(run_dir / "suite_evidence_manifest.json", {name: sha256_bytes(snapshot_raw) for name, snapshot_raw in suite_evidence.items()})
+        for snapshot_raw in suite_evidence.values():
+            digest = sha256_bytes(snapshot_raw)
+            destination = run_dir / "suite_evidence" / digest
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists():
+                destination.write_bytes(snapshot_raw)
+        if qualification_package_files is not None:
+            package_snapshot = run_dir / JUDGE_QUALIFICATION_SNAPSHOT
+            package_snapshot.mkdir(mode=0o700)
+            for relative, snapshot_raw in sorted(qualification_package_files.items()):
+                destination = package_snapshot / Path(relative)
+                destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                destination.write_bytes(snapshot_raw)
+                os.chmod(destination, 0o600)
+            snapshot_result, snapshot_errors = verify_judge_qualification_for_run(
+                package_snapshot,
+                suite=suite,
+                judge_configuration=judge_manifest,
+                now=datetime.now(timezone.utc),
+            )
+            if snapshot_errors or snapshot_result.package_sha256 != (judge_evidence or {}).get("package_sha256"):
+                raise ProtocolError(
+                    "snapshotted judge qualification package failed reconstruction:\n"
+                    + "\n".join(snapshot_errors or ["package digest changed while snapshotting"])
+                )
+        if qualification_record is not None and approval_record is not None:
             atomic_json(run_dir / "judge_qualification_snapshot.json", qualification_record)
             atomic_json(run_dir / "judge_approval_snapshot.json", approval_record)
+        if official:
+            if qualification_package_files is None or not engagement:
+                raise ProtocolError("official evidence snapshots are incomplete")
             engagement_raw, engagement_evidence_files = engagement_snapshot_files(Path(engagement))
             (run_dir / "engagement_snapshot.json").write_bytes(engagement_raw)
             atomic_json(
@@ -1204,16 +1592,17 @@ def run(
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if not destination.exists():
                     destination.write_bytes(snapshot_raw)
-            for path in (
-                run_dir / "dataset_snapshot.jsonl",
-                run_dir / "rubric_snapshot.md",
-                run_dir / "engagement_snapshot.json",
-                run_dir / "implementation_evidence_manifest.json",
-                *(run_dir / "implementation_evidence").glob("*"),
-                *(run_dir / "suite_evidence").glob("*"),
-                *(run_dir / "engagement_evidence").glob("*"),
-            ):
-                os.chmod(path, 0o600)
+        for path in (
+            run_dir / "dataset_snapshot.jsonl",
+            run_dir / "rubric_snapshot.md",
+            run_dir / "implementation_evidence_manifest.json",
+            *(path for path in (run_dir / "source_commit_proof.pack",) if path.exists()),
+            *(run_dir / "implementation_evidence").glob("*"),
+            *(run_dir / "suite_evidence").glob("*"),
+            *(path for path in (run_dir / "engagement_snapshot.json",) if path.exists()),
+            *(run_dir / "engagement_evidence").glob("*"),
+        ):
+            os.chmod(path, 0o600)
         (run_dir / "dataset_card.md").write_text(dataset_card(suite), encoding="utf-8")
         os.chmod(run_dir / "dataset_card.md", 0o600)
         for name in ("requests.jsonl", "raw_responses.jsonl", "judgments.jsonl", "case_results.jsonl", "failures.jsonl", "events.jsonl"):
@@ -1349,11 +1738,64 @@ def run(
                     if case.get("messages")
                     else case["input"]
                 )
-                answer, target_raw, reported_model, target_request, target_transport = call_target(
-                    suite, endpoint, target_key, target_input, request_model, timeout
+                try:
+                    answer, target_raw, reported_model, target_request, target_transport = call_target(
+                        suite, endpoint, target_key, target_input, request_model, timeout
+                    )
+                except CallEvidenceError as exc:
+                    target_transport = exc.transport
+                    target_raw = dict(exc.parsed) if isinstance(exc.parsed, dict) else {}
+                    target_config = suite.config.get("target") or {}
+                    reported_model = str(
+                        _get(
+                            target_raw,
+                            "model" if target_config.get("kind", "json") == "openai" else str(target_config.get("reported_model_field", "model")),
+                        )
+                        or ""
+                    )
+                    record(
+                        "requests.jsonl",
+                        {
+                            **base,
+                            "kind": "target",
+                            "request_id": target_transport["request_id"],
+                            "endpoint": safe_target_endpoint,
+                            "payload": exc.payload,
+                        },
+                    )
+                    record(
+                        "raw_responses.jsonl",
+                        {
+                            **base,
+                            "reported_model": reported_model,
+                            "response": exc.parsed,
+                            "transport": target_transport,
+                            **_call_error_fields(exc),
+                        },
+                    )
+                    if target_raw:
+                        consume_tokens(target_raw, "target")
+                    raise
+                record(
+                    "requests.jsonl",
+                    {
+                        **base,
+                        "kind": "target",
+                        "request_id": target_transport["request_id"],
+                        "endpoint": safe_target_endpoint,
+                        "payload": target_request,
+                    },
                 )
-                record("requests.jsonl", {**base, "kind": "target", "request_id": target_transport["request_id"], "payload": target_request})
-                record("raw_responses.jsonl", {**base, "reported_model": reported_model, "response": target_raw, "transport": target_transport})
+                record(
+                    "raw_responses.jsonl",
+                    {
+                        **base,
+                        "reported_model": reported_model,
+                        "response": target_raw,
+                        "transport": target_transport,
+                        **_wire_body_fields(getattr(target_raw, "raw_body", None)),
+                    },
+                )
                 consume_tokens(target_raw, "target")
             if reported_model != expected_model:
                 raise ProtocolError(f"Target identity mismatch: expected {expected_model!r}, got {reported_model!r}")
@@ -1414,7 +1856,14 @@ def run(
                             reported_judge = str(judge_raw.get("model") or "")
                             record(
                                 "requests.jsonl",
-                                {**base, **evidence_fields, "kind": "judge", "request_id": judge_transport["request_id"], "payload": judge_request},
+                                {
+                                    **base,
+                                    **evidence_fields,
+                                    "kind": "judge",
+                                    "request_id": judge_transport["request_id"],
+                                    "endpoint": safe_judge_endpoint,
+                                    "payload": judge_request,
+                                },
                             )
                             record(
                                 "judgments.jsonl",
@@ -1426,12 +1875,41 @@ def run(
                                     "raw": judge_raw,
                                     "raw_content": judge_content,
                                     "transport": judge_transport,
+                                    **_wire_body_fields(getattr(judge_raw, "raw_body", None)),
                                 },
                             )
                             consume_tokens(judge_raw, "judge")
                             if reported_judge != judge_spec["expected_model"]:
                                 raise ProtocolError(f"Judge identity mismatch: expected {judge_spec['expected_model']!r}, got {reported_judge!r}")
                             verdicts.append(judgment)
+                        except CallEvidenceError as exc:
+                            parsed_raw = dict(exc.parsed) if isinstance(exc.parsed, dict) else exc.parsed
+                            reported_judge = str(parsed_raw.get("model") or "") if isinstance(parsed_raw, dict) else ""
+                            record(
+                                "requests.jsonl",
+                                {
+                                    **base,
+                                    **evidence_fields,
+                                    "kind": "judge",
+                                    "request_id": exc.transport["request_id"],
+                                    "endpoint": safe_judge_endpoint,
+                                    "payload": exc.payload,
+                                },
+                            )
+                            record(
+                                "judgments.jsonl",
+                                {
+                                    **base,
+                                    **evidence_fields,
+                                    "reported_model": reported_judge,
+                                    "raw": parsed_raw,
+                                    "transport": exc.transport,
+                                    **_call_error_fields(exc),
+                                    "status": "invalid",
+                                },
+                            )
+                            if isinstance(parsed_raw, dict):
+                                consume_tokens(parsed_raw, "judge")
                         except ProtocolError as exc:
                             if "identity mismatch" in str(exc).casefold() or "budget exhausted" in str(exc).casefold():
                                 raise
@@ -1487,21 +1965,25 @@ def run(
     tasks: list[tuple[dict[str, Any], int]] = []
     for case in selected_cases:
         if case["review"]["status"] != "approved":
-            result = {
-                "case_id": case["id"],
-                "category": case["category"],
-                "risk_domain": case["risk_domain"],
-                "severity": case["severity"],
-                "language": case.get("language", "missing"),
-                "locale": case.get("locale", "missing"),
-                "split": case.get("split", "missing"),
-                "scenario_id": case.get("scenario_id"),
-                "performance_phase": case.get("performance_phase", "steady"),
-                "status": "skipped",
-                "reason": "case not approved",
-            }
-            result_rows.append(result)
-            record("case_results.jsonl", result)
+            for repetition in range(1, repetitions + 1):
+                result = {
+                    "case_id": case["id"],
+                    "category": case["category"],
+                    "risk_domain": case["risk_domain"],
+                    "severity": case["severity"],
+                    "language": case.get("language", "missing"),
+                    "locale": case.get("locale", "missing"),
+                    "split": case.get("split", "missing"),
+                    "operating_condition": case.get("operating_condition", "missing"),
+                    "distribution_shift_reference_id": case.get("distribution_shift_reference_id"),
+                    "scenario_id": case.get("scenario_group_id") or case.get("scenario_id"),
+                    "performance_phase": case.get("performance_phase", "steady"),
+                    "repetition": repetition,
+                    "status": "skipped",
+                    "reason": "case not approved",
+                }
+                result_rows.append(result)
+                record("case_results.jsonl", result)
             continue
         tasks.extend((case, repetition) for repetition in range(1, repetitions + 1) if (str(case["id"]), repetition) not in completed)
     try:
@@ -1534,7 +2016,8 @@ def run(
     for row in analysis_rows:
         statuses_by_case.setdefault(str(row["case_id"]), []).append(str(row["status"]))
     case_binary = []
-    for statuses in statuses_by_case.values():
+    for case_id in sorted(statuses_by_case):
+        statuses = statuses_by_case[case_id]
         if set(statuses) == {"pass"}:
             case_binary.append(1.0)
         elif set(statuses) <= {"pass", "fail"}:
@@ -1545,7 +2028,8 @@ def run(
         else {"lower": 0.0, "upper": 0.0, "confidence": confidence, "samples": bootstrap_samples, "seed": bootstrap_seed}
     )
     category_binary: dict[str, list[float]] = {}
-    for case_id, statuses in statuses_by_case.items():
+    for case_id in sorted(statuses_by_case):
+        statuses = statuses_by_case[case_id]
         case_rows = [row for row in analysis_rows if str(row["case_id"]) == case_id]
         if set(statuses) == {"pass"}:
             category_binary.setdefault(str(case_rows[0]["category"]), []).append(1.0)
@@ -1705,6 +2189,7 @@ def run(
         "dataset_snapshot.jsonl",
         "rubric_snapshot.md",
         "implementation_evidence_manifest.json",
+        "source_commit_proof.pack",
         "suite_evidence_manifest.json",
         "judge_qualification_snapshot.json",
         "judge_approval_snapshot.json",
@@ -1716,6 +2201,11 @@ def run(
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "implementation_evidence").glob("*")) if path.is_file())
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "suite_evidence").glob("*")) if path.is_file())
     artifact_names.extend(path.relative_to(run_dir).as_posix() for path in sorted((run_dir / "engagement_evidence").glob("*")) if path.is_file())
+    artifact_names.extend(
+        path.relative_to(run_dir).as_posix()
+        for path in sorted((run_dir / JUDGE_QUALIFICATION_SNAPSHOT).rglob("*"))
+        if path.is_file()
+    )
     manifest["finished_at"] = finished_at.isoformat()
     manifest["abort_reason"] = abort_reason
     manifest["metrics"] = metrics

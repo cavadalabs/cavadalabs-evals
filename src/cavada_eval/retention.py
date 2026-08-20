@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle, write_bundle
+from .behavior_verify import verify_behavior_run
 from .protocol import ProtocolError, atomic_json, sha256_file
 
 ACTIONS = {"legal-hold", "release-hold", "deletion-request", "tombstone", "deletion-complete", "cryptographic-erasure"}
@@ -16,7 +17,7 @@ def retention_record(run_dir: Path, output_dir: Path, *, action: str, actor: str
         raise ProtocolError("retention record requires a valid action, actor, and evidence reference")
     if output_dir.exists():
         raise ProtocolError("retention record output directory already exists")
-    verification = verify_bundle(run_dir)
+    verification = verify_behavior_run(run_dir)
     if not verification["valid"]:
         raise ProtocolError("retention record source bundle is invalid")
     try:
