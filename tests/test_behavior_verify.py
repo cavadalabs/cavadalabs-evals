@@ -546,3 +546,26 @@ def test_suite_snapshot_closes_pilot_campaign_and_every_run_bundle(tmp_path: Pat
         "pilot/run-one/bundle.json",
         "pilot/run-one/checksums.txt",
     } <= set(snapshots)
+
+
+def test_suite_snapshot_allows_installed_package_hardlinks(tmp_path: Path) -> None:
+    root = tmp_path / "suite"
+    root.mkdir()
+    cached = tmp_path / "cached-responses.jsonl"
+    cached.write_text('{"case_id":"case-1","response":{"answer":"ok"}}\n', encoding="utf-8")
+    responses = root / "responses.jsonl"
+    responses.hardlink_to(cached)
+    dataset = root / "dataset.jsonl"
+    rubric = root / "rubric.md"
+    dataset.write_text("", encoding="utf-8")
+    rubric.write_text("rubric", encoding="utf-8")
+    suite = Suite(
+        root,
+        {"target": {"responses": responses.name, "responses_sha256": sha256_file(responses)}},
+        (),
+        "rubric",
+        dataset,
+        rubric,
+    )
+
+    assert suite_snapshot_files(suite) == {"responses.jsonl": cached.read_bytes()}

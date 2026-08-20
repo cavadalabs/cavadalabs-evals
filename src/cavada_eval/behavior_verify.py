@@ -316,6 +316,7 @@ def _pinned_file(
     label: str,
     *,
     require_digest: bool = True,
+    require_unique: bool = True,
 ) -> tuple[str, bytes] | None:
     if not isinstance(owner, dict):
         return None
@@ -340,7 +341,7 @@ def _pinned_file(
         raise ProtocolError(f"{label} requires a pinned SHA-256")
     path = _safe_path(root, relative, label)
     try:
-        raw = _read_regular(root, path.relative_to(root))
+        raw = _read_regular(root, path.relative_to(root), require_unique=require_unique)
     except (OSError, ValueError) as exc:
         raise ProtocolError(f"{label} must be a regular package-local file") from exc
 
@@ -354,7 +355,14 @@ def suite_snapshot_files(suite: Suite, *, require_pins: bool = True) -> dict[str
     snapshots: dict[str, bytes] = {}
 
     def add(owner: Any, field: str, label: str, *, record: bool = False) -> dict[str, Any] | None:
-        pinned = _pinned_file(suite.root, owner, field, label, require_digest=require_pins)
+        pinned = _pinned_file(
+            suite.root,
+            owner,
+            field,
+            label,
+            require_digest=require_pins,
+            require_unique=False,
+        )
         if pinned is None:
             return None
         relative, raw = pinned
@@ -377,7 +385,7 @@ def suite_snapshot_files(suite: Suite, *, require_pins: bool = True) -> dict[str
         except ValueError as exc:
             raise ProtocolError(f"{label} escapes the suite") from exc
         try:
-            raw = _read_regular(suite.root, Path(relative))
+            raw = _read_regular(suite.root, Path(relative), require_unique=False)
         except OSError as exc:
             raise ProtocolError(f"{label} must be a regular suite-local file") from exc
         if expected is not None and sha256_bytes(raw) != expected:
