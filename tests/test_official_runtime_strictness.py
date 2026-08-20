@@ -13,7 +13,15 @@ from cavada_eval.behavior_verify import (
 )
 from cavada_eval.calibration import judge_evidence_errors
 from cavada_eval.metrics import METRIC_VERSION
-from cavada_eval.protocol import OFFICIAL_CASE_FIELDS, OFFICIAL_SUITE_FIELDS, SCHEMA_VERSION, ProtocolError, load_suite
+from cavada_eval.profiles import ADAPTER_CONTRACT_VERSION
+from cavada_eval.protocol import (
+    MANIFEST_SCHEMA_VERSION,
+    OFFICIAL_CASE_FIELDS,
+    OFFICIAL_SUITE_FIELDS,
+    REPORT_VERSION,
+    ProtocolError,
+    load_suite,
+)
 
 ROOT = Path(__file__).parents[1]
 
@@ -27,15 +35,17 @@ def _schema(name: str) -> dict[str, Any]:
 def test_runtime_contract_versions_and_fields_match_v2_schemas() -> None:
     case = _schema("case-2.0.0.schema.json")
     suite = _schema("suite-2.0.0.schema.json")
-    manifest = _schema("manifest-2.0.0.schema.json")
+    manifest = _schema("manifest-2.1.0.schema.json")
     metrics = _schema("metrics-2.0.0.schema.json")
 
     assert set(case["properties"]) == OFFICIAL_CASE_FIELDS
     assert set(suite["properties"]) == OFFICIAL_SUITE_FIELDS
     assert set(manifest["properties"]) == OFFICIAL_MANIFEST_FIELDS
     assert set(metrics["properties"]) == OFFICIAL_METRIC_FIELDS
-    assert manifest["properties"]["schema_version"]["const"] == SCHEMA_VERSION
+    assert manifest["properties"]["schema_version"]["const"] == MANIFEST_SCHEMA_VERSION
     assert manifest["properties"]["metric_version"]["const"] == METRIC_VERSION
+    assert manifest["properties"]["report_version"]["const"] == REPORT_VERSION
+    assert manifest["properties"]["adapter_contract_version"]["const"] == ADAPTER_CONTRACT_VERSION
     assert case["properties"]["exact_tool_order"] == {
         "type": "array",
         "items": {"type": "string", "minLength": 1},
@@ -111,7 +121,7 @@ min = 0.8
 
 def test_official_manifest_and_metrics_reject_nested_unknown_fields() -> None:
     manifest = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "metric_version": METRIC_VERSION,
         "target": {"unexpected": True},
         "judge": {"models": [{"unexpected": True}]},

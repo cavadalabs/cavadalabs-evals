@@ -32,14 +32,25 @@ jobs:
       - run: uv run pytest
       - run: uv run python scripts/check_secrets.py
       - run: uv run python scripts/check_released_assets.py
-      - name: Enforce empty results registry v1
+      - run: uv run python scripts/check_release.py --release --tag "$GITHUB_REF_NAME"
+      - name: Validate append-only results registries
+        # Registry records may reference only archives attested by an earlier tag;
+        # archives first introduced by this tag remain unregistered until a later PR.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$GITHUB_SHA^" 2>/dev/null || true)
           if [[ -n "$previous_tag" ]] && git cat-file -e "$previous_tag:results/registry.json"; then
-            git show "$previous_tag:results/registry.json" > "$RUNNER_TEMP/previous-registry.json"
-            uv run python scripts/validate_results_registry.py --previous "$RUNNER_TEMP/previous-registry.json"
+            git show "$previous_tag:results/registry.json" > "$RUNNER_TEMP/previous-registry-v1.json"
+            uv run python scripts/validate_results_registry.py results/registry.json --previous "$RUNNER_TEMP/previous-registry-v1.json"
           else
-            uv run python scripts/validate_results_registry.py --initial-empty
+            uv run python scripts/validate_results_registry.py results/registry.json --initial-empty
+          fi
+          if [[ -n "$previous_tag" ]] && git cat-file -e "$previous_tag:results/registry-v2.json"; then
+            git show "$previous_tag:results/registry-v2.json" > "$RUNNER_TEMP/previous-registry-v2.json"
+            uv run python scripts/validate_results_registry.py results/registry-v2.json --previous "$RUNNER_TEMP/previous-registry-v2.json" --verify-attestations-online
+          else
+            uv run python scripts/validate_results_registry.py results/registry-v2.json --initial-empty --verify-attestations-online
           fi
       - run: uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
       - run: uv build
@@ -65,6 +76,38 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           sbom-path: dist/sbom.cdx.json
+      - name: Pin new official public evidence archive subjects
+        id: evidence-subjects
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$GITHUB_SHA^" 2>/dev/null || true)
+          if [[ -n "$previous_tag" ]]; then
+            mapfile -t archives < <(git diff --diff-filter=A --name-only "$previous_tag" "$GITHUB_SHA" -- 'results/archive/sha256/*.tar')
+          else
+            mapfile -t archives < <(find results/archive/sha256 -maxdepth 1 -type f -name '*.tar' -print 2>/dev/null | sort)
+          fi
+          uv run python - "$RUNNER_TEMP/public-evidence.sha256" "${archives[@]}" <<'PY'
+          import sys
+          from pathlib import Path
+          from cavada_eval.results_registry import attestable_archive_sha256
+
+          rows = []
+          for value in sys.argv[2:]:
+              path = Path(value)
+              digest = attestable_archive_sha256(path)
+              if digest is not None:
+                  rows.append(f"{digest}  {path.name}\n")
+          Path(sys.argv[1]).write_text("".join(rows), encoding="utf-8")
+          PY
+          if [[ -s "$RUNNER_TEMP/public-evidence.sha256" ]]; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Attest exact public evidence archives
+        if: ${{ steps.evidence-subjects.outputs.present == 'true' }}
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-checksums: ${{ runner.temp }}/public-evidence.sha256
       - name: Create immutable release candidate
         env:
           GH_TOKEN: ${{ github.token }}

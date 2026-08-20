@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -60,6 +61,10 @@ path = "../workloads/workload-v1.jsonl"
     )
     (workloads / "workload-v1.jsonl").write_text('{"id":"one"}\n', encoding="utf-8")
     (root / "PROTOCOL.md").write_text("# CavadaLabs Evaluation Protocol 1.0.0\n", encoding="utf-8")
+    archive = b"synthetic released archive\n"
+    archive_path = root / "results" / "archive" / "sha256" / f"{hashlib.sha256(archive).hexdigest()}.tar"
+    archive_path.parent.mkdir(parents=True)
+    archive_path.write_bytes(archive)
     _git(root, "add", ".")
     _git(root, "commit", "-m", "release")
     _git(root, "tag", "v1.0.0")
@@ -146,3 +151,17 @@ def test_performance_plan_closure_requires_revision_bump(tmp_path: Path) -> None
     (root / "performance" / "workloads" / "workload-v1.1.jsonl").write_text('{"id":"changed"}\n', encoding="utf-8")
     successor.write_text(successor.read_text(encoding="utf-8").replace("workload-v1.jsonl", "workload-v1.1.jsonl"), encoding="utf-8")
     assert _check(root).returncode == 0
+
+
+def test_released_results_archive_is_content_addressed_and_immutable(tmp_path: Path) -> None:
+    root = _released_repo(tmp_path)
+    archive = next((root / "results" / "archive" / "sha256").iterdir())
+    archive.write_bytes(b"changed\n")
+    changed = _check(root)
+    assert changed.returncode == 1
+    assert "digest does not match its content-addressed name" in changed.stdout
+
+    archive.unlink()
+    removed = _check(root)
+    assert removed.returncode == 1
+    assert "historical assets must remain byte-identical" in removed.stdout

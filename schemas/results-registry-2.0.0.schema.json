@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/results-registry/2.0.0",
+  "title": "CavadaLabs Content-Addressed Results Registry v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_version", "records", "events"],
+  "properties": {
+    "registry_version": {"const": "2.0.0"},
+    "records": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/record"}
+    },
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event"}
+    }
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "sha256", "format", "format_version"],
+      "properties": {
+        "relative_path": {"type": "string", "pattern": "^archive/sha256/[a-f0-9]{64}\\.tar$"},
+        "sha256": {"$ref": "#/$defs/hash"},
+        "format": {"const": "cavada-public-evidence-tar"},
+        "format_version": {"const": "1.0.0"}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmpty"},
+        "version": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "revision"],
+      "properties": {
+        "identity": {"$ref": "#/$defs/nonEmpty"},
+        "revision": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_version", "provider", "subject_name", "subject_sha256", "repository",
+        "signer_workflow", "source_commit", "source_ref", "protocol_version", "schema_version"
+      ],
+      "properties": {
+        "attestation_version": {"const": "1.0.0"},
+        "provider": {"const": "github-artifact-attestations"},
+        "subject_name": {"type": "string", "pattern": "^[a-f0-9]{64}\\.tar$"},
+        "subject_sha256": {"$ref": "#/$defs/hash"},
+        "repository": {"const": "cavadalabs/cavadalabs-evals"},
+        "signer_workflow": {"const": "cavadalabs/cavadalabs-evals/.github/workflows/release.yml"},
+        "source_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "source_ref": {"type": "string", "pattern": "^refs/tags/v"},
+        "protocol_version": {"$ref": "#/$defs/nonEmpty"},
+        "schema_version": {"const": "2.0.0"}
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_version", "record_id", "record_type", "archive", "artifact_type", "suite", "system",
+        "protocol_version", "assurance_level", "verification_result_sha256", "release_approval_sha256",
+        "published_at", "expires_at", "claim_scope", "rankable", "model_claim_allowed",
+        "benchmark_claim_allowed", "reproduction_status", "attestation"
+      ],
+      "properties": {
+        "record_version": {"const": "2.0.0"},
+        "record_id": {"$ref": "#/$defs/nonEmpty"},
+        "record_type": {"enum": ["official", "conformance"]},
+        "archive": {"$ref": "#/$defs/archive"},
+        "artifact_type": {"const": "behavior-run"},
+        "suite": {"$ref": "#/$defs/identity"},
+        "system": {"$ref": "#/$defs/system"},
+        "protocol_version": {"$ref": "#/$defs/nonEmpty"},
+        "assurance_level": {"enum": ["official", "conformance-fixture"]},
+        "verification_result_sha256": {"$ref": "#/$defs/hash"},
+        "release_approval_sha256": {"$ref": "#/$defs/hash"},
+        "published_at": {"$ref": "#/$defs/timestamp"},
+        "expires_at": {"$ref": "#/$defs/timestamp"},
+        "claim_scope": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmpty"}
+        },
+        "rankable": {"type": "boolean"},
+        "model_claim_allowed": {"type": "boolean"},
+        "benchmark_claim_allowed": {"type": "boolean"},
+        "reproduction_status": {"const": "not-reproduced"},
+        "attestation": {
+          "oneOf": [
+            {"$ref": "#/$defs/attestation"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"record_type": {"const": "conformance"}}},
+          "then": {
+            "properties": {
+              "assurance_level": {"const": "conformance-fixture"},
+              "claim_scope": {"maxItems": 0},
+              "rankable": {"const": false},
+              "model_claim_allowed": {"const": false},
+              "benchmark_claim_allowed": {"const": false},
+              "attestation": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "assurance_level": {"const": "official"},
+              "claim_scope": {"minItems": 1},
+              "attestation": {"$ref": "#/$defs/attestation"}
+            }
+          }
+        }
+      ]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_version", "event_id", "record_id", "event_type", "occurred_at",
+        "previous_event_id", "related_record_id", "reason"
+      ],
+      "properties": {
+        "event_version": {"const": "2.0.0"},
+        "event_id": {"$ref": "#/$defs/nonEmpty"},
+        "record_id": {"$ref": "#/$defs/nonEmpty"},
+        "event_type": {"enum": ["published", "withdrawn", "corrected", "superseded", "expired"]},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "previous_event_id": {"type": ["string", "null"], "minLength": 1},
+        "related_record_id": {"type": ["string", "null"], "minLength": 1},
+        "reason": {"$ref": "#/$defs/nonEmpty"}
+      }
+    }
+  }
+}

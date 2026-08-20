@@ -51,6 +51,7 @@ _ENGAGEMENT_FIELDS = {
 }
 _RELEASE_FIELDS = {
     "release_version",
+    "protocol_version",
     "release_id",
     "status",
     "run_id",
@@ -64,6 +65,8 @@ _RELEASE_FIELDS = {
     "decisions",
     "approved_at",
     "expires_at",
+    "revoked_at",
+    "revocation_reason",
 }
 _DECISION_FIELDS = {
     "status",
@@ -277,16 +280,24 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     approval, approval_sha256 = _read_object(approval_path, "release approval")
     _exact_object(approval, _RELEASE_FIELDS, "release approval")
     errors: list[str] = []
-    bundle_hash = _hash_regular(run_dir, Path("bundle.json"))
+    bundle, bundle_hash = _read_object(run_dir / "bundle.json", "run bundle")
+    bundle_files = bundle.get("files")
+    if (
+        verification.get("bundle_sha256") != bundle_hash
+        or not isinstance(bundle_files, dict)
+        or bundle_files.get("manifest.json") != manifest_sha256
+    ):
+        raise ProtocolError("behavior bundle changed after semantic verification")
     expected = {
-        "release_version": "1.0.0",
+        "release_version": "2.0.0",
+        "protocol_version": PROTOCOL_VERSION,
         "status": "approved",
         "run_id": manifest.get("run_id"),
         "bundle_sha256": bundle_hash,
         "manifest_sha256": manifest_sha256,
         "engagement_id": engagement.get("engagement_id"),
         "engagement_sha256": engagement_sha256,
-        "assurance_level": "approved",
+        "assurance_level": release_assurance,
     }
     for field, value in expected.items():
         if approval.get(field) != value:
@@ -299,12 +310,18 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     engagement_expiry = _time(engagement.get("expires_at"), "engagement expires_at")
     if not finished_at <= approved_at <= now < expires_at <= engagement_expiry:
         errors.append("release approval timing is invalid or outside the engagement validity period")
+    if approval.get("revoked_at") is not None or approval.get("revocation_reason") != "":
+        errors.append("release approval is revoked or has inconsistent revocation fields")
     claims = approval.get("permitted_claims")
     engagement_claims = set(map(str, engagement.get("permitted_claims", [])))
-    if not isinstance(claims, list) or not claims or not set(map(str, claims)) <= engagement_claims:
-        errors.append("release claims are empty or exceed the approved engagement claims")
+    if not isinstance(claims, list) or not set(map(str, claims)) <= engagement_claims:
+        errors.append("release claims exceed the approved engagement claims")
     elif len(claims) != len(set(map(str, claims))) or not all(_usable(claim) for claim in claims):
         errors.append("release claims must be unique non-placeholder strings")
+    elif conformance_fixture and claims:
+        errors.append("conformance fixture release cannot permit claims")
+    elif not conformance_fixture and not claims:
+        errors.append("official release claims must not be empty")
     if approval.get("limitations_acknowledged") is not True:
         errors.append("release approval must acknowledge the report limitations")
     decisions = approval.get("decisions")
@@ -355,7 +372,8 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
     if errors:
         raise ProtocolError("invalid public release approval:\n" + "\n".join(errors))
     return {
-        "release_version": "1.0.0",
+        "release_version": "2.0.0",
+        "protocol_version": PROTOCOL_VERSION,
         "release_id": approval.get("release_id"),
         "run_id": manifest["run_id"],
         "bundle_sha256": bundle_hash,
@@ -368,6 +386,6 @@ def verified_public_release(run_dir: Path, engagement_path: Path, approval_path:
         "benchmark_claim_allowed": False if conformance_fixture else manifest.get("benchmark_claim_allowed", True),
         "permitted_claims": claims,
         "decision_statuses": decision_statuses,
-        "approved_at": approval["approved_at"],
-        "expires_at": approval["expires_at"],
+        "approved_at": approved_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "expires_at": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
     }

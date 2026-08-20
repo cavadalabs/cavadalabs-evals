@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle, write_bundle
+from .behavior_verify import verify_behavior_run
 from .protocol import ProtocolError, atomic_json, atomic_text
 from .statistics import holm_adjust, paired_binary_comparison
 
@@ -59,7 +60,7 @@ def compare_runs(
     seed: int = 0,
     non_inferiority_margin: float | None = None,
 ) -> dict[str, Any]:
-    if not verify_bundle(baseline_dir)["valid"] or not verify_bundle(candidate_dir)["valid"]:
+    if not verify_behavior_run(baseline_dir)["valid"] or not verify_behavior_run(candidate_dir)["valid"]:
         raise ProtocolError("comparison input run bundle verification failed")
     try:
         baseline_manifest = json.loads((baseline_dir / "manifest.json").read_text(encoding="utf-8"))

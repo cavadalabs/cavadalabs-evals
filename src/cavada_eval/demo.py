@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from .artifacts import verify_bundle
+from .behavior_verify import verify_behavior_run
 from .protocol import ProtocolError, load_suite, sha256_file
 from .runner import run
 
@@ -90,7 +90,7 @@ def run_demo(repo_root: Path, *, artifact_root: Path | None = None) -> dict[str,
         server.server_close()
         thread.join()
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    verification = verify_bundle(run_dir)
+    verification = verify_behavior_run(run_dir)
     if manifest.get("status") != "passed" or not verification["valid"]:
         raise ProtocolError("offline demo did not produce a passing verified bundle")
     return {

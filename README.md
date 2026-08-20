@@ -53,10 +53,31 @@ synthetic templates and smoke tests, not representative or official benchmark
 suites. `official` means conformance to the versioned protocol, never universal
 safety, correctness, or legal certification.
 
-The 0.4 M0 line enables only the offline, recorded, non-claiming
-`conformance-fixture` path. Real behavior results remain fail-closed and
-`doctor` reports `official_ready=false` until the judge-qualification run and
-corpus support bytes are included in a reconstructible evidence closure.
+The 0.4 development line is software-conformance-ready for behavior evidence:
+its official engine can reconstruct a closed judge-qualification package and
+separately report bundle integrity, reconstructed semantics, and requested
+assurance. This is readiness of the verification software, not approval of a
+suite or result. The repository currently has:
+
+| Evidence state | Current public count |
+| --- | ---: |
+| Software conformance-ready engine | 1 |
+| Real approved suites | 0 |
+| Real official runs | 0 |
+| Public-release approvals | 0 |
+| Independent reproductions | 0 |
+| Verified registry records | 0 |
+
+Accordingly, `doctor` reports `structural_ready=true`,
+`official_engine_ready=true`, `verified_official_suite_count=0`, and
+`official_ready=false`. The synthetic offline `conformance-fixture` proves that
+the machinery executes; it is non-rankable, authorizes no model or benchmark
+claim, and is not a substitute for any state in the table above.
+
+Private AI remains isolated outside the canonical 0.4 line. Blinded pairwise
+output judging with retained A/B and B/A decisions is unsupported. Serving
+performance remains a separate development protocol; performance official
+assurance is outside this milestone.
 
 ## Create and validate a suite
 
@@ -136,7 +157,7 @@ Useful commands:
 ```text
 init doctor list profiles program validate audit estimate run resume redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
-judge-qualify pilot-audit compare report verify promote export controls
+judge-qualify judge-qualify-package pilot-audit compare report verify promote export controls
 import-external retention-record
 perf validate | perf run | perf compare
 ```
@@ -168,6 +189,24 @@ target or judge. Non-public official bundles also require a current storage
 attestation covering encryption, immutability, access logging, retention, and
 tested backup/restore. Every official run also requires hash-linked,
 independently approved evidence for the exact qualified judge configuration.
+That evidence is a strict, closed, content-addressed package containing the
+qualification run bundle, corpus and support bytes, blueprint, approvals,
+recorded judge evidence, and approver-qualification evidence. Verification
+recalculates qualification metrics and gates from those bytes; fields such as
+`passed=true` are never accepted as proof. The qualification run receives base
+integrity and semantic verification without recursively requiring its own
+official judge qualification, after which qualification-specific assurance is
+applied.
+
+Build the production package from a closed staging tree containing
+`source-suite/`, `corpus/`, `run/`, `qualification/`, and the referenced
+reviewer evidence. The command publishes only after canonical reconstruction:
+
+```bash
+uv run cavada-eval judge-qualify-package /secure/qualification-staging \
+  /secure/judge-qualification-evidence
+```
+
 Approved suites additionally carry hash-pinned calibration and independent
 approval evidence. Official execution requires a current engagement record
 hash-linked to the exact suite and SUT. Public export then requires a separate,
@@ -186,6 +225,20 @@ It does not expose restricted reviewer evidence. The engagement, approval, and
 their referenced evidence files must remain together in their restricted
 directories so every package-local SHA-256 can be checked.
 
+The still-empty results registry also has a strict v2 format for future public
+records. A v2 record points to an exact deterministic, content-addressed public
+evidence tar and is checked by the same behavior and release verifiers. Records
+and lifecycle events are append-only; withdrawal, correction, supersession, and
+expiry preserve prior evidence. A conformance record must remain non-rankable
+and claim-free. Registry v1 remains readable and intentionally empty.
+
+Offline verification checks the archive bytes, closed file set, hashes,
+semantic reconstruction, release binding, and expected attestation subject.
+For a real public official record, cryptographic provenance verification is a
+separate online step using GitHub Artifact Attestations and `gh attestation
+verify`. HMAC bundle signatures are internal shared-secret integrity controls;
+they are not public signatures and do not replace GitHub/Sigstore verification.
+
 ## Artifacts
 
 Final runs contain restricted evidence and sanitized public reports:
@@ -199,7 +252,7 @@ asset_inventory.json          content hashes and safe media metadata
 requests.jsonl                restricted request ledger
 raw_responses.jsonl           restricted raw SUT outputs
 judgments.jsonl               restricted raw judge evidence
-engine_results.jsonl          optional metric-engine evidence
+engine_results.jsonl          reserved; non-empty engine runs are not M1-verifiable
 case_results.jsonl            observation results
 metrics.json                  aggregate statistics, performance and gates
 category_results.csv          tabular category results
@@ -210,9 +263,15 @@ report.html / report.pdf      restricted reports
 report_public.html / .pdf     sanitized reports
 figures/*.svg                 accessible static charts
 bundle.json / checksums.txt   content-addressed bundle
-signature.json                optional HMAC signature
-verification.json             final integrity verification
+signature.json                optional internal HMAC integrity control
+verification.json             integrity, semantic and assurance verification
 ```
+
+`events.jsonl` is bounded diagnostic progress evidence only. It is integrity
+checked but is not used for scores, claims, public export, or ranking, because
+concurrent event order is not a semantic input. Non-empty DeepEval metric-engine
+behavior runs currently fail before network access: their outputs do not yet
+have canonical semantic reconstruction and are therefore unsupported in M1.
 
 Performance campaigns use a separate generation-only artifact set documented
 in `docs/PERFORMANCE.md`; judge latency is never included in serving results.

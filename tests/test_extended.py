@@ -910,7 +910,7 @@ def test_deliberate_failure_fails_gate_and_preserves_evidence(tmp_path: Path) ->
     assert (output / "raw_responses.jsonl").stat().st_size > 0 and verify_bundle(output)["valid"] is True
 
 
-def test_resume_completes_an_unfinalized_run_without_duplicates(tmp_path: Path) -> None:
+def test_resume_rejects_legacy_unfinalized_run_before_network(tmp_path: Path) -> None:
     class Handler(BaseHTTPRequestHandler):
         calls = 0
 
@@ -919,7 +919,12 @@ def test_resume_completes_an_unfinalized_run_without_duplicates(tmp_path: Path) 
             length = int(self.headers["Content-Length"])
             self.rfile.read(length)
             if self.path.endswith("/chat/completions"):
-                body = {"model": "judge-real", "choices": [{"message": {"content": '{"verdict":"pass","score":5,"reason":"ok"}'}}]}
+                body = {
+                    "model": "judge-real",
+                    "choices": [
+                        {"message": {"content": '{"verdict":"pass","score":5,"reason":"ok","criteria":{}}'}}
+                    ],
+                }
             else:
                 body = {"answer": "Answer", "model": "target-real"}
             encoded = json.dumps(body).encode()
@@ -990,33 +995,30 @@ def test_resume_completes_an_unfinalized_run_without_duplicates(tmp_path: Path) 
     thread.start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
-        output = run(
-            suite,
-            repo_root=tmp_path,
-            endpoint=base + "/target",
-            model_label="target",
-            expected_model="target-real",
-            model_revision="target-rev",
-            request_model=None,
-            judge_endpoint=base + "/v1",
-            judge_model="judge",
-            expected_judge_model="judge-real",
-            judge_revision="judge-rev",
-            target_key_env="MISSING_TARGET_KEY",
-            judge_key_env="MISSING_JUDGE_KEY",
-            repetitions=1,
-            judge_repetitions=1,
-            max_cases=0,
-            timeout=5,
-            official=False,
-            allow_external_judge=False,
-            resume_dir=run_dir,
-        )
+        with pytest.raises(ProtocolError, match="resume requires behavior manifest schema 2.1.0"):
+            run(
+                suite,
+                repo_root=tmp_path,
+                endpoint=base + "/target",
+                model_label="target",
+                expected_model="target-real",
+                model_revision="target-rev",
+                request_model=None,
+                judge_endpoint=base + "/v1",
+                judge_model="judge",
+                expected_judge_model="judge-real",
+                judge_revision="judge-rev",
+                target_key_env="MISSING_TARGET_KEY",
+                judge_key_env="MISSING_JUDGE_KEY",
+                repetitions=1,
+                judge_repetitions=1,
+                max_cases=0,
+                timeout=5,
+                official=False,
+                allow_external_judge=False,
+                resume_dir=run_dir,
+            )
     finally:
         server.shutdown()
         thread.join()
-    rows = [json.loads(line) for line in (output / "case_results.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 1 and rows[0]["status"] == "pass"
-    final = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-    assert final["status"] == "passed" and len(final["resumed_at"]) == 1
     assert Handler.calls == 0

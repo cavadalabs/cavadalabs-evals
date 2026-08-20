@@ -20,6 +20,7 @@ SEMVER = re.compile(r"^(?:v)?(?P<version>\d+\.\d+\.\d+)$")
 PROTOCOL_HEADING = re.compile(
     r"^# CavadaLabs (?P<family>Evaluation|LLM Serving Performance) Protocol v?(?P<version>\d+\.\d+(?:\.\d+)?)$"
 )
+RESULT_ARCHIVE = re.compile(r"^results/archive/sha256/(?P<digest>[a-f0-9]{64})\.tar$")
 GIT = shutil.which("git")
 
 
@@ -92,7 +93,13 @@ def _tag_snapshot(root: Path, tag: str) -> tuple[list[str], Callable[[str], byte
 
 def _worktree_snapshot(root: Path) -> tuple[list[str], Callable[[str], bytes]]:
     selected: set[Path] = set()
-    for directory in (root / "suites", root / "schemas", root / "performance" / "plans", root / "performance" / "workloads"):
+    for directory in (
+        root / "suites",
+        root / "schemas",
+        root / "performance" / "plans",
+        root / "performance" / "workloads",
+        root / "results" / "archive",
+    ):
         if directory.is_dir():
             selected.update(path for path in directory.rglob("*") if path.is_file() or path.is_symlink())
     selected.update(path for path in root.glob("*PROTOCOL*.md") if path.is_file() or path.is_symlink())
@@ -215,8 +222,28 @@ def _protocols(paths: list[str], read: Callable[[str], bytes], source: str) -> l
     return assets
 
 
+def _result_archives(paths: list[str], read: Callable[[str], bytes], source: str) -> list[Asset]:
+    assets: list[Asset] = []
+    for path in paths:
+        match = RESULT_ARCHIVE.fullmatch(path)
+        if match is None:
+            continue
+        raw = read(path)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != match.group("digest"):
+            raise ValueError(f"results archive {source}:{path} digest does not match its content-addressed name")
+        assets.append(Asset("results-archive", digest, (1, 0, 0), "1.0.0", f"{source}:{path}", _hashes({"archive.tar": raw})))
+    return assets
+
+
 def _assets(paths: list[str], read: Callable[[str], bytes], source: str) -> list[Asset]:
-    return [*_schemas(paths, read, source), *_suites(paths, read, source), *_plans(paths, read, source), *_protocols(paths, read, source)]
+    return [
+        *_schemas(paths, read, source),
+        *_suites(paths, read, source),
+        *_plans(paths, read, source),
+        *_protocols(paths, read, source),
+        *_result_archives(paths, read, source),
+    ]
 
 
 def validate(root: Path) -> list[str]:

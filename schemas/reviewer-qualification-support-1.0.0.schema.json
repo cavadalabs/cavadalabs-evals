@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cavadalabs.com/evals/reviewer-qualification-support/1.0.0",
+  "title": "CavadaLabs Reviewer Qualification Support v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_version",
+    "evidence_id",
+    "subject_id",
+    "issuer_id",
+    "evidence_type",
+    "issued_at",
+    "content"
+  ],
+  "properties": {
+    "evidence_version": {"const": "1.0.0"},
+    "evidence_id": {"type": "string", "minLength": 1},
+    "subject_id": {"type": "string", "minLength": 1},
+    "issuer_id": {"type": "string", "minLength": 1},
+    "evidence_type": {
+      "enum": [
+        "credential",
+        "experience-record",
+        "training-record",
+        "assessment-record",
+        "synthetic-test-fixture"
+      ]
+    },
+    "issued_at": {"type": "string", "format": "date-time"},
+    "content": {"type": "string", "minLength": 1}
+  }
+}

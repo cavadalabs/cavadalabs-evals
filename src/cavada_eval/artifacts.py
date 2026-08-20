@@ -3,47 +3,24 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import math
 import os
 import re
 import stat
+import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
 from typing import Any, BinaryIO
 
-from .protocol import ProtocolError, atomic_json, atomic_text
+from .protocol import ProtocolError, _strict_json_loads, atomic_json, atomic_text
 
 BUNDLE_VERSION = "1.0.0"
 EXCLUDED_FROM_BUNDLE = {"bundle.json", "checksums.txt", "signature.json", "verification.json"}
 
 
-def _json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
-
-
-def _json_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON number: {value}")
-
-
-def _finite_json(value: Any) -> bool:
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, list):
-        return all(_finite_json(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _finite_json(item) for key, item in value.items())
-    return value is None or isinstance(value, (str, int, bool))
-
-
 def _json_object(raw: bytes) -> dict[str, Any]:
-    value = json.loads(raw.decode("utf-8"), object_pairs_hook=_json_pairs, parse_constant=_json_constant)
-    if not isinstance(value, dict) or not _finite_json(value):
+    value = _strict_json_loads(raw)
+    if not isinstance(value, dict):
         raise ValueError("expected a finite JSON object")
     return value
 
@@ -53,7 +30,7 @@ def _identity(value: os.stat_result) -> tuple[int, int, int, int]:
 
 
 @contextmanager
-def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
+def _regular_file(root: Path, relative: Path, *, require_unique: bool = True) -> Iterator[BinaryIO]:
     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
         raise OSError("unsafe relative file path")
     file_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -85,11 +62,15 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 parent = child
             name = relative.parts[-1]
             before_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISREG(before_file.st_mode):
-                raise OSError("bundle artifact is not a regular file")
+            if not stat.S_ISREG(before_file.st_mode) or (require_unique and before_file.st_nlink != 1):
+                raise OSError("bundle artifact is not a unique regular file")
             descriptor = os.open(name, file_flags, dir_fd=parent)
             opened_file = os.fstat(descriptor)
-            if not stat.S_ISREG(opened_file.st_mode) or _identity(opened_file) != _identity(before_file):
+            if (
+                not stat.S_ISREG(opened_file.st_mode)
+                or (require_unique and opened_file.st_nlink != 1)
+                or _identity(opened_file) != _identity(before_file)
+            ):
                 raise OSError("bundle artifact changed before it was opened")
             handle = os.fdopen(descriptor, "rb", closefd=False)
             try:
@@ -97,7 +78,11 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
                 if _identity(os.fstat(descriptor)) != _identity(opened_file):
                     raise OSError("bundle artifact changed while it was read")
                 current_file = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                if not stat.S_ISREG(current_file.st_mode) or _identity(current_file) != _identity(opened_file):
+                if (
+                    not stat.S_ISREG(current_file.st_mode)
+                    or (require_unique and current_file.st_nlink != 1)
+                    or _identity(current_file) != _identity(opened_file)
+                ):
                     raise OSError("bundle artifact path changed while it was read")
                 for entry_parent, entry_name, opened in reversed(entries):
                     current = os.stat(entry_name, dir_fd=entry_parent, follow_symlinks=False)
@@ -117,19 +102,27 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
     path = root / relative
     components = [root, *(root / Path(*relative.parts[:index]) for index in range(1, len(relative.parts) + 1))]
     before_components = [component.lstat() for component in components]
-    if any(not stat.S_ISDIR(value.st_mode) for value in before_components[:-1]) or not stat.S_ISREG(before_components[-1].st_mode):
+    if (
+        any(not stat.S_ISDIR(value.st_mode) for value in before_components[:-1])
+        or not stat.S_ISREG(before_components[-1].st_mode)
+        or (require_unique and before_components[-1].st_nlink != 1)
+    ):
         raise OSError("bundle path is not regular")
     descriptor = os.open(path, file_flags)
     try:
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode) or _identity(opened) != _identity(before_components[-1]):
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (require_unique and opened.st_nlink != 1)
+            or _identity(opened) != _identity(before_components[-1])
+        ):
             raise OSError("file changed before it was opened")
         handle = os.fdopen(descriptor, "rb", closefd=False)
         try:
             yield handle
             after = os.fstat(descriptor)
             current_components = [component.lstat() for component in components]
-            if _identity(after) != _identity(opened) or any(
+            if (require_unique and after.st_nlink != 1) or _identity(after) != _identity(opened) or any(
                 _identity(current) != _identity(before) for current, before in zip(current_components, before_components, strict=True)
             ):
                 raise OSError("file changed while it was read")
@@ -139,8 +132,8 @@ def _regular_file(root: Path, relative: Path) -> Iterator[BinaryIO]:
         os.close(descriptor)
 
 
-def _read_regular(root: Path, relative: Path) -> bytes:
-    with _regular_file(root, relative) as handle:
+def _read_regular(root: Path, relative: Path, *, require_unique: bool = True) -> bytes:
+    with _regular_file(root, relative, require_unique=require_unique) as handle:
         return handle.read()
 
 
@@ -159,10 +152,17 @@ def _files(root: Path) -> list[Path]:
 
 
 def write_bundle(run_dir: Path, *, signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY", key_id: str = "") -> dict[str, Any]:
-    files = {path.relative_to(run_dir).as_posix(): _hash_regular(run_dir, path.relative_to(run_dir)) for path in _files(run_dir)}
+    paths = _files(run_dir)
+    relatives = [path.relative_to(run_dir).as_posix() for path in paths]
+    if any(
+        relative != unicodedata.normalize("NFC", relative) or PureWindowsPath(relative).as_posix() != relative
+        for relative in relatives
+    ):
+        raise ProtocolError("bundle artifact paths must use canonical unambiguous Unicode NFC")
+    files = {relative: _hash_regular(run_dir, path.relative_to(run_dir)) for path, relative in zip(paths, relatives, strict=True)}
     bundle = {"bundle_version": BUNDLE_VERSION, "algorithm": "sha256", "files": files}
     atomic_json(run_dir / "bundle.json", bundle)
-    atomic_text(run_dir / "checksums.txt", "".join(f"{digest}  {name}\n" for name, digest in files.items()))
+    atomic_text(run_dir / "checksums.txt", "".join(f"{digest}  {name}\n" for name, digest in sorted(files.items())))
     key = os.getenv(signing_key_env, "")
     if key:
         canonical = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
@@ -183,6 +183,7 @@ def verify_bundle(
     *,
     signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY",
     write_result: bool = False,
+    verify_hmac: bool = True,
 ) -> dict[str, Any]:
     if run_dir.is_symlink():
         raise ProtocolError("unsafe bundle directory")
@@ -207,15 +208,29 @@ def verify_bundle(
     if bundle_raw != canonical_bundle:
         failures.append("bundle.json is not in canonical byte form")
     root = run_dir.resolve()
+    folded_paths: dict[str, str] = {}
     for relative, expected in bundle["files"].items():
         if not isinstance(relative, str) or not relative or not isinstance(expected, str) or re.fullmatch(r"[a-f0-9]{64}", expected) is None:
             failures.append(f"malformed artifact entry: {relative}")
             continue
         candidate = Path(relative)
         windows_candidate = PureWindowsPath(relative)
-        if candidate.is_absolute() or windows_candidate.drive or ".." in candidate.parts or ".." in windows_candidate.parts or candidate.as_posix() != relative:
+        if (
+            relative != unicodedata.normalize("NFC", relative)
+            or candidate.is_absolute()
+            or windows_candidate.drive
+            or ".." in candidate.parts
+            or ".." in windows_candidate.parts
+            or candidate.as_posix() != relative
+            or windows_candidate.as_posix() != relative
+        ):
             failures.append(f"unsafe artifact path: {relative}")
             continue
+        folded = unicodedata.normalize("NFC", relative).casefold()
+        if folded in folded_paths and folded_paths[folded] != relative:
+            failures.append(f"case-colliding artifact paths: {folded_paths[folded]}, {relative}")
+            continue
+        folded_paths[folded] = relative
         path = run_dir / candidate
         try:
             current = run_dir
@@ -236,14 +251,23 @@ def verify_bundle(
                     failures.append(f"hash mismatch: {relative}")
             except OSError:
                 failures.append(f"unreadable artifact: {relative}")
-    for path in sorted(run_dir.rglob("*")):
-        if path.is_symlink():
-            failures.append(f"unsafe symlink artifact: {path.relative_to(run_dir).as_posix()}")
-    actual_files = {path.relative_to(run_dir).as_posix() for path in _files(run_dir)}
+    try:
+        for path in sorted(run_dir.rglob("*")):
+            file_stat = path.lstat()
+            if stat.S_ISLNK(file_stat.st_mode):
+                failures.append(f"unsafe symlink artifact: {path.relative_to(run_dir).as_posix()}")
+            elif not stat.S_ISDIR(file_stat.st_mode) and not stat.S_ISREG(file_stat.st_mode):
+                failures.append(f"unsafe non-regular artifact: {path.relative_to(run_dir).as_posix()}")
+            elif stat.S_ISREG(file_stat.st_mode) and file_stat.st_nlink != 1:
+                failures.append(f"unsafe hardlinked artifact: {path.relative_to(run_dir).as_posix()}")
+        actual_files = {path.relative_to(run_dir).as_posix() for path in _files(run_dir)}
+    except OSError:
+        failures.append("bundle tree changed during verification")
+        actual_files = set()
     declared_files = set(map(str, bundle["files"]))
     for relative in sorted(actual_files - declared_files):
         failures.append(f"unlisted artifact: {relative}")
-    expected_checksums = "".join(f"{digest}  {name}\n" for name, digest in bundle["files"].items())
+    expected_checksums = "".join(f"{digest}  {name}\n" for name, digest in sorted(bundle["files"].items()))
     try:
         checksums_valid = _read_regular(run_dir, Path("checksums.txt")).decode("utf-8") == expected_checksums
     except (OSError, UnicodeDecodeError):
@@ -269,7 +293,7 @@ def verify_bundle(
         canonical = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
         if signature.get("algorithm") != "hmac-sha256" or signature.get("bundle_sha256") != hashlib.sha256(canonical).hexdigest():
             failures.append("signature metadata does not match bundle")
-        key = os.getenv(signing_key_env, "")
+        key = os.getenv(signing_key_env, "") if verify_hmac else ""
         if key:
             expected = hmac.new(key.encode(), canonical, hashlib.sha256).hexdigest()
             signature_status = "valid" if hmac.compare_digest(str(signature.get("signature", "")), expected) else "invalid"
@@ -279,3 +303,59 @@ def verify_bundle(
     if write_result:
         atomic_json(run_dir / "verification.json", result)
     return result
+
+
+def snapshot_bundle_files(
+    run_dir: Path,
+    *,
+    signing_key_env: str = "CAVADA_EVAL_SIGNING_KEY",
+    allow_verification: bool = True,
+    verify_hmac: bool = True,
+) -> dict[str, bytes]:
+    """Return one hash-bound byte snapshot of a verified closed bundle."""
+    initial = verify_bundle(run_dir, signing_key_env=signing_key_env, verify_hmac=verify_hmac)
+    if initial.get("valid") is not True:
+        raise ProtocolError("invalid bundle:\n" + "\n".join(map(str, initial.get("failures", []))))
+    try:
+        bundle_raw = _read_regular(run_dir, Path("bundle.json"))
+        bundle = _json_object(bundle_raw)
+        entries = bundle["files"]
+        if not isinstance(entries, dict):
+            raise ValueError("bundle file map is malformed")
+        controls = {"bundle.json", "checksums.txt"}
+        if (run_dir / "signature.json").exists():
+            controls.add("signature.json")
+        if allow_verification and (run_dir / "verification.json").exists():
+            controls.add("verification.json")
+        actual = {
+            path.relative_to(run_dir).as_posix()
+            for path in run_dir.rglob("*")
+            if path.is_file() or path.is_symlink()
+        }
+        if actual != set(entries) | controls:
+            raise OSError("bundle control file set is not closed")
+        snapshot: dict[str, bytes] = {}
+        for relative, expected in entries.items():
+            if not isinstance(relative, str) or not isinstance(expected, str):
+                raise ValueError("bundle file entry is malformed")
+            raw = _read_regular(run_dir, Path(relative))
+            if hashlib.sha256(raw).hexdigest() != expected:
+                raise OSError(f"bundle artifact changed while it was snapshotted: {relative}")
+            snapshot[relative] = raw
+        checksums_raw = _read_regular(run_dir, Path("checksums.txt"))
+        expected_checksums = "".join(f"{digest}  {name}\n" for name, digest in sorted(entries.items())).encode()
+        if checksums_raw != expected_checksums:
+            raise OSError("checksums.txt changed while it was snapshotted")
+        snapshot.update({"bundle.json": bundle_raw, "checksums.txt": checksums_raw})
+        if (run_dir / "signature.json").exists():
+            snapshot["signature.json"] = _read_regular(run_dir, Path("signature.json"))
+    except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ProtocolError(f"bundle changed while it was snapshotted: {exc}") from exc
+    final = verify_bundle(run_dir, signing_key_env=signing_key_env, verify_hmac=verify_hmac)
+    try:
+        final_bundle_raw = _read_regular(run_dir, Path("bundle.json"))
+    except OSError as exc:
+        raise ProtocolError("bundle changed while it was snapshotted") from exc
+    if final.get("valid") is not True or final_bundle_raw != bundle_raw:
+        raise ProtocolError("bundle changed while it was snapshotted")
+    return snapshot

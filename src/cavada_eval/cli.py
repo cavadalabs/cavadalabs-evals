@@ -8,12 +8,13 @@ import shutil
 import sys
 import tarfile
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
 from .annotations import annotation_agreement, export_annotation_package, ingest_adjudications, ingest_annotations
-from .artifacts import _read_regular, verify_bundle
-from .behavior_verify import verify_behavior_run
+from .artifacts import _read_regular
+from .behavior_verify import verify_behavior_base, verify_behavior_run
 from .calibration import qualify_judge_run
 from .comparison import compare_runs
 from .compliance import generate_control_report
@@ -31,6 +32,7 @@ from .pilot import audit_pilot_campaign
 from .profiles import benchmark_preset, canonical_preset, preset_summary, profile_summary, stratified_cases
 from .program import load_program_registry
 from .protocol import ProtocolError, _strict_json_loads, audit_suite, load_suite, promote_suite, sha256_bytes
+from .qualification_evidence import build_judge_qualification_package
 from .release import verified_public_release
 from .retention import ACTIONS as RETENTION_ACTIONS
 from .retention import retention_record
@@ -78,6 +80,7 @@ def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("--max-estimated-cost", type=float, default=0)
     command.add_argument("--external-authorization", default="")
     command.add_argument("--storage-attestation", default="")
+    command.add_argument("--judge-qualification-package", default="")
     command.add_argument("--judge-qualification", default="")
     command.add_argument("--judge-approval", default="")
     command.add_argument("--engagement", default="")
@@ -147,6 +150,13 @@ def parser() -> argparse.ArgumentParser:
     judge_qualify.add_argument("corpus_manifest")
     judge_qualify.add_argument("output")
 
+    judge_package = commands.add_parser(
+        "judge-qualify-package",
+        help="Build and reconstruct a closed judge qualification evidence package",
+    )
+    judge_package.add_argument("staging")
+    judge_package.add_argument("output")
+
     pilot_audit = commands.add_parser("pilot-audit", help="Verify a complete multi-family target pilot campaign")
     pilot_audit.add_argument("campaign")
     pilot_audit.add_argument("output")
@@ -172,6 +182,7 @@ def parser() -> argparse.ArgumentParser:
     resume.add_argument("--judge-key-env", default="JUDGE_API_KEY")
     resume.add_argument("--external-authorization", default="")
     resume.add_argument("--storage-attestation", default="")
+    resume.add_argument("--judge-qualification-package", default="")
     resume.add_argument("--judge-qualification", default="")
     resume.add_argument("--judge-approval", default="")
     resume.add_argument("--engagement", default="")
@@ -265,13 +276,17 @@ def _repository_root(start: Path | None = None) -> Path:
     return Path(__file__).resolve().parent
 
 
-def _doctor(repo: Path) -> dict[str, object]:
+def _doctor(repo: Path, *, now: datetime | None = None) -> dict[str, object]:
     schema_errors: list[str] = []
+    schemas: dict[str, dict[str, object]] = {}
     schema_paths = sorted((repo / "schemas").glob("*.json"))
     for path in schema_paths:
         try:
-            json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            value = _strict_json_loads(path.read_bytes())
+            if not isinstance(value, dict):
+                raise ValueError("schema root must be an object")
+            schemas[path.name] = value
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             schema_errors.append(f"{path.name}: {exc}")
     telemetry = {
         "DEEPEVAL_TELEMETRY_OPT_OUT": os.getenv("DEEPEVAL_TELEMETRY_OPT_OUT"),
@@ -290,7 +305,7 @@ def _doctor(repo: Path) -> dict[str, object]:
     unsafe = [name for name, value in telemetry.items() if value is not None and value.casefold() != expected[name]]
     program_error = ""
     try:
-        program = load_program_registry(repo / "program" / "registry.toml", repo_root=repo)
+        program = load_program_registry(repo / "program" / "registry.toml", repo_root=repo, now=now)
         program_summary: object = program["summary"]
     except ProtocolError as exc:
         program_error = str(exc)
@@ -305,12 +320,47 @@ def _doctor(repo: Path) -> dict[str, object]:
         and (source_tree or installed_distribution)
         and (repo / "PROTOCOL.md").is_file()
     )
-    official_ready = (
-        structural_ready
-        and isinstance(program_summary, dict)
-        and isinstance(program_summary.get("official_capable"), int)
-        and program_summary["official_capable"] > 0
+    required_official_schemas = {
+        "judge-approval-3.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-approval/3.0.0",
+        "judge-qualification-blueprint-approval-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-qualification-blueprint-approval/2.0.0",
+        "judge-qualification-evidence-package-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/judge-qualification-evidence-package/1.0.0",
+        "manifest-2.1.0.schema.json": "https://schemas.cavadalabs.com/evals/manifest/2.1.0",
+        "release-approval-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/release-approval/2.0.0",
+        "results-registry-2.0.0.schema.json": "https://schemas.cavadalabs.com/evals/results-registry/2.0.0",
+        "reviewer-qualification-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/reviewer-qualification-evidence/1.0.0",
+        "reviewer-qualification-support-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/reviewer-qualification-support/1.0.0",
+        "corpus-source-run-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/corpus-source-run-evidence/1.0.0",
+        "corpus-gold-evidence-1.0.0.schema.json": "https://schemas.cavadalabs.com/evals/corpus-gold-evidence/1.0.0",
+    }
+    missing_official_schemas = sorted(name for name in required_official_schemas if not (repo / "schemas" / name).is_file())
+    invalid_official_schemas = sorted(
+        name
+        for name, identifier in required_official_schemas.items()
+        if name in schemas
+        and (
+            schemas[name].get("$id") != identifier
+            or schemas[name].get("type") != "object"
+            or schemas[name].get("additionalProperties") is not False
+        )
     )
+    official_engine_ready = structural_ready and not missing_official_schemas and not invalid_official_schemas
+    verified_official_suite_count = (
+        program_summary.get("verified_official_capable", 0) if isinstance(program_summary, dict) else 0
+    )
+    if not isinstance(verified_official_suite_count, int):
+        verified_official_suite_count = 0
+    official_blockers: list[object] = []
+    if missing_official_schemas:
+        official_blockers.append({"missing_official_schemas": missing_official_schemas})
+    if invalid_official_schemas:
+        official_blockers.append({"invalid_official_schemas": invalid_official_schemas})
+    if isinstance(program_summary, dict):
+        failures = program_summary.get("official_validation_failures")
+        if isinstance(failures, list):
+            official_blockers.extend(failures)
+    if verified_official_suite_count < 1:
+        official_blockers.append("no program suite passes canonical official validation")
+    official_ready = official_engine_ready and verified_official_suite_count >= 1
     return {
         "repository": str(repo),
         "python": sys.version.split()[0],
@@ -322,7 +372,10 @@ def _doctor(repo: Path) -> dict[str, object]:
         "telemetry_environment": telemetry,
         "unsafe_explicit_telemetry_settings": unsafe,
         "structural_ready": structural_ready,
+        "official_engine_ready": official_engine_ready,
+        "verified_official_suite_count": verified_official_suite_count,
         "official_ready": official_ready,
+        "official_blockers": official_blockers,
         "ready": structural_ready,
     }
 
@@ -371,6 +424,7 @@ def _execute(args: argparse.Namespace) -> int:
         concurrency=args.concurrency,
         requests_per_second=args.requests_per_second,
         progress=args.progress,
+        judge_qualification_package=args.judge_qualification_package,
         judge_qualification=args.judge_qualification,
         judge_approval=args.judge_approval,
         engagement=args.engagement,
@@ -432,6 +486,7 @@ def _resume(args: argparse.Namespace) -> int:
         concurrency=int(parameters.get("concurrency", 1)),
         requests_per_second=float(parameters.get("requests_per_second", 0)),
         progress=args.progress,
+        judge_qualification_package=args.judge_qualification_package,
         judge_qualification=args.judge_qualification,
         judge_approval=args.judge_approval,
         engagement=args.engagement,
@@ -447,8 +502,10 @@ def _export(run_dir: Path, output: Path, public: bool, *, engagement: str = "", 
         if not engagement or not release_approval:
             raise ProtocolError("public export requires --engagement and --release-approval")
         release_record = verified_public_release(run_dir, Path(engagement), Path(release_approval))
-    elif not verify_bundle(run_dir)["valid"]:
-        raise ProtocolError("cannot export an invalid bundle")
+    else:
+        verification = verify_behavior_run(run_dir)
+        if not verification["valid"]:
+            raise ProtocolError("cannot export a behavior bundle with invalid integrity, semantics, or assurance")
     if output.exists():
         raise ProtocolError(f"refusing to overwrite export: {output}")
     public_names = {
@@ -653,6 +710,24 @@ def main(argv: list[str] | None = None) -> int:
             result = qualify_judge_run(Path(args.run), Path(args.blueprint), Path(args.corpus_manifest), Path(args.output))
             print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
             return EXIT_PASS if result["passed"] else EXIT_GATE_FAILURE
+        if args.command == "judge-qualify-package":
+            package_result = build_judge_qualification_package(
+                Path(args.staging),
+                Path(args.output),
+                now=datetime.now(timezone.utc),
+                base_behavior_verifier=verify_behavior_base,
+            )
+            print(
+                json.dumps(
+                    {
+                        "valid": package_result.valid,
+                        "package_sha256": package_result.package_sha256,
+                        "output": str(Path(args.output)),
+                    },
+                    indent=2,
+                )
+            )
+            return EXIT_PASS if package_result.valid else EXIT_GATE_FAILURE
         if args.command == "pilot-audit":
             result = audit_pilot_campaign(Path(args.campaign), Path(args.output))
             print(json.dumps({"passed": result["passed"], "output": str(Path(args.output))}, indent=2))
@@ -705,9 +780,9 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_PASS if not isinstance(non_inferiority, dict) or bool(non_inferiority.get("passed")) else EXIT_GATE_FAILURE
         if args.command == "report":
             run_dir = Path(args.run)
-            verification = verify_bundle(run_dir)
+            verification = verify_behavior_run(run_dir)
             if not verification["valid"]:
-                raise ProtocolError("run bundle verification failed")
+                raise ProtocolError("run behavior verification failed")
             paths = [str(run_dir / name) for name in ("report.html", "report.pdf", "report_public.html", "report_public.pdf") if (run_dir / name).is_file()]
             print(json.dumps({"verification": verification, "reports": paths}, indent=2))
             return EXIT_PASS

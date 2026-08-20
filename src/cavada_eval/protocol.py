@@ -26,6 +26,7 @@ from .profiles import TASK_PROFILES
 
 PROTOCOL_VERSION = "1.0.0"
 SCHEMA_VERSION = "2.0.0"
+MANIFEST_SCHEMA_VERSION = "2.1.0"
 REPORT_VERSION = "1.1.0"
 BEHAVIORS = {"answer", "refuse", "abstain", "redirect", "safe_complete"}
 RISK_DOMAINS = {"quality", "security", "privacy", "safety", "reliability", "performance", "fairness"}
@@ -191,7 +192,10 @@ def _strict_json_loads(value: str | bytes) -> Any:
     def reject_constant(token: str) -> Any:
         raise ValueError(f"non-finite JSON number: {token}")
 
-    parsed = json.loads(value, object_pairs_hook=object_pairs, parse_constant=reject_constant)
+    try:
+        parsed = json.loads(value, object_pairs_hook=object_pairs, parse_constant=reject_constant)
+    except RecursionError as exc:
+        raise ValueError("JSON nesting is too deep") from exc
 
     def reject_overflow(item: Any) -> None:
         if isinstance(item, float) and not math.isfinite(item):
@@ -203,7 +207,10 @@ def _strict_json_loads(value: str | bytes) -> Any:
             for child in item:
                 reject_overflow(child)
 
-    reject_overflow(parsed)
+    try:
+        reject_overflow(parsed)
+    except RecursionError as exc:
+        raise ValueError("JSON nesting is too deep") from exc
     return parsed
 
 
@@ -656,7 +663,12 @@ def _semantic_integrity_errors(suite: Suite, integrity: dict[str, Any]) -> list[
     return errors
 
 
-def _judge_blueprint_evidence_errors(suite: Suite, *, require: bool) -> list[str]:
+def _judge_blueprint_evidence_errors(
+    suite: Suite,
+    *,
+    require: bool,
+    now: datetime | None = None,
+) -> list[str]:
     judge = suite.config.get("judge")
     fields = {
         "qualification_blueprint": "judge qualification blueprint",
@@ -717,6 +729,7 @@ def _judge_blueprint_evidence_errors(suite: Suite, *, require: bool) -> list[str
             suite,
             str(judge["qualification_blueprint_sha256"]),
             raw=approval_raw,
+            now=now,
             require_effective=require,
         )
     )
@@ -1202,7 +1215,12 @@ def _calibration_evidence_errors(
     return errors
 
 
-def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
+def validate_suite(
+    suite: Suite,
+    *,
+    official: bool = False,
+    now: datetime | None = None,
+) -> list[str]:
     errors: list[str] = []
     config = suite.config
     for field in ("name", "version", "status", "description", "dataset", "rubric", "data_classification"):
@@ -1331,7 +1349,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
                 if field in pricing and (not isinstance(pricing[field], (int, float)) or isinstance(pricing[field], bool) or float(pricing[field]) < 0):
                     errors.append(f"pricing.{field} must be a non-negative number")
 
-    errors.extend(_judge_blueprint_evidence_errors(suite, require=official))
+    errors.extend(_judge_blueprint_evidence_errors(suite, require=official, now=now))
 
     governance = config.get("governance")
     governance_fields = {
@@ -1546,7 +1564,7 @@ def validate_suite(suite: Suite, *, official: bool = False) -> list[str]:
             errors.append("official runs require passed calibration evidence")
         if calibration.get("independent_review") != "passed":
             errors.append("official runs require passed independent calibration review")
-        errors.extend(_calibration_evidence_errors(suite, calibration))
+        errors.extend(_calibration_evidence_errors(suite, calibration, now=now))
         allowed_hosts = (suite.config.get("network") or {}).get("allowed_hosts")
         if not isinstance(allowed_hosts, list) or not allowed_hosts or not all(isinstance(host, str) and host for host in allowed_hosts):
             errors.append("official runs require network.allowed_hosts")

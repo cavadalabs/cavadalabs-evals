@@ -75,8 +75,8 @@ def _html_document(
     confidence = float(interval.get("confidence", 0.95))
     slice_rows = "".join(
         f"<tr><td>{html.escape(dimension)}</td><td>{html.escape(value)}</td><td>{summary.get('total', 0)}</td><td>{summary.get('pass_rate', 0):.4f}</td><td>{summary.get('invalid', 0)}</td><td>{summary.get('error', 0)}</td></tr>"
-        for dimension, values in metrics.get("slices", {}).items()
-        for value, summary in values.items()
+        for dimension, values in sorted(metrics.get("slices", {}).items())
+        for value, summary in sorted(values.items())
     )
     gate_rows = "".join(
         f"<tr><td>{html.escape(str(row.get('category')))}</td><td>{html.escape(str(row.get('metric')))}</td><td>{html.escape(str(row.get('minimum')))}</td><td>{html.escape(str(row.get('actual')))}</td></tr>"
@@ -164,8 +164,8 @@ def _evaluation_pdf(
     ]
     slice_rows = [
         [dimension, value, summary.get("total", 0), f"{float(summary.get('pass_rate', 0)):.1%}", summary.get("invalid", 0), summary.get("error", 0)]
-        for dimension, values in (metrics.get("slices") or {}).items()
-        for value, summary in values.items()
+        for dimension, values in sorted((metrics.get("slices") or {}).items())
+        for value, summary in sorted(values.items())
     ]
     sections: list[dict[str, Any]] = [
         {
@@ -289,6 +289,7 @@ def generate_reports(
     result_rows: list[dict[str, Any]],
 ) -> list[str]:
     require_pdf_support()
+    result_rows = sorted(result_rows, key=lambda row: (str(row.get("case_id", "")), int(row.get("repetition", 0))))
     figures = run_dir / "figures"
     figures.mkdir(mode=0o700, exist_ok=True)
     _bar_svg("Overall pass rate", [("Pass rate", float(metrics.get("pass_rate", 0)))], figures / "overall_scores.svg")
@@ -311,10 +312,10 @@ def generate_reports(
     _bar_svg("Non-pass evidence by severity", failure_rows, figures / "failure_severity.svg", maximum=max([value for _, value in failure_rows] + [1.0]))
     _bar_svg(
         "Maximum pass-rate disparity by slice",
-        [(str(name), float(value)) for name, value in metrics.get("slice_disparities", {}).items()],
+        [(str(name), float(value)) for name, value in sorted(metrics.get("slice_disparities", {}).items())],
         figures / "slice_disparity.svg",
     )
-    calibration_rows = [(str(name), float(value.get("accuracy", 0))) for name, value in metrics.get("judge_calibration", {}).items()]
+    calibration_rows = [(str(name), float(value.get("accuracy", 0))) for name, value in sorted(metrics.get("judge_calibration", {}).items())]
     _bar_svg("Judge calibration accuracy", calibration_rows, figures / "judge_calibration.svg")
     _cdf_svg(
         "Target latency empirical CDF",

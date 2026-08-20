@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import verify_bundle, write_bundle
+from .behavior_verify import verify_behavior_run
 from .protocol import ProtocolError, atomic_json, atomic_text
 
 STATUSES = {"automated_pass", "automated_fail", "manual_required", "not_applicable", "missing", "expired"}
@@ -49,7 +50,7 @@ def generate_control_report(run_dir: Path, catalog_path: Path, output_dir: Path,
     if not isinstance(controls, list):
         raise ProtocolError("control catalog contains no controls")
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    verification = verify_bundle(run_dir)
+    verification = verify_behavior_run(run_dir)
     manual = _records(records_path)
     results: list[dict[str, Any]] = []
     for control in controls:

@@ -9,9 +9,10 @@ Before the first public push, an organization owner must:
 2. enable Issues, Discussions, private vulnerability reporting, dependency
    graph, Dependabot alerts, secret scanning, and push protection where the
    organization plan supports them;
-3. protect `main` with pull requests, code-owner review, conversation
-   resolution, signed commits where operationally supported, linear history,
-   and the `test`, `deepeval-adapter`, and `dependency-review` checks;
+3. protect `next/0.4` and `main` with pull requests, at least one real approval,
+   code-owner review, dismissal of stale approvals, approval after the last
+   push, conversation resolution, linear history, and the `test`,
+   `deepeval-adapter`, and `dependency-review` checks;
 4. block force pushes and deletions and enable immutable releases;
 5. restrict tag creation matching `v*` to release maintainers;
 6. configure organizational signing identities and retain the GitHub/Sigstore
@@ -27,11 +28,20 @@ uv run ruff check .
 uv run mypy src
 uv run pytest
 uv run python scripts/check_secrets.py
+uv run python scripts/check_released_assets.py
+uv run python scripts/validate_results_registry.py results/registry.json --initial-empty
+uv run python scripts/validate_results_registry_v2.py results/registry-v2.json --root results --initial-empty
+uv run python scripts/check_release.py
 uv run cavada-eval doctor
 uv run cavada-eval program
 uv run cavada-eval perf validate --preset quick
 uv run cavada-eval perf validate --preset standard
 uv build
+python -m venv .wheel-smoke
+.wheel-smoke/bin/pip install dist/*.whl
+.wheel-smoke/bin/cavada-eval doctor
+.wheel-smoke/bin/cavada-eval program
+.wheel-smoke/bin/cavada-eval perf validate --preset reference
 uv run python scripts/generate_sbom.py --output dist/sbom.cdx.json
 uv run python scripts/generate_provenance.py
 git status --short
@@ -54,3 +64,10 @@ known limitations agree. Do not publish generated run directories from Git.
 Repository publication does not authorize benchmark-result publication. Follow
 `RESULTS_POLICY.md`; official public export additionally requires the exact
 engagement and post-run release approval required by `PROTOCOL.md`.
+
+The evidence archive is published and attested first; a later reviewed commit
+may append the record that binds that already-attested digest. Do not insert an
+unattested archive or weaken online attestation verification to collapse these
+two phases. The release workflow reconstructs only newly added,
+content-addressed official archives before attesting them. Synthetic
+conformance archives are deliberately excluded from attestation.
