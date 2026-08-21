@@ -29,7 +29,9 @@ from cavada_eval.qualification_evidence import (
 )
 from cavada_eval.runner import run as run_evaluation
 
-NOW = datetime(2026, 8, 21, 12, tzinfo=timezone.utc)
+# Keep the injected verification time after any wall-clock timestamps emitted
+# while building the synthetic package, but before its 2029 expirations.
+NOW = datetime(2028, 1, 1, tzinfo=timezone.utc)
 _TEMPLATE_TEMPORARY: TemporaryDirectory[str] | None = None
 _TEMPLATE_PACKAGE: Path | None = None
 

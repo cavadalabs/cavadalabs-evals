@@ -141,6 +141,7 @@ _TRANSPORT_FIELDS = {
     "streaming",
     "recorded",
     "http_status",
+    "retry_failures",
 }
 _DISTRIBUTION_FIELDS = {"count", "min", "max", "mean", "median", "stdev", "p50", "p90", "p95", "p99"}
 _WIRE_BODY_FIELDS = {
@@ -149,6 +150,13 @@ _WIRE_BODY_FIELDS = {
     "wire_body_bytes",
     "wire_body_truncated",
 }
+_RETRY_FAILURE_FIELDS = {
+    "attempt",
+    "error",
+    "http_status",
+    "response_bytes",
+    "duration_ms",
+} | _WIRE_BODY_FIELDS
 _WIRE_ERROR_FIELDS = {"status", "error", "error_stage"} | _WIRE_BODY_FIELDS
 _RESULT_FIELDS = _OBSERVATION_FIELDS | {
     "status",
@@ -771,6 +779,34 @@ def _ledger_shape_errors(
                 for field in _DISTRIBUTION_FIELDS - {"count"}:
                     if not finite_number(inter_chunk.get(field)):
                         failures.append(f"{label}.inter_chunk_ms.{field} must be a finite non-negative number")
+        retry_failures = value.get("retry_failures")
+        if retry_failures is not None:
+            if not isinstance(retry_failures, list):
+                failures.append(f"{label}.retry_failures must be an array")
+            else:
+                attempts = value.get("attempts")
+                if isinstance(attempts, int) and not isinstance(attempts, bool) and len(retry_failures) != max(0, attempts - 1):
+                    failures.append(f"{label}.retry_failures does not reconcile with attempts")
+                for index, retry in enumerate(retry_failures):
+                    retry_label = f"{label}.retry_failures[{index}]"
+                    failures.extend(_closed_object_errors(retry, _RETRY_FAILURE_FIELDS, retry_label))
+                    if not isinstance(retry, dict):
+                        continue
+                    if retry.get("attempt") != index + 1:
+                        failures.append(f"{retry_label}.attempt is not sequential")
+                    if not isinstance(retry.get("error"), str) or not retry["error"]:
+                        failures.append(f"{retry_label}.error must be non-empty text")
+                    status = retry.get("http_status")
+                    if status is not None and (
+                        not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599
+                    ):
+                        failures.append(f"{retry_label}.http_status must be null or an integer from 100 to 599")
+                    response_bytes = retry.get("response_bytes")
+                    if not isinstance(response_bytes, int) or isinstance(response_bytes, bool) or response_bytes < 0:
+                        failures.append(f"{retry_label}.response_bytes must be a non-negative integer")
+                    if not finite_number(retry.get("duration_ms")):
+                        failures.append(f"{retry_label}.duration_ms must be a finite non-negative number")
+                    wire_errors(retry, retry_label)
 
     def wire_errors(row: dict[str, Any], label: str) -> None:
         wire_fields = {"wire_body_base64", "wire_body_sha256", "wire_body_bytes", "wire_body_truncated"}
