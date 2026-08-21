@@ -13,7 +13,7 @@ import tomllib
 import urllib.parse
 import uuid
 from collections import Counter
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -194,8 +194,10 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
         config = tomllib.loads(source.decode("utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProtocolError(f"cannot load performance plan: {exc}") from exc
-    if config.get("plan_version") != PERFORMANCE_PLAN_VERSION or config.get("profile") != "llm-serving-v1":
-        raise ProtocolError("performance plan requires plan_version=1.0.0 and profile=llm-serving-v1")
+    if config.get("plan_version") != PERFORMANCE_PLAN_VERSION:
+        raise ProtocolError("performance plan requires plan_version=1.0.0")
+    if config.get("profile") not in {"llm-serving-v1", "client-benchmark-v1"}:
+        raise ProtocolError("performance plan profile must be llm-serving-v1 or client-benchmark-v1")
     _reject_unknown(
         config,
         {
@@ -380,7 +382,13 @@ def load_performance_plan(path: str | Path) -> PerformancePlan:
             raise ProtocolError(f"open-loop scenario {identifier} requires a positive duration")
         if scenario["arrival"] == "open-loop" and "measured_requests" in scenario:
             raise ProtocolError(f"open-loop scenario {identifier} cannot define measured_requests; use duration_seconds")
-        if scenario["arrival"] == "closed-loop" and "duration_seconds" in scenario:
+        if config["profile"] == "client-benchmark-v1" and scenario["arrival"] != "closed-loop":
+            raise ProtocolError(f"client benchmark scenario {identifier} must use closed-loop arrival")
+        if config["profile"] == "client-benchmark-v1" and "duration_seconds" not in scenario:
+            raise ProtocolError(f"client benchmark scenario {identifier} requires duration_seconds")
+        if config["profile"] == "client-benchmark-v1" and "measured_requests" in scenario:
+            raise ProtocolError(f"client benchmark scenario {identifier} cannot define measured_requests")
+        if config["profile"] == "llm-serving-v1" and scenario["arrival"] == "closed-loop" and "duration_seconds" in scenario:
             raise ProtocolError(f"closed-loop scenario {identifier} cannot define duration_seconds")
 
     slo = _object(config.get("slo"), "slo")
@@ -417,6 +425,8 @@ def load_performance_runtime(path: str | Path) -> PerformanceRuntime:
         config,
         {
             "runtime_version",
+            "runtime_profile",
+            "hardware_observed",
             "id",
             "endpoint",
             "request_model",
@@ -438,6 +448,9 @@ def load_performance_runtime(path: str | Path) -> PerformanceRuntime:
         },
         "performance runtime",
     )
+    runtime_profile = config.get("runtime_profile")
+    if runtime_profile is not None and runtime_profile != "client-benchmark-v1":
+        raise ProtocolError("performance runtime_profile, when present, must be client-benchmark-v1")
     required_text = (
         "id",
         "endpoint",
@@ -477,9 +490,20 @@ def load_performance_runtime(path: str | Path) -> PerformanceRuntime:
         raise ProtocolError("performance runtime endpoint must not contain credentials, query values, or fragments")
     if contains_secret_like({key: value for key, value in config.items() if key != "api_key_env"}):
         raise ProtocolError("performance runtime contains secret-like material")
-    for field in ("gpu_count", "tensor_parallel", "max_context_tokens"):
-        if not isinstance(config.get(field), int) or isinstance(config[field], bool) or config[field] < 1:
-            raise ProtocolError(f"performance runtime {field} must be a positive integer")
+    if runtime_profile == "client-benchmark-v1":
+        for field in ("gpu_count", "tensor_parallel", "max_context_tokens"):
+            if not isinstance(config.get(field), int) or isinstance(config[field], bool):
+                raise ProtocolError(f"performance runtime {field} must be an integer")
+        if config.get("hardware_observed") is not False or config["gpu_count"] != 0 or config["tensor_parallel"] != 0 or config["gpu_model"] != "not-observed":
+            raise ProtocolError("client benchmark runtime requires explicit unobserved hardware evidence")
+        if config["max_context_tokens"] < 1:
+            raise ProtocolError("performance runtime max_context_tokens must be a positive integer")
+    else:
+        for field in ("gpu_count", "tensor_parallel", "max_context_tokens"):
+            if not isinstance(config.get(field), int) or isinstance(config[field], bool) or config[field] < 1:
+                raise ProtocolError(f"performance runtime {field} must be a positive integer")
+        if "hardware_observed" in config:
+            raise ProtocolError("hardware_observed is only valid for client-benchmark-v1 runtimes")
     if config["tensor_parallel"] > config["gpu_count"]:
         raise ProtocolError("performance runtime tensor_parallel cannot exceed gpu_count")
     container_digest = config.get("container_image_digest", "")
@@ -513,14 +537,17 @@ def load_performance_runtime(path: str | Path) -> PerformanceRuntime:
 
 
 def performance_plan_summary(plan: PerformancePlan, runtime: PerformanceRuntime | None = None) -> dict[str, Any]:
+    if runtime and (plan.config["profile"] == "client-benchmark-v1") != (runtime.config.get("runtime_profile") == "client-benchmark-v1"):
+        raise ProtocolError("performance plan and runtime profiles are incompatible")
     cells = _expand_cells(plan, runtime)
     planned_contexts = sorted({int(cell["context_tokens"]) for cell in cells})
     planned_outputs = sorted({int(cell["output_tokens"]) for cell in cells})
+    duration_limited = any(cell.get("duration_limited") and not cell.get("skip_reason") for cell in cells)
     requests_per_repetition = sum(
         int(cell["warmup_requests"])
         + (int(cell["measured_requests"]) if cell["arrival"] == "closed-loop" else max(1, math.ceil(cell["request_rate"] * cell["duration_seconds"])))
         for cell in cells
-        if not cell.get("skip_reason")
+        if not cell.get("skip_reason") and not cell.get("duration_limited")
     )
     result = {
         "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
@@ -536,8 +563,14 @@ def performance_plan_summary(plan: PerformancePlan, runtime: PerformanceRuntime 
         "scenarios": len(plan.config["scenarios"]),
         "cells_per_repetition": len(cells),
         "repetitions": plan.config["execution"]["repetitions"],
-        "planned_requests": requests_per_repetition * int(plan.config["execution"]["repetitions"]),
+        "planned_requests": (
+            int(plan.config["limits"]["max_requests"])
+            if duration_limited
+            else requests_per_repetition * int(plan.config["execution"]["repetitions"])
+        ),
     }
+    if duration_limited:
+        result["planned_requests_is_upper_bound"] = True
     if runtime:
         result["runtime"] = {
             "id": runtime.config["id"],
@@ -567,6 +600,8 @@ def _expand_cells(plan: PerformancePlan, runtime: PerformanceRuntime | None) -> 
                         "measured_requests": int(scenario.get("measured_requests", plan.config["execution"]["measured_requests"])),
                         "duration_seconds": float(scenario.get("duration_seconds", plan.config["execution"]["open_loop_duration_seconds"])),
                     }
+                    if plan.config["profile"] == "client-benchmark-v1" and scenario["arrival"] == "closed-loop":
+                        cell["duration_limited"] = True
                     cell["cell_key"] = _cell_key(cell)
                     if runtime and int(context) + int(output) > int(runtime.config["max_context_tokens"]):
                         cell["skip_reason"] = "context plus requested output exceeds runtime max_context_tokens"
@@ -837,19 +872,27 @@ def run_performance_campaign(
     require_pdf_support()
     config = plan.config
     runtime_config = runtime.config
+    if (config["profile"] == "client-benchmark-v1") != (runtime_config.get("runtime_profile") == "client-benchmark-v1"):
+        raise ProtocolError("performance plan and runtime profiles are incompatible")
     api_key = os.getenv(str(runtime_config["api_key_env"]), "")
     if api_key and not _secure_endpoint(str(runtime_config["endpoint"])):
         raise ProtocolError("refusing to send an API key over non-local HTTP; use HTTPS or a loopback endpoint")
     cells = _expand_cells(plan, runtime)
     execution = config["execution"]
+    duration_limited = any(cell.get("duration_limited") and not cell.get("skip_reason") for cell in cells)
     total_planned = 0
     for cell in cells:
         if cell.get("skip_reason"):
+            continue
+        if cell.get("duration_limited"):
+            total_planned += int(cell["warmup_requests"]) * int(execution["repetitions"])
             continue
         measured = cell["measured_requests"] if cell["arrival"] == "closed-loop" else math.ceil(cell["request_rate"] * cell["duration_seconds"])
         total_planned += (cell["warmup_requests"] + measured) * int(execution["repetitions"])
     if total_planned > int(config["limits"]["max_requests"]):
         raise ProtocolError(f"performance campaign plans {total_planned} requests; limit is {config['limits']['max_requests']}")
+    if duration_limited:
+        total_planned = int(config["limits"]["max_requests"])
     root = (output_root or repo_root / "runs" / "performance" / str(config["name"])).resolve()
     root.mkdir(parents=True, exist_ok=True)
     run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{runtime_config['id']}_{uuid.uuid4().hex[:10]}"
@@ -894,6 +937,8 @@ def run_performance_campaign(
         "planned_requests": total_planned,
         "planned_cells": len(cells) * int(execution["repetitions"]),
     }
+    if duration_limited:
+        manifest["planned_requests_is_upper_bound"] = True
     atomic_json(run_dir / "manifest.json", manifest)
     shutil.copy2(plan.path, run_dir / "plan_snapshot.toml")
     shutil.copy2(runtime.path, run_dir / "runtime_snapshot.toml")
@@ -1032,12 +1077,64 @@ def run_performance_campaign(
         except Exception as exc:  # noqa: BLE001 -- transport failures are evidence, not process failures.
             return {**base, "request_id": request_id, "status": "error", "error_type": type(exc).__name__, "error": str(exc)}
 
-    def execute_batch(cell: dict[str, Any], count: int, block: int, phase: str, *, open_loop: bool) -> tuple[list[dict[str, Any]], float]:
+    def execute_batch(
+        cell: dict[str, Any],
+        count: int,
+        block: int,
+        phase: str,
+        *,
+        open_loop: bool,
+        duration_seconds: float | None = None,
+        reserved_requests: int = 0,
+    ) -> tuple[list[dict[str, Any]], float]:
         rows = rows_by_context[int(cell["context_tokens"])]
         started = time.perf_counter()
         results: list[dict[str, Any]] = []
         workers = int(execution["max_in_flight"] if open_loop or cell.get("concurrency") is None else cell["concurrency"])
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cavada-perf") as executor:
+            if duration_seconds is not None:
+                if open_loop:
+                    raise ProtocolError("duration-limited batches must use closed-loop arrival")
+                deadline = started + duration_seconds
+                with budget_lock:
+                    remaining = max(0, int(config["limits"]["max_requests"]) - request_count - reserved_requests)
+                next_index = 0
+                active: set[Future[dict[str, Any]]] = set()
+
+                if remaining == 0:
+                    result = one_request(cell, rows[0], 1, block, phase, time.perf_counter())
+                    record("warmups.jsonl" if phase == "warmup" else "observations.jsonl", result)
+                    return [result], time.perf_counter() - started
+
+                def submit() -> None:
+                    nonlocal next_index
+                    index = next_index
+                    next_index += 1
+                    active.add(
+                        executor.submit(
+                            one_request,
+                            cell,
+                            rows[index % len(rows)],
+                            index + 1,
+                            block,
+                            phase,
+                            time.perf_counter(),
+                        )
+                    )
+
+                while len(active) < workers and next_index < remaining and (next_index == 0 or time.perf_counter() < deadline):
+                    submit()
+                halted = False
+                while active:
+                    done, active = wait(active, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        result = future.result()
+                        results.append(result)
+                        record("warmups.jsonl" if phase == "warmup" else "observations.jsonl", result)
+                        halted = halted or result.get("error_type") in {"request-budget", "time-budget", "token-budget"}
+                    while not halted and len(active) < workers and next_index < remaining and time.perf_counter() < deadline:
+                        submit()
+                return results, time.perf_counter() - started
             futures: list[Future[dict[str, Any]]] = []
             for index in range(count):
                 scheduled = started + (index / float(cell["request_rate"]) if open_loop else 0)
@@ -1052,6 +1149,10 @@ def run_performance_campaign(
                 record("warmups.jsonl" if phase == "warmup" else "observations.jsonl", result)
         return results, time.perf_counter() - started
 
+    duration_cells_remaining = sum(
+        not cell.get("skip_reason") and bool(cell.get("duration_limited"))
+        for cell in cells
+    ) * int(execution["repetitions"])
     try:
         for block in range(1, int(execution["repetitions"]) + 1):
             block_cells = list(cells)
@@ -1079,7 +1180,17 @@ def run_performance_campaign(
                     if cell["arrival"] == "closed-loop"
                     else max(1, math.ceil(float(cell["request_rate"]) * float(cell["duration_seconds"])))
                 )
-                observations, window = execute_batch(cell, count, block, "measured", open_loop=cell["arrival"] == "open-loop")
+                if cell.get("duration_limited"):
+                    duration_cells_remaining -= 1
+                observations, window = execute_batch(
+                    cell,
+                    count,
+                    block,
+                    "measured",
+                    open_loop=cell["arrival"] == "open-loop",
+                    duration_seconds=float(cell["duration_seconds"]) if cell.get("duration_limited") else None,
+                    reserved_requests=duration_cells_remaining * (int(cell["warmup_requests"]) + 1),
+                )
                 runtime_pricing = runtime_config.get("pricing")
                 metrics = _cell_metrics(
                     observations,
@@ -1151,6 +1262,16 @@ def run_performance_campaign(
 def _campaign_summary(manifest: dict[str, Any], cells: list[dict[str, Any]], observations: list[dict[str, Any]]) -> dict[str, Any]:
     completed = [cell for cell in cells if cell.get("status") in {"completed", "completed-with-errors"}]
     best = max(completed, key=lambda row: float(row["goodput_requests_per_second"]), default=None)
+    limitations = [
+        "Client-side measurements include network transport between the load generator and endpoint.",
+        "Inter-chunk timing is diagnostic and is not token-level timing.",
+        "TPOT is derived from provider-reported output tokens and elapsed time after TTFT.",
+        "Performance results do not establish response quality or universal deployment capacity.",
+    ]
+    if manifest["runtime"].get("hardware_observed") is False:
+        limitations.append("Target hardware was not observed by the client and no hardware claim is supported.")
+    if manifest["plan"].get("profile") == "client-benchmark-v1":
+        limitations.append("This client benchmark is not official performance evidence.")
     return {
         "performance_protocol_version": PERFORMANCE_PROTOCOL_VERSION,
         "run_id": manifest["run_id"],
@@ -1166,12 +1287,7 @@ def _campaign_summary(manifest: dict[str, Any], cells: list[dict[str, Any]], obs
         "campaign_token_usage": manifest["token_usage"],
         "campaign_estimated_cost": manifest["estimated_cost"],
         "best_goodput_cell": best,
-        "limitations": [
-            "Client-side measurements include network transport between the load generator and endpoint.",
-            "Inter-chunk timing is diagnostic and is not token-level timing.",
-            "TPOT is derived from provider-reported output tokens and elapsed time after TTFT.",
-            "Performance results do not establish response quality or universal deployment capacity.",
-        ],
+        "limitations": limitations,
     }
 
 
@@ -1448,7 +1564,14 @@ def _performance_pdf(path: Path, manifest: dict[str, Any], summary: dict[str, An
         {
             "title": "Protocol and reproducibility",
             "paragraphs": [
-                "Warm-up observations are separate from measured observations. Measured requests are not silently retried. Provider-reported token usage is used for official performance evidence.",
+                (
+                    "Warm-up observations are separate from measured observations. Measured requests are not silently retried. "
+                    + (
+                        "Provider-reported token usage is preserved when available; this client benchmark is not official performance evidence."
+                        if plan.get("profile") == "client-benchmark-v1"
+                        else "Provider-reported token usage is used for official performance evidence."
+                    )
+                ),
                 "Only runs with identical plan, workload, and asset-set hashes have exact comparable cells. Differences remain observational and cannot be attributed to one component without controlled experiments.",
             ],
             "key_values": [

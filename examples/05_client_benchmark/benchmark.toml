@@ -1,0 +1,18 @@
+benchmark_version = "1.0.0"
+name = "loopback-serving"
+dataset = "prompts.jsonl"
+concurrency = [1, 2]
+warmup_requests = 1
+duration_seconds = 0.1
+repetitions = 1
+timeout = 5
+max_requests = 50
+output_tokens = 2
+data_classification = "synthetic"
+
+[target]
+endpoint = "http://127.0.0.1:8765/v1"
+model = "synthetic-loopback"
+expected_model = "synthetic-loopback"
+model_revision = "fixture-1"
+api_key_env = "CAVADA_EXAMPLE_KEY"

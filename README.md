@@ -1,50 +1,110 @@
 # CavadaLabs Evals
 
-AI evaluation scores are often difficult to reproduce, inspect, or verify after
-the original tool or hosted service changes. CavadaLabs Evals runs locally and
-produces content-addressed evidence bundles that another person can audit.
+CavadaLabs Evals turns a dataset, prompt, target, and evaluator into a
+reconstructible client report. The normal path is small; the same core retains
+raw evidence, verifies derived metrics, and keeps failures, execution errors,
+invalid evaluations, and skipped cases separate.
 
-It is for AI engineers, security teams, independent evaluators, and regulated
-organizations that need more than a dashboard score. The standard-library core
-covers quality and safety evaluation; serving performance is a separate
-protocol so judge latency never contaminates model throughput.
-
-## Five-minute offline demo
+## Install and run an offline eval
 
 ```bash
-uv sync
-uv run cavada-eval demo --open
+pip install 'cavadalabs-evals[reports]'
+cavada-eval init customer-support-eval
+cd customer-support-eval
+cavada-eval plan eval.toml
+cavada-eval run eval.toml
+cavada-eval report runs/latest
+cavada-eval verify runs/latest
 ```
 
-No model, API key, container, or internet connection is required. The command
-uses three synthetic cases, recorded responses, and a deterministic loopback
-judge to exercise the real validation, scoring, reporting, and bundle
-verification path. It prints the immutable run directory:
+`init` creates five files: `eval.toml`, `data/example.jsonl`, `custom.py`,
+`README.md`, and `.gitignore`. The generated target is a trusted local callable,
+so the complete quickstart is offline and needs no key.
 
-```text
-status: passed
-external_network_used: false
-runs/demo-v1/<run-id>/report_public.html
-runs/demo-v1/<run-id>/metrics.json
-runs/demo-v1/<run-id>/failures.jsonl
+For an OpenAI-compatible endpoint, the essential configuration is:
+
+```toml
+version = "1"
+name = "customer-support"
+profile = "client"
+seed = 42
+
+[dataset]
+type = "jsonl"
+path = "data/support.jsonl"
+classification = "synthetic"
+
+[[prompts]]
+name = "baseline"
+template = "{question}"
+
+[[targets]]
+name = "qwen-local"
+type = "openai-compatible"
+base_url = "http://127.0.0.1:8000/v1"
+model = "qwen3"
+revision = "local-build-1"
+api_key_env = "LOCAL_API_KEY"
+
+[[evaluators]]
+type = "exact-match"
+expected_field = "answer"
+
+[run]
+max_requests = 1000
+
+[output]
+directory = "runs"
+formats = ["json", "html"]
 ```
 
-In under a minute you have evaluated a fixed AI-system fixture, generated a
-reproducible report, and verified the evidence bundle. The demo is onboarding
-material, not a benchmark or certification. See the
-[offline demo JSON contract](docs/API.md#offline-demo-json-contract) for stable
-automation fields.
+`plan` materializes and validates the dataset, renders prompts, checks target
+capabilities and request limits, and prints the exact matrix without contacting
+an endpoint.
 
-![Pass rate by category from the offline demo](docs/images/demo-category-scores.svg)
+## Python API
 
-## Three common workflows
+```python
+from cavada_eval import evaluate
+from cavada_eval.evaluators import exact_match
+from cavada_eval.targets import OpenAICompatibleTarget
 
-- Evaluate model, RAG, agent, tool, or multimodal behavior against a versioned
-  suite and independent judge.
-- Measure serving TTFT, TPOT, latency, throughput, goodput, errors, and cost
-  against an externally managed OpenAI-compatible endpoint.
-- Preserve restricted evidence and export a separately approved, sanitized
-  public report with bounded claims.
+result = evaluate(
+    target=OpenAICompatibleTarget(
+        base_url="http://127.0.0.1:8000/v1",
+        model="qwen3",
+        api_key_env="LOCAL_API_KEY",
+    ),
+    dataset="data/support.jsonl",
+    prompt="{question}",
+    evaluators=[exact_match("answer")],
+)
+
+print(result.path)
+print(result.summary)
+```
+
+A Python iterable or factory can replace the file; a sync or async callable can
+replace the endpoint or evaluator. Local factories are trusted code and are not
+sandboxed.
+
+## Prompt and target matrix
+
+Add more `[[prompts]]` and `[[targets]]` tables to evaluate their Cartesian
+product against the same frozen cases. Each cell gets a deterministic identity,
+its own canonical behavior bundle, a confidence interval, and paired comparison
+against compatible cells. Cavada does not collapse the matrix into a composite
+AI score.
+
+Each completed experiment contains `plan.snapshot.toml`,
+`plan.normalized.json`, `dataset.snapshot.jsonl`, cell evidence under `cells/`,
+`summary.json`, `verification.json`, and a standalone `report.html`.
+
+Start with the [quickstart](docs/QUICKSTART.md), then see the
+[configuration reference](docs/CONFIGURATION.md), [Python API](docs/PYTHON_API.md),
+and [client workflows](docs/CLIENT_WORKFLOWS.md). Versioned suites, qualification,
+approvals, publication, and registries remain available as
+[advanced/official workflows](docs/OPERATIONS.md).
 
 ## Status
 
@@ -79,12 +139,12 @@ output judging with retained A/B and B/A decisions is unsupported. Serving
 performance remains a separate development protocol; performance official
 assurance is outside this milestone.
 
-## Create and validate a suite
+## Advanced: create and validate a versioned suite
 
 ```bash
 uv sync
 uv run cavada-eval doctor
-uv run cavada-eval init customer-support-v1
+uv run cavada-eval init customer-support-v1 --suites-root suites
 uv run cavada-eval validate suites/customer-support-v1
 uv run cavada-eval estimate suites/customer-support-v1 --repetitions 3 --judge-repetitions 3
 ```
@@ -152,12 +212,18 @@ risks, severities, languages, and splits without separating scenario groups.
 Explicit CLI parameters may make a development preset stricter, but never turn
 it into a reference or official result.
 
-Useful commands:
+Main client commands:
 
 ```text
-init doctor list profiles program validate audit estimate run resume redteam
+init plan run benchmark compare report verify doctor
+```
+
+Advanced suite and protocol commands remain available for compatibility:
+
+```text
+list profiles program validate audit estimate resume redteam
 annotations annotations-ingest annotations-agreement annotations-adjudicate
-judge-qualify judge-qualify-package pilot-audit compare report verify promote export controls
+judge-qualify judge-qualify-package pilot-audit promote export controls
 import-external retention-record
 perf validate | perf run | perf compare
 ```

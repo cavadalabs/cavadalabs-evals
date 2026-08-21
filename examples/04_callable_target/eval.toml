@@ -1,0 +1,33 @@
+version = "1"
+name = "async-callable-target"
+profile = "client"
+seed = 42
+
+[dataset]
+type = "jsonl"
+path = "data.jsonl"
+classification = "synthetic"
+
+[[prompts]]
+name = "ready"
+template = "{question}"
+
+[[targets]]
+name = "async-local"
+factory = "custom:async_target"
+model = "async-fixture"
+revision = "example-1"
+
+[[evaluators]]
+type = "normalized-match"
+expected_field = "answer"
+
+[run]
+concurrency = 1
+timeout_seconds = 5
+retries = 0
+max_requests = 5
+
+[output]
+directory = "runs"
+formats = ["json", "html"]

@@ -93,6 +93,27 @@ class _WireJSON(dict[str, Any]):
         self.raw_body = raw_body
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def _open_no_redirect(request: urllib.request.Request, timeout: float) -> Any:
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+        _RejectRedirects(),
+    )
+    return opener.open(request, timeout=timeout)
+
+
 def _wire_body_fields(raw_body: bytes | None, *, truncated: bool = False) -> dict[str, Any]:
     if raw_body is None:
         return {}
@@ -300,11 +321,13 @@ def _post_json(
         headers["Authorization"] = f"Bearer {api_key}"
     encoded_payload = json.dumps(payload, ensure_ascii=False).encode()
     last_error: CallEvidenceError | None = None
+    request_started = time.perf_counter()
+    retry_failures: list[dict[str, Any]] = []
     for attempt in range(retries + 1):
         request = urllib.request.Request(url, data=encoded_payload, headers=headers, method="POST")  # noqa: S310 -- scheme is validated above.
         started = time.perf_counter()
         try:
-            with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:  # noqa: S310 -- scheme is validated above.
+            with _open_no_redirect(request, timeout) as response:
                 headers_ms = (time.perf_counter() - started) * 1000
                 content_type = response.headers.get_content_type()
                 body_bytes = response.read(max_body_bytes + 1)
@@ -315,8 +338,9 @@ def _post_json(
                         "request_bytes": len(encoded_payload),
                         "response_bytes": len(body_bytes),
                         "headers_ms": round(headers_ms, 3),
-                        "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                        "total_ms": round((time.perf_counter() - request_started) * 1000, 3),
                         "http_status": response.status,
+                        **({"retry_failures": retry_failures} if retry_failures else {}),
                     }
                     raise CallEvidenceError(
                         f"Response from {url} exceeds {max_body_bytes} bytes",
@@ -327,7 +351,7 @@ def _post_json(
                         stage="transport",
                         raw_body_truncated=True,
                     )
-                total_ms = (time.perf_counter() - started) * 1000
+                total_ms = (time.perf_counter() - request_started) * 1000
             transport = {
                 "request_id": request_id,
                 "attempts": attempt + 1,
@@ -336,6 +360,7 @@ def _post_json(
                 "headers_ms": round(headers_ms, 3),
                 "total_ms": round(total_ms, 3),
                 "http_status": response.status,
+                **({"retry_failures": retry_failures} if retry_failures else {}),
             }
             if content_type != "application/json" and not content_type.endswith("+json"):
                 raise CallEvidenceError(
@@ -359,11 +384,20 @@ def _post_json(
                 ) from exc
             break
         except urllib.error.HTTPError as exc:
+            attempt_ms = (time.perf_counter() - started) * 1000
             error_limit = 1024 * 1024
             error_body = exc.read(error_limit + 1)
             error_response_bytes = len(error_body)
             error_truncated = len(error_body) > error_limit
             error_body = error_body[:error_limit]
+            retry_failure = {
+                "attempt": attempt + 1,
+                "error": f"HTTP {exc.code}",
+                "http_status": exc.code,
+                "response_bytes": error_response_bytes,
+                "duration_ms": round(attempt_ms, 3),
+                **_wire_body_fields(error_body, truncated=error_truncated),
+            }
             last_error = CallEvidenceError(
                 f"HTTP {exc.code} from {url}; body_sha256={sha256_bytes(error_body)}",
                 payload=payload,
@@ -374,16 +408,26 @@ def _post_json(
                     "attempts": attempt + 1,
                     "request_bytes": len(encoded_payload),
                     "response_bytes": error_response_bytes,
-                    "headers_ms": round((time.perf_counter() - started) * 1000, 3),
-                    "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "headers_ms": round(attempt_ms, 3),
+                    "total_ms": round((time.perf_counter() - request_started) * 1000, 3),
                     "http_status": exc.code,
+                    **({"retry_failures": retry_failures} if retry_failures else {}),
                 },
                 stage="transport",
                 raw_body_truncated=error_truncated,
             )
             if exc.code not in {408, 425, 429, 500, 502, 503, 504} or attempt == retries:
                 raise last_error from exc
+            retry_failures.append(retry_failure)
         except urllib.error.URLError as exc:
+            attempt_ms = (time.perf_counter() - started) * 1000
+            retry_failure = {
+                "attempt": attempt + 1,
+                "error": "connection error",
+                "http_status": None,
+                "response_bytes": 0,
+                "duration_ms": round(attempt_ms, 3),
+            }
             last_error = CallEvidenceError(
                 f"Cannot reach {url}: {exc.reason}",
                 payload=payload,
@@ -395,12 +439,14 @@ def _post_json(
                     "request_bytes": len(encoded_payload),
                     "response_bytes": 0,
                     "headers_ms": 0.0,
-                    "total_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "total_ms": round((time.perf_counter() - request_started) * 1000, 3),
+                    **({"retry_failures": retry_failures} if retry_failures else {}),
                 },
                 stage="transport",
             )
             if attempt == retries:
                 raise last_error from exc
+            retry_failures.append(retry_failure)
         if attempt < retries:
             time.sleep(min(2.0, 0.25 * (2**attempt)))
     else:  # pragma: no cover - loop always breaks or raises
@@ -468,7 +514,7 @@ def _post_openai_stream(
         return value
 
     try:
-        response = urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context())  # noqa: S310 -- scheme is validated above.
+        response = _open_no_redirect(request, timeout)
     except urllib.error.HTTPError as exc:
         error_body = exc.read(max_body_bytes + 1)
         error_response_bytes = len(error_body)
@@ -661,7 +707,27 @@ def _manifest_endpoint(url: str) -> str:
 def target_case_prompt(case: dict[str, Any], kind: str) -> Any:
     if kind == "recorded":
         return {"case_id": case["id"], "input": case["input"], "messages": case.get("messages")}
+    source = case.get("source")
+    metadata = source.get("metadata") if isinstance(source, dict) else None
+    client_case = metadata.get("client_target_case") if isinstance(metadata, dict) else None
+    if kind == "json" and isinstance(client_case, dict):
+        return {"input": case["input"], "messages": case.get("messages"), "client_case": client_case}
     return {"input": case["input"], "messages": case["messages"]} if case.get("messages") else case["input"]
+
+
+def _client_evaluator_execution_error(case: dict[str, Any], raw: Any, *, official: bool) -> bool:
+    source = case.get("source")
+    metadata = source.get("metadata") if isinstance(source, dict) else None
+    if (
+        official
+        or not isinstance(source, dict)
+        or source.get("origin") != "client-experiment-plan"
+        or not isinstance(metadata, dict)
+        or not isinstance(metadata.get("client_case"), dict)
+        or not isinstance(raw, dict)
+    ):
+        return False
+    return raw.get("cavada_client_evaluator_status") == "execution-error"
 
 
 def build_target_payload(
@@ -677,8 +743,9 @@ def build_target_payload(
         if not isinstance(prompt, dict) or not isinstance(prompt.get("case_id"), str) or not recorded_responses_sha256:
             raise ProtocolError("recorded target requires a case ID and response-source hash")
         return {"case_id": prompt["case_id"], "source_sha256": recorded_responses_sha256}
+    client_prompt = isinstance(prompt, dict) and isinstance(prompt.get("client_case"), dict)
     conversation = isinstance(prompt, dict) and isinstance(prompt.get("messages"), list)
-    prompt_value = prompt.get("input") if conversation else prompt
+    prompt_value = prompt.get("input") if conversation or client_prompt else prompt
     try:
         openai_prompt = openai_content(prompt_value, suite_root=suite.root) if kind == "openai" and not conversation else None
         json_prompt = encoded_content(prompt_value, suite_root=suite.root) if kind == "json" and not conversation else None
@@ -710,6 +777,8 @@ def build_target_payload(
     if kind == "json":
         payload = _strict_json_loads(str(target.get("request_defaults_json", "{}")))
         payload[str(target.get("request_field", "message"))] = conversation_messages if conversation else json_prompt
+        if isinstance(prompt, dict) and isinstance(prompt.get("client_case"), dict):
+            payload["client_case"] = prompt["client_case"]
         return payload
     raise ProtocolError(f"Unsupported target kind: {kind}")
 
@@ -786,9 +855,23 @@ def call_target(
         if target.get("stream"):
             raw, transport = _post_openai_stream(_completion_url(endpoint), payload, api_key, timeout, request_id=uuid.uuid4().hex)
         else:
-            raw, transport = _post_json(_completion_url(endpoint), payload, api_key, timeout, request_id=uuid.uuid4().hex)
+            raw, transport = _post_json(
+                _completion_url(endpoint),
+                payload,
+                api_key,
+                timeout,
+                request_id=uuid.uuid4().hex,
+                retries=int(target.get("retries", 2)),
+            )
     elif kind == "json":
-        raw, transport = _post_json(endpoint, payload, api_key, timeout, request_id=uuid.uuid4().hex)
+        raw, transport = _post_json(
+            endpoint,
+            payload,
+            api_key,
+            timeout,
+            request_id=uuid.uuid4().hex,
+            retries=int(target.get("retries", 2)),
+        )
     else:
         raise ProtocolError(f"Unsupported target kind: {kind}")
     try:
@@ -885,6 +968,20 @@ def build_judge_payload(
         "answer": answer,
         "evidence": evidence,
     }
+    source = case.get("source")
+    metadata = source.get("metadata") if isinstance(source, dict) else None
+    client_case = metadata.get("client_case") if isinstance(metadata, dict) else None
+    if isinstance(client_case, dict):
+        client_response = {
+            field: target_raw[field]
+            for field in ("structured_output", "usage", "latency", "citations", "retrieval", "retrieved_ids", "tool_calls", "trace")
+            if field in target_raw
+        }
+        user_payload["client_case"] = client_case
+        user_payload["client_response"] = {
+            "output": answer,
+            **_strict_json_loads(json.dumps(client_response, ensure_ascii=False, sort_keys=True, allow_nan=False)),
+        }
     judge_user_content: Any = json.dumps(user_payload, ensure_ascii=False)
     multimodal_inputs = [case.get("input")]
     multimodal_inputs.extend(message.get("content") for message in case.get("messages", []) if isinstance(message, dict))
@@ -1069,6 +1166,7 @@ def run(
     judge_approval: str = "",
     engagement: str = "",
     preset: str = "",
+    output_root: Path | None = None,
 ) -> Path:
     require_pdf_support()
     try:
@@ -1363,7 +1461,7 @@ def run(
         manifest["status"] = "running"
         previous_rows = _read_jsonl(run_dir / "case_results.jsonl")
     else:
-        run_id, run_dir = new_run_dir(repo_root, suite, model_label)
+        run_id, run_dir = new_run_dir(output_root or repo_root, suite, model_label)
         started = datetime.now(timezone.utc)
         reproduction = [
             "cavada-eval",
@@ -1733,13 +1831,7 @@ def run(
             else:
                 enforce_budget("target")
                 wait_for_rate_limit()
-                target_input: Any = (
-                    {"case_id": case["id"], "input": case["input"], "messages": case.get("messages")}
-                    if target_kind == "recorded"
-                    else {"input": case["input"], "messages": case["messages"]}
-                    if case.get("messages")
-                    else case["input"]
-                )
+                target_input = target_case_prompt(case, target_kind)
                 try:
                     answer, target_raw, reported_model, target_request, target_transport = call_target(
                         suite, endpoint, target_key, target_input, request_model, timeout
@@ -1830,6 +1922,7 @@ def run(
                     record("case_results.jsonl", result)
                     return result
                 verdicts: list[dict[str, Any]] = []
+                client_evaluator_error = False
                 for judge_index, judge_spec in enumerate(judge_specs):
                     for model_repetition in range(1, judge_repetitions + 1):
                         judge_repetition = judge_index * judge_repetitions + model_repetition
@@ -1843,6 +1936,9 @@ def run(
                         cached_judgment = previous_judgments.get((str(case["id"]), repetition, judge_repetition))
                         if cached_judgment is not None:
                             judgment = cached_judgment.get("judgment")
+                            client_evaluator_error = client_evaluator_error or _client_evaluator_execution_error(
+                                case, cached_judgment.get("raw"), official=official
+                            )
                             if isinstance(judgment, dict):
                                 reported_judge = str(cached_judgment.get("reported_model") or "")
                                 if reported_judge != judge_spec["expected_model"]:
@@ -1886,6 +1982,9 @@ def run(
                             verdicts.append(judgment)
                         except CallEvidenceError as exc:
                             parsed_raw = dict(exc.parsed) if isinstance(exc.parsed, dict) else exc.parsed
+                            client_evaluator_error = client_evaluator_error or _client_evaluator_execution_error(
+                                case, parsed_raw, official=official
+                            )
                             reported_judge = str(parsed_raw.get("model") or "") if isinstance(parsed_raw, dict) else ""
                             record(
                                 "requests.jsonl",
@@ -1919,7 +2018,9 @@ def run(
                 passes = sum(item["verdict"] == "pass" for item in verdicts)
                 fails = sum(item["verdict"] == "fail" for item in verdicts)
                 expected_verdicts = judge_repetitions * len(judge_specs)
-                if len(verdicts) != expected_verdicts:
+                if client_evaluator_error:
+                    result = {**base, "status": "error", "reason": "client evaluator execution failed", "deterministic": deterministic}
+                elif len(verdicts) != expected_verdicts:
                     result = {**base, "status": "invalid", "reason": "one or more judge outputs were invalid", "deterministic": deterministic}
                 elif passes == fails or (consensus == "unanimous" and passes and fails):
                     result = {**base, "status": "invalid", "reason": "judge disagreement", "deterministic": deterministic}

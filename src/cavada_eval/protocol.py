@@ -1330,6 +1330,9 @@ def validate_suite(
     capabilities = target.get("capabilities", []) if isinstance(target, dict) else []
     if capabilities and (not isinstance(capabilities, list) or not all(isinstance(item, str) and item for item in capabilities)):
         errors.append("target.capabilities must be an array of non-empty strings")
+    retries = target.get("retries", 2) if isinstance(target, dict) else 2
+    if not isinstance(retries, int) or isinstance(retries, bool) or not 0 <= retries <= 10:
+        errors.append("target.retries must be an integer from 0 to 10")
     if official and profile in TASK_PROFILES:
         missing_capabilities = sorted(set(TASK_PROFILES[str(profile)]["inputs"]) - set(capabilities))
         if missing_capabilities:

@@ -20,7 +20,15 @@ from cavada_eval.program import (
     validate_cross_suite_duplicates,
 )
 from cavada_eval.protocol import ProtocolError, Suite, load_suite, sha256_file, wilson_gate_power
-from cavada_eval.runner import _distribution_shift_summary, _judge_calibration_summary, _post_json, _scenario_analysis_rows, call_target, run
+from cavada_eval.runner import (
+    _distribution_shift_summary,
+    _judge_calibration_summary,
+    _post_json,
+    _post_openai_stream,
+    _scenario_analysis_rows,
+    call_target,
+    run,
+)
 from cavada_eval.statistics import bootstrap_mean_interval, mcnemar_exact, paired_binary_comparison
 
 
@@ -684,8 +692,11 @@ def test_retry_reuses_idempotency_key() -> None:
             Handler.keys.append(str(self.headers.get("Idempotency-Key")))
             self.rfile.read(int(self.headers["Content-Length"]))
             if Handler.attempts == 1:
+                body = b"retryable upstream failure"
                 self.send_response(503)
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                self.wfile.write(body)
                 return
             body = b'{"ok":true}'
             self.send_response(200)
@@ -706,7 +717,55 @@ def test_retry_reuses_idempotency_key() -> None:
         server.shutdown()
         thread.join()
     assert result == {"ok": True} and transport["attempts"] == 2
+    assert transport["retry_failures"][0]["wire_body_base64"] == "cmV0cnlhYmxlIHVwc3RyZWFtIGZhaWx1cmU="
     assert Handler.keys == ["fixed-request", "fixed-request"]
+
+
+def test_authenticated_transports_reject_cross_origin_redirects() -> None:
+    received_authorization: list[str | None] = []
+
+    class Sink(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            received_authorization.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{sink.server_port}/redirected")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            pass
+
+    redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (sink, redirect)]
+    for thread in threads:
+        thread.start()
+    try:
+        url = f"http://127.0.0.1:{redirect.server_port}/start"
+        with pytest.raises(ProtocolError, match="HTTP 302"):
+            _post_json(url, {"test": True}, "opaque-secret", 5, request_id="json-redirect", retries=0)
+        with pytest.raises(ProtocolError, match="HTTP 302"):
+            _post_openai_stream(url, {"test": True}, "opaque-secret", 5, request_id="stream-redirect")
+    finally:
+        for server in (redirect, sink):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join()
+    assert received_authorization == []
 
 
 def test_run_rejects_unpaired_judge_qualification_evidence(tmp_path: Path) -> None:
