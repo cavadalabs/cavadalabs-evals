@@ -2,6 +2,14 @@
 
 ## Unreleased (0.4.0.dev0)
 
+- Added a small client evaluation facade over the canonical behavior runner and
+  verifier: strict experiment plans, Python callables, JSONL/CSV/factory
+  datasets, prompt and target matrices, deterministic cell identities, resume,
+  paired summaries, and standalone HTML reports.
+- Added `init`, `plan`, config-driven `run`, client-aware `report` and `verify`,
+  plus a client endpoint benchmark facade over the existing performance core.
+  The generated project and five examples run with synthetic local callables or
+  loopback endpoints; no approval or official claim is implied.
 - Started the canonical `next/0.4` line from the public `main` history for the
   official-conformance milestone.
 - Added one fail-closed behavior verifier shared by CLI verification, runner

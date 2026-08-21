@@ -1,0 +1,46 @@
+version = "1"
+name = "prompt-matrix"
+profile = "client"
+seed = 42
+
+[dataset]
+type = "jsonl"
+path = "data.jsonl"
+classification = "synthetic"
+
+[[prompts]]
+name = "baseline"
+template = "{question}"
+
+[[prompts]]
+name = "concise"
+system = "Answer with only the requested code."
+template = "{question}"
+
+[[targets]]
+name = "endpoint-a"
+type = "openai-compatible"
+base_url = "http://127.0.0.1:8765/v1"
+model = "synthetic-a"
+revision = "fixture-1"
+
+[[targets]]
+name = "endpoint-b"
+type = "openai-compatible"
+base_url = "http://127.0.0.1:8766/v1"
+model = "synthetic-b"
+revision = "fixture-1"
+
+[[evaluators]]
+type = "exact-match"
+expected_field = "answer"
+
+[run]
+concurrency = 4
+timeout_seconds = 5
+retries = 0
+max_requests = 20
+
+[output]
+directory = "runs"
+formats = ["json", "html"]

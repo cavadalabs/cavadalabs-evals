@@ -1,0 +1,33 @@
+version = "1"
+name = "factory-callables"
+profile = "client"
+seed = 42
+
+[dataset]
+type = "factory"
+factory = "custom:support_dataset"
+classification = "synthetic"
+
+[[prompts]]
+name = "baseline"
+template = "{question}"
+
+[[targets]]
+name = "local-support"
+factory = "custom:local_target"
+model = "local-support"
+revision = "example-1"
+
+[[evaluators]]
+name = "support-code"
+factory = "custom:support_evaluator"
+
+[run]
+concurrency = 2
+timeout_seconds = 5
+retries = 0
+max_requests = 10
+
+[output]
+directory = "runs"
+formats = ["json", "html"]

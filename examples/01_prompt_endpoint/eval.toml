@@ -1,0 +1,34 @@
+version = "1"
+name = "prompt-endpoint"
+profile = "client"
+seed = 42
+
+[dataset]
+type = "jsonl"
+path = "data.jsonl"
+classification = "synthetic"
+
+[[prompts]]
+name = "baseline"
+template = "{question}"
+
+[[targets]]
+name = "loopback"
+type = "openai-compatible"
+base_url = "http://127.0.0.1:8765/v1"
+model = "synthetic-loopback"
+revision = "fixture-1"
+
+[[evaluators]]
+type = "exact-match"
+expected_field = "answer"
+
+[run]
+concurrency = 2
+timeout_seconds = 5
+retries = 0
+max_requests = 10
+
+[output]
+directory = "runs"
+formats = ["json", "html"]
