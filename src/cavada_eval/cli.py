@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tarfile
+import tempfile
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +17,18 @@ from .annotations import annotation_agreement, export_annotation_package, ingest
 from .artifacts import _read_regular
 from .behavior_verify import verify_behavior_base, verify_behavior_run
 from .calibration import qualify_judge_run
+from .client_benchmark import load_client_benchmark, plan_client_benchmark, run_client_benchmark
 from .comparison import compare_runs
 from .compliance import generate_control_report
 from .demo import run_demo
+from .evaluation import (
+    init_client_project,
+    load_experiment_plan,
+    prepare_experiment,
+    resolve_experiment_path,
+    run_experiment,
+    verify_experiment,
+)
 from .external import import_external_results
 from .performance import (
     build_performance_matrix,
@@ -49,13 +59,13 @@ EXIT_CANCELLED = 130
 
 def _run_arguments(command: argparse.ArgumentParser) -> None:
     command.add_argument("suite")
-    command.add_argument("--endpoint", required=True)
-    command.add_argument("--model-label", required=True)
-    command.add_argument("--expected-model", required=True)
+    command.add_argument("--endpoint")
+    command.add_argument("--model-label")
+    command.add_argument("--expected-model")
     command.add_argument("--model-revision", default="")
     command.add_argument("--request-model")
-    command.add_argument("--judge-endpoint", required=True)
-    command.add_argument("--judge-model", required=True)
+    command.add_argument("--judge-endpoint")
+    command.add_argument("--judge-model")
     command.add_argument("--expected-judge-model")
     command.add_argument("--judge-revision", default="")
     command.add_argument("--target-key-env", default="TARGET_API_KEY")
@@ -94,9 +104,12 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--version", action="version", version=f"cavadalabs-evals {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
 
-    init = commands.add_parser("init", help="Create a new draft suite from the secure template")
+    init = commands.add_parser("init", help="Create a minimal offline client evaluation project")
     init.add_argument("name")
-    init.add_argument("--suites-root", default="suites")
+    init.add_argument("--suites-root", help="Create the legacy advanced suite template under this directory")
+
+    plan = commands.add_parser("plan", help="Validate and show a client experiment matrix without network access")
+    plan.add_argument("plan")
 
     demo = commands.add_parser("demo", help="Run the complete deterministic offline demo")
     demo.add_argument("--open", action="store_true", help="Open the generated public report in the default browser")
@@ -172,6 +185,20 @@ def parser() -> argparse.ArgumentParser:
 
     execute = commands.add_parser("run", help="Run an immutable benchmark")
     _run_arguments(execute)
+    execute.add_argument("--resume", action="store_true", help="Resume the latest matching client experiment")
+
+    benchmark = commands.add_parser("benchmark", help="Run a client endpoint performance benchmark")
+    benchmark.add_argument("config")
+    benchmark.add_argument("--trust-factory", action="store_true", help="Allow the dataset factory to execute trusted local code")
+    benchmark.add_argument("--output-root")
+    benchmark.add_argument(
+        "--plan",
+        dest="plan_only",
+        action="store_true",
+        help="Show the materialized performance plan without contacting the endpoint",
+    )
+    benchmark.add_argument("--signing-key-env", default="CAVADA_EVAL_SIGNING_KEY")
+    benchmark.add_argument("--signing-key-id", default="")
 
     resume = commands.add_parser("resume", help="Resume an unfinalized run after a crash without duplicating observations")
     resume.add_argument("run")
@@ -381,6 +408,18 @@ def _doctor(repo: Path, *, now: datetime | None = None) -> dict[str, object]:
 
 
 def _execute(args: argparse.Namespace) -> int:
+    required = {
+        "--endpoint": args.endpoint,
+        "--model-label": args.model_label,
+        "--expected-model": args.expected_model,
+        "--judge-endpoint": args.judge_endpoint,
+        "--judge-model": args.judge_model,
+    }
+    missing = [flag for flag, value in required.items() if not value]
+    if missing:
+        raise ProtocolError(f"legacy suite run requires: {', '.join(missing)}")
+    if getattr(args, "resume", False):
+        raise ProtocolError("legacy suite runs use the separate cavada-eval resume command")
     preset_name = canonical_preset(args.preset)
     preset = benchmark_preset(preset_name) if preset_name else None
     repetitions = int(args.repetitions if args.repetitions is not None else preset["repetitions"] if preset else 1)
@@ -393,13 +432,13 @@ def _execute(args: argparse.Namespace) -> int:
     run_dir = run(
         suite,
         repo_root=repo_root,
-        endpoint=args.endpoint,
-        model_label=args.model_label,
-        expected_model=args.expected_model,
+        endpoint=str(args.endpoint),
+        model_label=str(args.model_label),
+        expected_model=str(args.expected_model),
         model_revision=args.model_revision,
         request_model=args.request_model,
-        judge_endpoint=args.judge_endpoint,
-        judge_model=args.judge_model,
+        judge_endpoint=str(args.judge_endpoint),
+        judge_model=str(args.judge_model),
         expected_judge_model=args.expected_judge_model,
         judge_revision=args.judge_revision,
         target_key_env=args.target_key_env,
@@ -565,20 +604,39 @@ def _export(run_dir: Path, output: Path, public: bool, *, engagement: str = "", 
         raise ProtocolError(f"refusing to overwrite export: {output}") from exc
 
 
+def _client_experiment(path: str | Path) -> Path | None:
+    candidate = Path(path)
+    if (candidate.is_dir() and (candidate / "experiment.json").is_file()) or (
+        candidate.name == "latest" and candidate.is_file()
+    ):
+        return resolve_experiment_path(candidate)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         repo = _repository_root()
         if args.command == "init":
-            if not args.name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for character in args.name):
-                raise ProtocolError("suite name must use lowercase letters, digits, dash, underscore, or dot")
-            destination = Path(args.suites_root).resolve() / args.name
-            if destination.exists():
-                raise ProtocolError(f"suite already exists: {destination}")
-            shutil.copytree(repo / "suites" / "template", destination)
-            config = destination / "suite.toml"
-            config.write_text(config.read_text(encoding="utf-8").replace('name = "replace-me-v1"', f'name = "{args.name}"'), encoding="utf-8")
+            if args.suites_root is None:
+                destination = init_client_project(args.name)
+            else:
+                if not args.name or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for character in args.name):
+                    raise ProtocolError("suite name must use lowercase letters, digits, dash, underscore, or dot")
+                destination = Path(args.suites_root).resolve() / args.name
+                if destination.exists():
+                    raise ProtocolError(f"suite already exists: {destination}")
+                shutil.copytree(repo / "suites" / "template", destination)
+                config = destination / "suite.toml"
+                config.write_text(
+                    config.read_text(encoding="utf-8").replace('name = "replace-me-v1"', f'name = "{args.name}"'),
+                    encoding="utf-8",
+                )
             print(destination)
+            return EXIT_PASS
+        if args.command == "plan":
+            prepared = prepare_experiment(load_experiment_plan(args.plan))
+            print(json.dumps(prepared.summary, indent=2, ensure_ascii=False))
             return EXIT_PASS
         if args.command == "doctor":
             result = _doctor(repo)
@@ -614,6 +672,32 @@ def main(argv: list[str] | None = None) -> int:
             program_registry = load_program_registry(registry_path, repo_root=repo)
             print(json.dumps(program_registry, indent=2, ensure_ascii=False))
             return EXIT_PASS
+        if args.command == "benchmark":
+            benchmark = load_client_benchmark(args.config, trust_factory=args.trust_factory)
+            if args.plan_only:
+                with tempfile.TemporaryDirectory(prefix="cavada-client-benchmark-plan-") as temporary:
+                    planned = plan_client_benchmark(benchmark, Path(temporary) / "inputs")
+                    result = performance_plan_summary(planned.plan, planned.runtime)
+                result.update(
+                    {
+                        "client_benchmark_sha256": benchmark.sha256,
+                        "concurrency": benchmark.config["concurrency"],
+                        "network_used": False,
+                    }
+                )
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+                return EXIT_PASS
+            output = run_client_benchmark(
+                benchmark,
+                repo_root=repo,
+                output_root=Path(args.output_root) if args.output_root else None,
+                signing_key_env=args.signing_key_env,
+                signing_key_id=args.signing_key_id,
+            )
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            print(output)
+            cells = manifest.get("cells") if isinstance(manifest.get("cells"), dict) else {}
+            return EXIT_PASS if manifest.get("status") == "completed" and not cells.get("slo_failed") else EXIT_GATE_FAILURE
         if args.command == "perf":
             preset_name = canonical_preset(args.preset) if args.perf_command in {"validate", "run"} else ""
             if preset_name:
@@ -759,6 +843,51 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return EXIT_PASS
+        if args.command == "run" and (Path(args.suite).is_file() or Path(args.suite).suffix.casefold() == ".toml"):
+            legacy_assurance = {
+                "--official": args.official,
+                "--allow-external-judge": args.allow_external_judge,
+                "--preset": args.preset,
+                "--mode": args.mode,
+                "--external-authorization": args.external_authorization,
+                "--storage-attestation": args.storage_attestation,
+                "--judge-qualification-package": args.judge_qualification_package,
+                "--judge-qualification": args.judge_qualification,
+                "--judge-approval": args.judge_approval,
+                "--engagement": args.engagement,
+            }
+            ignored = [flag for flag, value in legacy_assurance.items() if value]
+            if ignored:
+                raise ProtocolError(
+                    f"client experiment plans do not accept legacy assurance options: {', '.join(ignored)}; "
+                    "configure eval.toml or use the advanced suite workflow"
+                )
+            experiment_result = run_experiment(
+                load_experiment_plan(args.suite),
+                resume=True if args.resume else None,
+                progress=args.progress,
+            )
+            print(experiment_result.path)
+            cells = experiment_result.summary.get("cells")
+            if isinstance(cells, list) and cells:
+                print("Target\tPrompt\tPass rate\t95% CI\tErrors\tInvalid\tp50 latency\tCost")
+                for cell in cells:
+                    if not isinstance(cell, dict):
+                        continue
+                    interval_value = cell.get("pass_rate_ci")
+                    interval = interval_value if isinstance(interval_value, dict) else {}
+                    latency = cell.get("p50_latency_ms")
+                    cost = cell.get("cost")
+                    cost_text = "n/a"
+                    if isinstance(cost, dict):
+                        cost_text = str(cost.get("estimated_total", "n/a"))
+                    print(
+                        f"{cell.get('target')}\t{cell.get('prompt')}\t{100 * float(cell.get('pass_rate', 0)):.1f}%\t"
+                        f"[{100 * float(interval.get('lower', 0)):.1f}%, {100 * float(interval.get('upper', 0)):.1f}%]\t"
+                        f"{cell.get('error', 0)}\t{cell.get('invalid', 0)}\t"
+                        f"{f'{float(latency):.1f} ms' if isinstance(latency, (int, float)) else 'n/a'}\t{cost_text}"
+                    )
+            return EXIT_PASS
         if args.command in {"run", "redteam"}:
             return _execute(args)
         if args.command == "resume":
@@ -779,15 +908,22 @@ def main(argv: list[str] | None = None) -> int:
             non_inferiority = overall.get("non_inferiority")
             return EXIT_PASS if not isinstance(non_inferiority, dict) or bool(non_inferiority.get("passed")) else EXIT_GATE_FAILURE
         if args.command == "report":
-            run_dir = Path(args.run)
-            verification = verify_behavior_run(run_dir)
+            experiment = _client_experiment(args.run)
+            run_dir = experiment or Path(args.run)
+            verification = verify_experiment(run_dir) if experiment else verify_behavior_run(run_dir)
             if not verification["valid"]:
-                raise ProtocolError("run behavior verification failed")
-            paths = [str(run_dir / name) for name in ("report.html", "report.pdf", "report_public.html", "report_public.pdf") if (run_dir / name).is_file()]
+                raise ProtocolError("run verification failed")
+            names = ("report.html",) if experiment else ("report.html", "report.pdf", "report_public.html", "report_public.pdf")
+            paths = [str(run_dir / name) for name in names if (run_dir / name).is_file()]
             print(json.dumps({"verification": verification, "reports": paths}, indent=2))
             return EXIT_PASS
         if args.command == "verify":
-            result = verify_behavior_run(Path(args.run), signing_key_env=args.signing_key_env)
+            experiment = _client_experiment(args.run)
+            result = (
+                verify_experiment(experiment)
+                if experiment
+                else verify_behavior_run(Path(args.run), signing_key_env=args.signing_key_env)
+            )
             print(json.dumps(result, indent=2))
             return EXIT_PASS if result["valid"] else EXIT_INTEGRITY
         if args.command == "promote":
